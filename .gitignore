@@ -1,0 +1,16 @@
+.idea/*
+.ipynb_checkpoints/*
+__pycache__/*
+lgptq/.ipynb_checkpoints/*
+lgptq/__pycache__/*
+outliers/*
+outliers_stru*
+wandb/*
+lm-evaluation-harness/wandb/*
+trash/
+lm-evaluation-harness/lm_eval/tasks/__pycache__/*
+lm-evaluation-harness/.coveragerc
+lm-evaluation-harness/.flake8
+lm-evaluation-harness/.github/
+lm-evaluation-harness/.ipynb_checkpoints/
+lm-evaluation-harness/*.sh

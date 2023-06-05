@@ -1,0 +1,7 @@
+safetensors==0.3.0
+datasets==2.10.1
+sentencepiece==0.1.97
+torch==1.13.1
+numpy==1.22.3
+git+https://github.com/huggingface/transformers/archive/464d420775653885760e30d24d3703e14f4e8a14.zip
+# installs transformers=4.28.0.dev0 which handles Llama correctly
