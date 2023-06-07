@@ -3,8 +3,7 @@
 
 This repository contains code demonstrating SpQR method for LLM compression.
 
-It accompanies the research paper "SpQR: A Sparse-Quantized Representation for
-Almost-Lossless LLM Weight Compression" .
+It accompanies the research paper "[SpQR: A Sparse-Quantized Representation for Near-Lossless LLM Weight Compression](https://arxiv.org/abs/2306.03078v1)" .
 
 # Installation
 
