@@ -1,9 +1,10 @@
 # SPQR model compression
 
 
-This repository contains code demonstrating SpQR method for LLM compression.
-
-It accompanies the research paper "[SpQR: A Sparse-Quantized Representation for Near-Lossless LLM Weight Compression](https://arxiv.org/abs/2306.03078v1)" .
+**Note:** This repository contains quantization algorithm and the model evaluation code for SpQR method for LLM compression; 
+The efficient inference code will be added soon.
+    
+It accompanies the research paper "[SpQR: A Sparse-Quantized Representation for Near-Lossless LLM Weight Compression](https://arxiv.org/abs/2306.03078)" .
 
 # Installation
 
