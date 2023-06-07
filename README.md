@@ -39,7 +39,7 @@ Below `PAJAMAS_PATH` denotes the path to this subset.
 This code was developed and tested using a single A100 GPU with 80GB GPU RAM. It may successfully run on GPUs with 32 - 40GB   
 
 ### Model downloading
-The code requires the LLaMA model to be dowloaded in Huggingface format and saved locally. The scripts below require such model folder path as argument.
+The code requires the LLaMA model to be dowloaded in Hugging Face format and saved locally. The scripts below require such model folder path as argument.
 
 ### Perplexity benchmarks:
 This script compresses the model and then tests its performance in terms of perplexity using Wikitext2, 
