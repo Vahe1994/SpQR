@@ -25,7 +25,7 @@ class QuantizationConfig:
     qq_groupsize: int = 16
     qq_mse: bool = True
     outlier_threshold: float = float("inf")
-    fit_quantizer_without_outliers: bool = True
+    simplified_outliers: bool = False
     outlier_percentile_base: float = 0.99
     outlier_percentile_multiple: float = 1.0
     outlier_cols_enable: bool = False

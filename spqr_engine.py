@@ -44,7 +44,7 @@ class SPQRUtil:
         outlier_relative_threshold: float = float("inf"),
         permutation_order: Union[str, torch.Tensor] = "identity",
         keep_H: bool = True,
-        fit_quantizer_without_outliers: bool = False,
+        simplified_outliers: bool = False,
         verbose=True,
         perchannel: bool = True,
         sym: bool = False,
@@ -63,8 +63,8 @@ class SPQRUtil:
         :note: if keep_last_columns > 0, quantized_dequantized_weights[-keep_last_columns:] will be non-quantized
         :param permutation_order: re-order input features using a certain policy
         :param keep_H: if False, delete the accumulated hessian during quantize; if False, keep the accumulated hessian
-        :param fit_quantizer_without_outliers: if True, fit quantizer parameters without unstrucutred outliers
-            the algorithm is a bit complex, please see the code for details
+        :param simplified_outliers: if True,do not perform leave-one-out evaluation when detecting outliers;
+            works faster, but generally worse in perplexity
         :param verbose: if True, display a tqdm progressbar over input columns
         :param sym: if True, base weight quantization is symmetric
         :param perchannel: if True, base weight quantization will learn statistics for each output dimension separately
@@ -123,7 +123,7 @@ class SPQRUtil:
                     in_group_index += 1
                     group_weight = weight[:, column_index : column_index + groupsize]
 
-                    if not fit_quantizer_without_outliers:
+                    if simplified_outliers:
                         quantizer.find_params(group_weight, weight=True)
 
                     else:
