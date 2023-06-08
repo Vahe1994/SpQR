@@ -525,18 +525,6 @@ if __name__ == "__main__":
         help="Directory where to store local wandb files.",
     )
     parser.add_argument(
-        "--wandb_entity",
-        type=str,
-        default=None,
-        help="Suffix of wandb experiments name.",
-    )
-    parser.add_argument(
-        "--wandb_project",
-        type=str,
-        default=None,
-        help="Suffix of wandb experiments name.",
-    )
-    parser.add_argument(
         "--wandb_exp_name",
         type=str,
         default="SpQR",
@@ -601,8 +589,6 @@ if __name__ == "__main__":
         if args.new_eval:
             neweval_str = "_new_eval"
         wandb.init(
-            entity=args.wandb_entity,
-            project=args.wandb_project,
             name=args.exp_name,
             dir=args.wandb_dir,
             config={a: getattr(args, a) for a in dir(args) if not a.startswith("_")},

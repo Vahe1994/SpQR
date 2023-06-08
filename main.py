@@ -369,7 +369,7 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=0, help="Seed for sampling the calibration data.")
     parser.add_argument("--nsamples", type=int, default=128, help="Number of calibration data samples.")
     parser.add_argument(
-        "--percdamp", type=float, default=1., help="Percent of the average Hessian diagonal to use for dampening."
+        "--percdamp", type=float, default=0.01, help="Percent of the average Hessian diagonal to use for dampening."
     )
     parser.add_argument("--nearest", action="store_true", help="Whether to run the RTN baseline.")
     parser.add_argument(
@@ -453,18 +453,6 @@ if __name__ == "__main__":
         help="Directory where to store local wandb files.",
     )
     parser.add_argument(
-        "--wandb_entity",
-        type=str,
-        default=None,
-        help="Suffix of wandb experiments name.",
-    )
-    parser.add_argument(
-        "--wandb_project",
-        type=str,
-        default=None,
-        help="Suffix of wandb experiments name.",
-    )
-    parser.add_argument(
         "--wandb_exp_name",
         type=str,
         default="SpQR",
@@ -529,8 +517,6 @@ if __name__ == "__main__":
         if args.new_eval:
             neweval_str = "_new_eval"
         wandb.init(
-            entity=args.wandb_entity,
-            project=args.wandb_project,
             name=args.exp_name,
             dir=args.wandb_dir,
             config={a: getattr(args, a) for a in dir(args) if not a.startswith("_")},
