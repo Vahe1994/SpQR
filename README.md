@@ -15,7 +15,7 @@ Install packages from `requirements.txt`:
 pip install -r requirements.txt
 ```
 
-Note Results in the paper where obtained using `4.28.dev0` version of `transformers`.
+__Note:__ the results reported in the ArXiv paper where obtained using `4.28.dev0` version of `transformers`, commit id [`464d420775`](https://github.com/huggingface/transformers/archive/464d420775653885760e30d24d3703e14f4e8a14.zip).
 
 ### Downloading model weights and dataset(s)
 
