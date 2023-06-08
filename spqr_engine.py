@@ -123,7 +123,7 @@ class SPQRUtil:
                     in_group_index += 1
                     group_weight = weight[:, column_index : column_index + groupsize]
 
-                    if simplified_outliers:
+                    if simplified_outliers or (unstructured_outlier_threshold == float("inf")):
                         quantizer.find_params(group_weight, weight=True)
 
                     else:

@@ -144,7 +144,7 @@ class SPQRUtil:
                     group_weight = weight[:, column_index: column_index + groupsize]
                     group_mask = 1 - outlier_columns_mask[column_index: column_index + groupsize].float()
 
-                    if simplified_outliers:
+                    if simplified_outliers or (unstructured_outlier_threshold == float("inf")):
                         quantizer.find_params(group_weight * group_mask, weight=True)
                     else:
                         # objective: detect which weights will be designated as outliers, fit quantizer *without* these weights
