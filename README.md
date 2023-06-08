@@ -42,7 +42,7 @@ This code was developed and tested using a single A100 GPU with 80GB GPU RAM. It
 The code requires the LLaMA model to be dowloaded in Hugging Face format and saved locally. The scripts below require such model folder path as argument.
 
 ### Perplexity benchmarks:
-This script compresses the model and then tests its performance in terms of perplexity using Wikitext2, 
+This script compresses the model and then tests its performance in terms of perplexity using WikiText2, 
 C4, and Penn Treebank datasets. 
 
 The command to launch the script should look like this: 
