@@ -40,7 +40,7 @@ export PAJAMAS_PATH=<INSERT PATH TO PAJAMAS DIR>
 python lm_eval_main.py \
     --model hf-causal \
     --model_args pretrained=$MODEL_PATH,dtype=float16,use_accelerate=True \
-    --quantization_args dataset=custom,custom_data_path=$PAJAMAS_PATH,wbits=4,groupsize=16,perchannel=True,qq_scale_bits=3,qq_zero_bits=3,qq_groupsize=16,percdamp=1.0,outlier_threshold=0.2,fit_quantizer_without_outliers=True,nsamples=128,offload_activations=True \
+    --quantization_args dataset=custom,custom_data_path=$PAJAMAS_PATH,wbits=4,groupsize=16,perchannel=True,qq_scale_bits=3,qq_zero_bits=3,qq_groupsize=16,percdamp=1.0,outlier_threshold=0.2,simplified_outliers=False,nsamples=128,offload_activations=True \
     --tasks winogrande,piqa,hellaswag,arc_easy,arc_challenge \
     --batch_size 1
 ```

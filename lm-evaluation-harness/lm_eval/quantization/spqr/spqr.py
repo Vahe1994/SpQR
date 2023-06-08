@@ -35,25 +35,25 @@ class SPQRUtil:
         self.H += inp.matmul(inp.t())
 
     def quantize(
-        self,
-        *,
-        bits: int = 2,
-        blocksize: int = 128,
-        percdamp: float = 1e-2,
-        groupsize: Optional[int] = None,
-        keep_last_columns: int = 0,
-        outlier_relative_threshold: float = float("inf"),
-        permutation_order: Union[str, torch.Tensor] = "identity",
-        keep_H: bool = True,
-        outlier_cols_enable=False,
-        outlier_rows_enable=False,
-        outlier_percentile_base: float = 0.99,
-        outlier_percentile_multiple: float = 2.0,
-        fit_quantizer_without_outliers: bool = False,
-        verbose=True,
-        perchannel: bool = True,
-        sym: bool = False,
-        **kwargs,
+            self,
+            *,
+            bits: int = 2,
+            blocksize: int = 128,
+            percdamp: float = 1e-2,
+            groupsize: Optional[int] = None,
+            keep_last_columns: int = 0,
+            outlier_relative_threshold: float = float("inf"),
+            permutation_order: Union[str, torch.Tensor] = "identity",
+            keep_H: bool = True,
+            outlier_cols_enable=False,
+            outlier_rows_enable=False,
+            outlier_percentile_base: float = 0.99,
+            outlier_percentile_multiple: float = 2.0,
+            simplified_outliers: bool = False,
+            verbose=True,
+            perchannel: bool = True,
+            sym: bool = False,
+            **kwargs,
     ) -> QuantizationResult:
         """
         :param bits: number of bits used at the lowest level (the full model size will be different!)
@@ -74,8 +74,8 @@ class SPQRUtil:
         :param outlier_percentile_base: designate column/row as an outlier if it's estimated contribution to MSE
            ... exceeds {outlier_percentile_base}-th percentile of this weight matrix times {outlier_percentile_multiple}
            Formally, is_outlier[i] = estimated_mse[i] > torch.percentile(estimated_mse[:], base) * multiple,
-        :param fit_quantizer_without_outliers: if True, fit quantizer parameters without unstrucutred outliers
-            the algorithm is a bit complex, please see the code for details
+        :param simplified_outliers: if True, do not perform leave-one-out evaluation when detecting outliers;
+           ... works faster, but generally worse in perplexity
         :param verbose: if True, display a tqdm progressbar over input columns
         :param sym: if True, base weight quantization is symmetric
         :param perchannel: if True, base weight quantization will learn statistics for each output dimension separately
@@ -141,29 +141,31 @@ class SPQRUtil:
                 if column_index % groupsize == 0:
                     # fit weight quantizer on the upcoming group of weight columns (inputs), across all rows (outputs)
                     in_group_index += 1
-                    group_weight = weight[:, column_index : column_index + groupsize]
-                    group_mask = 1 - outlier_columns_mask[column_index : column_index + groupsize].float()
+                    group_weight = weight[:, column_index: column_index + groupsize]
+                    group_mask = 1 - outlier_columns_mask[column_index: column_index + groupsize].float()
 
-                    if not fit_quantizer_without_outliers:
+                    if simplified_outliers:
                         quantizer.find_params(group_weight * group_mask, weight=True)
                     else:
                         # objective: detect which weights will be designated as outliers, fit quantizer *without* these weights
                         # step 1: fit quantizer on a leave-one-out version of weights, i.e. in each group, drop one weight at a time
                         assert perchannel, "refitting quantizer is only implemented for perchannel=True"
-                        group_diag_hessian_inv_cho = H_inv_cho_diag[column_index : column_index + groupsize]
+                        group_diag_hessian_inv_cho = H_inv_cho_diag[column_index: column_index + groupsize]
                         loo_quantization_error_sq = get_leave_one_out_error(
                             group_weight * group_mask, group_diag_hessian_inv_cho, bits=bits, sym=sym
                         )
                         # ^-- dequantized(quantized(group_weight)) using a quantizer trained on all weights except the reconstructed one
 
-                        likely_unstructured_outlier_mask = (loo_quantization_error_sq > unstructured_outlier_threshold).float()
+                        likely_unstructured_outlier_mask = (
+                                    loo_quantization_error_sq > unstructured_outlier_threshold).float()
 
                         non_outlier_mask = (1 - likely_unstructured_outlier_mask) * group_mask
-                        mean_over_non_outliers = torch.sum(group_weight * non_outlier_mask, dim=1, keepdim=True) / torch.sum(
+                        mean_over_non_outliers = torch.sum(group_weight * non_outlier_mask, dim=1,
+                                                           keepdim=True) / torch.sum(
                             non_outlier_mask, dim=1, keepdim=True
                         ).clamp_min(1)
                         group_weight_without_outliers = group_weight * non_outlier_mask + mean_over_non_outliers * (
-                            1 - non_outlier_mask
+                                1 - non_outlier_mask
                         )
                         quantizer.find_params(group_weight_without_outliers, weight=True)
                         del group_diag_hessian_inv_cho, loo_quantization_error_sq
@@ -181,29 +183,32 @@ class SPQRUtil:
                     # this results in quantization error = 0, no error correction and no unstructured outliers here
 
                 delta_weight_i = weight[:, column_index] - weight_i_quantized  # [out_dim]
-                quantization_errors[:, column_index] = delta_weight_i / H_inv_cho[column_index, column_index]  # [out_dim]
+                quantization_errors[:, column_index] = delta_weight_i / H_inv_cho[
+                    column_index, column_index]  # [out_dim]
 
                 if unstructured_outlier_threshold != float("inf") and not outlier_columns_mask[column_index].item():
                     unstructured_outlier_mask[:, column_index] = (
-                        quantization_errors[:, column_index].square() > unstructured_outlier_threshold
+                            quantization_errors[:, column_index].square() > unstructured_outlier_threshold
                     )
                     # re-quantize without outliers
                     is_outlier = unstructured_outlier_mask[:, column_index].float()
                     weight_i_quantized_wo_outliers = quantize(
-                        (weight[:, column_index] * (1 - is_outlier)).unsqueeze(1), quantizer.scale, quantizer.zero, quantizer.maxq
+                        (weight[:, column_index] * (1 - is_outlier)).unsqueeze(1), quantizer.scale, quantizer.zero,
+                        quantizer.maxq
                     ).reshape_as(weight[:, column_index])
                     weight_i_quantized = (
-                        weight_i_quantized_wo_outliers * (1 - is_outlier) + weight[:, column_index] * is_outlier
+                            weight_i_quantized_wo_outliers * (1 - is_outlier) + weight[:, column_index] * is_outlier
                     )  # [out_dim]
                     del weight_i_quantized_wo_outliers
 
                     delta_weight_i = weight[:, column_index] - weight_i_quantized  # [out_dim]
-                    quantization_errors[:, column_index] = delta_weight_i / H_inv_cho[column_index, column_index]  # [out_dim]
+                    quantization_errors[:, column_index] = delta_weight_i / H_inv_cho[
+                        column_index, column_index]  # [out_dim]
 
                 weight[:, column_index] = weight_i_quantized
-                weight[:, column_index + 1 : block_end].addr_(
+                weight[:, column_index + 1: block_end].addr_(
                     quantization_errors[:, column_index],
-                    H_inv_cho[column_index, column_index + 1 : block_end],
+                    H_inv_cho[column_index, column_index + 1: block_end],
                     alpha=-1,
                 )
 
@@ -217,7 +222,8 @@ class SPQRUtil:
         outlier_row_indices = torch.empty(0, dtype=torch.int64, device=weight.device)
         if outlier_rows_enable:
             if unstructured_outlier_threshold != float("inf"):
-                raise NotImplementedError("This code does not work if both output and unstructured outliers are present")
+                raise NotImplementedError(
+                    "This code does not work if both output and unstructured outliers are present")
             outlier_row_criterion = quantization_errors.square().mean(axis=1)
             row_threshold = torch.quantile(outlier_row_criterion, outlier_percentile_base) * outlier_percentile_multiple
             (outlier_row_indices,) = torch.where(torch.greater(outlier_row_criterion, row_threshold))
@@ -267,13 +273,16 @@ def get_leave_one_out_error(group_weight: torch.Tensor, group_diag_hessian_inv_c
 
     # compute error improvement from not quantizing each one weight
     # to do so, we shall first train quantizer on leave-one-out data (which can be done faster since not all data affects quantization)
-    loo_groupwise_reconstructed_weights = fast_quantizer.quantize(groupwise_loo_data.flatten(0, 1)).reshape_as(groupwise_loo_data)
+    loo_groupwise_reconstructed_weights = fast_quantizer.quantize(groupwise_loo_data.flatten(0, 1)).reshape_as(
+        groupwise_loo_data)
     loo_group_diag_hessian_inv_cho = group_diag_hessian_inv_cho[loo_indices]  # [num_loo = groupsize, groupsize - 1]
     assert group_diag_hessian_inv_cho.ndim == 1
 
     # total quantization error consists of hessian-weighted mse on all remaining weights except for the one that's left out
     # -- this is because the left-out weights will not be quantized, and therefore, has zero quantization error
-    loo_errors_sq = ((loo_groupwise_reconstructed_weights - groupwise_loo_data) / loo_group_diag_hessian_inv_cho).square().sum(-1)
+    loo_errors_sq = ((
+                                 loo_groupwise_reconstructed_weights - groupwise_loo_data) / loo_group_diag_hessian_inv_cho).square().sum(
+        -1)
     assert loo_errors_sq.shape == group_weight.shape  # [num_groups, num_loo = groupsize]
 
     # as a baseline error, quantize data normally without outliers

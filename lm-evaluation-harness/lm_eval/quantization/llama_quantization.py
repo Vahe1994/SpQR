@@ -178,7 +178,7 @@ def llama_sequential(model, dataloader, args, dev):
                     outlier_rows_enable=args.outlier_rows_enable,
                     outlier_percentile_base=args.outlier_percentile_base,
                     outlier_percentile_multiple=args.outlier_percentile_multiple,
-                    fit_quantizer_without_outliers=args.fit_quantizer_without_outliers,
+                    simplified_outliers=args.simplified_outliers,
                 )
 
                 gptq[name].layer.weight.data = quantized.weight.to(gptq[name].layer.weight.data.dtype)

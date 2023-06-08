@@ -246,7 +246,7 @@ def llama_sequential(model, dataloader, args, dev):
                     qq_zero_sym=args.qq_zero_sym,
                     outlier_relative_threshold=args.outlier_threshold,
                     permutation_order=args.permutation_order,
-                    fit_quantizer_without_outliers=args.fit_quantizer_without_outliers,
+                    simplified_outliers=args.simplified_outliers,
                 )
 
                 gptq[name].layer.weight.data = quantized.weight.to(gptq[name].layer.weight.data.dtype)
@@ -501,7 +501,7 @@ if __name__ == "__main__":
         help="relative threshold for outliers; higher threshold = more outliers.",
     )
     parser.add_argument(
-        "--fit_quantizer_without_outliers",
+        "--simplified_outliers",
         action="store_true",
         help="when finding optimal quantizer params, remove any points that would be declared (unstructured) outliers",
     )
@@ -525,9 +525,21 @@ if __name__ == "__main__":
         help="Directory where to store local wandb files.",
     )
     parser.add_argument(
+        "--wandb_entity",
+        type=str,
+        default=None,
+        help="Suffix of wandb experiments name.",
+    )
+    parser.add_argument(
+        "--wandb_project",
+        type=str,
+        default=None,
+        help="Suffix of wandb experiments name.",
+    )
+    parser.add_argument(
         "--wandb_exp_name",
         type=str,
-        default="l-gptq",
+        default="SpQR",
         help="Suffix of wandb experiments name.",
     )
     parser.add_argument(
@@ -589,8 +601,8 @@ if __name__ == "__main__":
         if args.new_eval:
             neweval_str = "_new_eval"
         wandb.init(
-            entity="rock-and-roll",
-            project="SpQR-for-Falcon",
+            entity=args.wandb_entity,
+            project=args.wandb_project,
             name=args.exp_name,
             dir=args.wandb_dir,
             config={a: getattr(args, a) for a in dir(args) if not a.startswith("_")},

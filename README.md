@@ -15,7 +15,7 @@ Install packages from `requirements.txt`:
 pip install -r requirements.txt
 ```
 
-Note that due to compatibility issues with LLaMA, we recommend using `4.28.dev0` version of `transformers`.
+Note Results in the paper where obtained using `4.28.dev0` version of `transformers`.
 
 ### Downloading model weights and dataset(s)
 
@@ -43,7 +43,7 @@ The code requires the LLaMA model to be dowloaded in Hugging Face format and sav
 
 ### Perplexity benchmarks:
 This script compresses the model and then tests its performance in terms of perplexity using Wikitext2, 
-C4, and Penn Treebank datasets. Note that the perplexity is related to the loss used in the article as `loss = log2(perplexity)`
+C4, and Penn Treebank datasets. 
 
 The command to launch the script should look like this: 
 
@@ -59,7 +59,6 @@ python main.py $MODEL_PATH custom \
     --qq_scale_bits 3 \
     --qq_zero_bits 3 \
     --qq_groupsize 16 \
-    --fit_quantizer_without_outliers \
     --outlier_threshold=0.2 \
     --permutation_order act_order \
     --percdamp 1e0 \
@@ -75,7 +74,6 @@ Note the launch arguments:
 - `--groupsize 16` -- size of first-order groups for compression
 - `--qq_groupsize 16` -- size of second-order (quantized) groups for compression
 - `--qq_scale_bits 3 --qq_zero_bits 3` -- bit sizes for quantizing first order weights' scale and zeros.
-- `--fit_quantizer_without_outliers` -- when finding optimal quantizer params, remove any points that would be declared outliers
 run `python main.py --help` for more details on command line arguments, including compression parameters.
 
 ### LM Evaluation Harness benchmark.
@@ -84,3 +82,14 @@ To perform zero-shot evaluation, we use [lm-eval-harness](https://github.com/Ele
 
 For instructions about zero-shot evaluation refer to `README.md` inside `lm-evaluation-harness` directory.
 
+## Citation
+```
+@misc{dettmers2023spqr,
+      title={SpQR: A Sparse-Quantized Representation for Near-Lossless LLM Weight Compression}, 
+      author={Tim Dettmers and Ruslan Svirschevski and Vage Egiazarian and Denis Kuznedelev and Elias Frantar and Saleh Ashkboos and Alexander Borzunov and Torsten Hoefler and Dan Alistarh},
+      year={2023},
+      eprint={2306.03078},
+      archivePrefix={arXiv},
+      primaryClass={cs.CL}
+}
+```

@@ -176,7 +176,7 @@ def llama_sequential(model, dataloader, args, dev):
                     qq_zero_sym=args.qq_zero_sym,
                     outlier_relative_threshold=args.outlier_threshold,
                     permutation_order=args.permutation_order,
-                    fit_quantizer_without_outliers=args.fit_quantizer_without_outliers,
+                    simplified_outliers=args.simplified_outliers,
                 )
 
                 gptq[name].layer.weight.data = quantized.weight.to(gptq[name].layer.weight.data.dtype)
@@ -369,7 +369,7 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=0, help="Seed for sampling the calibration data.")
     parser.add_argument("--nsamples", type=int, default=128, help="Number of calibration data samples.")
     parser.add_argument(
-        "--percdamp", type=float, default=0.01, help="Percent of the average Hessian diagonal to use for dampening."
+        "--percdamp", type=float, default=1., help="Percent of the average Hessian diagonal to use for dampening."
     )
     parser.add_argument("--nearest", action="store_true", help="Whether to run the RTN baseline.")
     parser.add_argument(
@@ -426,12 +426,12 @@ if __name__ == "__main__":
         "--outlier_threshold",
         type=float,
         default=float("inf"),
-        help="relative threshold for outliers; higher threshold = more outliers.",
+        help="relative threshold for     outliers; higher threshold = more outliers.",
     )
     parser.add_argument(
-        "--fit_quantizer_without_outliers",
+        "--simplified_outliers",
         action="store_true",
-        help="when finding optimal quantizer params, remove any points that would be declared (unstructured) outliers",
+        help="do not perform leave-one-out evaluation when detecting outliers; works faster, but generally worse in perplexity",
     )
 
     parser.add_argument("--save", type=str, default="", help="Save quantized checkpoint under this name.")
@@ -453,9 +453,21 @@ if __name__ == "__main__":
         help="Directory where to store local wandb files.",
     )
     parser.add_argument(
+        "--wandb_entity",
+        type=str,
+        default=None,
+        help="Suffix of wandb experiments name.",
+    )
+    parser.add_argument(
+        "--wandb_project",
+        type=str,
+        default=None,
+        help="Suffix of wandb experiments name.",
+    )
+    parser.add_argument(
         "--wandb_exp_name",
         type=str,
-        default="l-gptq",
+        default="SpQR",
         help="Suffix of wandb experiments name.",
     )
     parser.add_argument(
@@ -517,8 +529,8 @@ if __name__ == "__main__":
         if args.new_eval:
             neweval_str = "_new_eval"
         wandb.init(
-            entity="rock-and-roll",
-            project="SpQR-for-Falcon",
+            entity=args.wandb_entity,
+            project=args.wandb_project,
             name=args.exp_name,
             dir=args.wandb_dir,
             config={a: getattr(args, a) for a in dir(args) if not a.startswith("_")},
