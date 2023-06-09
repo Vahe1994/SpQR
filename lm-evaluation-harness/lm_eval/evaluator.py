@@ -7,7 +7,7 @@ import lm_eval.models
 import lm_eval.tasks
 import lm_eval.base
 from lm_eval.utils import positional_deprecated, run_task_tests, simple_parse_args_string
-from lm_eval.quantization import QuantizationConfig
+from spqr_config import QuantizationConfig
 
 try:
     import wandb
@@ -286,7 +286,9 @@ def evaluate(
 
         stderr = lm_eval.metrics.stderr_for_metric(
             metric=task.aggregation()[real_metric],
-            bootstrap_iters=min(bootstrap_iters, 1000) if metric in ["bleu", "chrf", "ter"] else bootstrap_iters,
+            bootstrap_iters=min(bootstrap_iters, 1000)
+            if metric in ["bleu", "chrf", "ter"]
+            else bootstrap_iters,
         )
 
         if stderr is not None:

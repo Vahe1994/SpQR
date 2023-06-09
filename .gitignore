@@ -14,3 +14,7 @@ lm-evaluation-harness/.flake8
 lm-evaluation-harness/.github/
 lm-evaluation-harness/.ipynb_checkpoints/
 lm-evaluation-harness/*.sh
+lm-evaluation-harness/lm_eval/datasets/*/__pycache__/
+lm-evaluation-harness/lm_eval/*/__pycache__/
+lm-evaluation-harness/lm_eval/__pycache__/
+lm-evaluation-harness/lm_cache
