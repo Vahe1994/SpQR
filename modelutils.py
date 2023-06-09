@@ -1,60 +1,51 @@
 import torch
 import torch.nn as nn
-from transformers import LlamaForCausalLM, AutoModelForCausalLM
+from transformers import AutoModelForCausalLM
+
+MODEL_ERROR_MSG = "Unsupported model type {} - only 'llama' and 'falcon' supported"
 
 
-def get_model(args, dtype="auto"):
-    dtype = getattr(args, "dtype", dtype)
-
+def get_model(model_path, dtype="auto"):
     if dtype != "auto":
         dtype = getattr(torch, dtype)
     model = AutoModelForCausalLM.from_pretrained(
-        pretrained_model_name_or_path=args.model_path,
+        pretrained_model_name_or_path=model_path,
         trust_remote_code=True,
         torch_dtype=dtype,
         low_cpu_mem_usage=True,  # see https://stackoverflow.com/questions/76356591
     )
     model.seqlen = 2048
-    if "falcon" in args.model_path:
+    if model.config.model_type == "RefinedWebModel":
         fix_rotary_embedding(model)
     return model
 
 
-def move_embeddings(model, args, device):
-    if "llama" in args.model_path:
-        model.model.embed_tokens = model.model.embed_tokens.to(device)
-    elif "falcon" in args.model_path:
-        model.transformer.word_embeddings = model.transformer.word_embeddings.to(device)
-    else:
-        raise ValueError(f"unknown model family - only 'llama' and 'falcon' accepted")
-
-
-def move_head(model, args, device):
-    if "llama" in args.model_path:
+def move_head(model, device):
+    if model.config.model_type == "llama":
         if model.model.norm is not None:
             model.model.norm = model.model.norm.to(device)
         model.lm_head = model.lm_head.to(device)
-    elif "falcon" in args.model_path:
+    elif model.config.model_type == "RefinedWebModel":
         if model.transformer.ln_f is not None:
             model.transformer.ln_f = model.transformer.ln_f.to(device)
         model.lm_head = model.lm_head.to(device)
     else:
-        raise ValueError(f"unknown model family - only 'llama' and 'falcon' accepted")
+        raise ValueError(MODEL_ERROR_MSG.format(model.config.model_type))
 
 
-def get_lm_logits(inps_, model, args):
-    if "llama" in args.model_path:
+def get_lm_logits(inps_, model):
+    if model.config.model_type == "llama":
         hidden_states = inps_.unsqueeze(0)
         if model.model.norm is not None:
             hidden_states = model.model.norm(hidden_states)
         lm_logits = model.lm_head(hidden_states)
-    elif "falcon" in args.model_path:
+    elif model.config.model_type == "RefinedWebModel":
         hidden_states = inps_.unsqueeze(0)
         if model.transformer.ln_f is not None:
             hidden_states = model.transformer.ln_f(hidden_states)
         lm_logits = model.lm_head(hidden_states)
     else:
-        raise ValueError(f"unknown model family - only 'llama' and 'falcon' accepted")
+        raise ValueError(MODEL_ERROR_MSG.format(model.config.model_type))
     return lm_logits
 
 
@@ -117,18 +108,18 @@ class RotaryEmbedding(torch.nn.Module):
 
 def fix_rotary_embedding(model):
     for module in model.modules():
-        if hasattr(module, "maybe_rotary"):
+        if hasattr(module, "maybe_rotary"):  # use for switch
             head_dim = module.head_dim
             module.maybe_rotary = RotaryEmbedding(head_dim)
 
 
-def get_layers(model, args):
-    if "llama" in args.model_path:
+def get_layers(model):
+    if model.config.model_type == "llama":
         return model.model.layers
-    elif "falcon" in args.model_path:
+    elif model.config.model_type == "RefinedWebModel":
         return model.transformer.h
     else:
-        raise ValueError(f"unknown model family - only 'llama' and 'falcon' accepted")
+        raise ValueError(MODEL_ERROR_MSG.format(model.config.model_type))
 
 
 def find_layers(module, layers=(nn.Conv2d, nn.Linear)):
@@ -139,15 +130,15 @@ def find_layers(module, layers=(nn.Conv2d, nn.Linear)):
     return res
 
 
-def get_sequential_groups(args):
-    if "llama" in args.model_path:
+def get_sequential_groups(model):
+    if model.config.model_type == "llama":
         return [
             ["self_attn.k_proj", "self_attn.v_proj", "self_attn.q_proj"],
             ["self_attn.o_proj"],
             ["mlp.up_proj", "mlp.gate_proj"],
             ["mlp.down_proj"],
         ]
-    elif "falcon" in args.model_path:
+    elif model.config.model_type == "RefinedWebModel":
         return [
             ["self_attention.query_key_value"],
             ["self_attention.dense"],
@@ -155,4 +146,4 @@ def get_sequential_groups(args):
             ["mlp.dense_4h_to_h"],
         ]
     else:
-        raise ValueError(f"unknown model family - only 'llama' and 'falcon' accepted")
+        raise ValueError(MODEL_ERROR_MSG.format(model.config.model_type))

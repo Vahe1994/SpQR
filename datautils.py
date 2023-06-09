@@ -18,7 +18,6 @@ def get_wikitext2(nsamples, seed, seqlen, tokenizer):
     trainenc = tokenizer("\n\n".join(traindata["text"]), return_tensors="pt")
     testenc = tokenizer("\n\n".join(testdata["text"]), return_tensors="pt")
 
-
     trainloader = []
     for _ in range(nsamples):
         i = random.randint(0, trainenc.input_ids.shape[1] - seqlen - 1)
@@ -179,4 +178,6 @@ def get_loaders(name, nsamples=128, seed=0, seqlen=2048, model_path=""):
             return get_c4_new(nsamples, seed, seqlen, tokenizer)
         return get_c4(nsamples, seed, seqlen, tokenizer)
     else:
-        raise ValueError(f"Unable to load {name} - only wikitext2, ptb, c4 are supported.")
+        raise ValueError(
+            f"Unable to load {name} - only wikitext2, ptb, c4 are supported."
+        )
