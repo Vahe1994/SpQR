@@ -13,8 +13,8 @@ from lm_eval.base import BaseLM
 import os
 import sys
 
-assert os.path.basename(os.getcwd()) == "lm-evaluation-harness"
-sys.path.append(os.path.join(os.getcwd(), ".."))
+import_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../..")
+sys.path.append(import_path)
 from main import compress_model
 from datautils import get_loaders
 from spqr_config import QuantizationConfig
@@ -266,7 +266,7 @@ class HuggingFaceAutoLM(BaseLM):
         tokenizer: Optional[str] = None,
     ) -> transformers.PreTrainedTokenizer:
         """Returns a pre-trained tokenizer from a pre-trained tokenizer configuration."""
-        if self.model.config.model_type == "llama":
+        if 'llama' in pretrained or 'alpaca' in pretrained:
             from transformers import LlamaTokenizer
             tokenizer = LlamaTokenizer.from_pretrained(pretrained)
         else:

@@ -5,6 +5,7 @@ __all__ = ["QuantizationConfig"]
 
 @dataclass
 class QuantizationConfig:
+    model_path: str = None
     dataset: str = "c4"
     custom_data_path: str = ""
     seed: int = 0
@@ -26,11 +27,9 @@ class QuantizationConfig:
     qq_mse: bool = True
     outlier_threshold: float = float("inf")
     simplified_outliers: bool = False
-    outlier_percentile_base: float = 0.99
-    outlier_percentile_multiple: float = 1.0
-    outlier_cols_enable: bool = False
-    outlier_rows_enable: bool = False
     offload_activations: bool = False
+    load: bool = False
+    skip_out_loss: bool = False
 
     @classmethod
     def from_dict(cls, d):
