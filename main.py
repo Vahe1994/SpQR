@@ -67,8 +67,6 @@ def get_inps(model, args, data_iterable, device, nsamples=None):
     """mocks model launch to collect inputs to the first model layer"""
     print("catching inputs from data", flush=True)
 
-    use_cache = model.config.use_cache
-    model.config.use_cache = False
     layers = get_layers(model)
 
     nsamples = nsamples or args.nsamples
@@ -90,11 +88,10 @@ def get_inps(model, args, data_iterable, device, nsamples=None):
         (nsamples, model.seqlen, model.config.hidden_size), dtype=dtype, device=device
     )
 
-    forward_arg_names = (
-        ("attention_mask",)
-        if "llama" in args.model_path
-        else ("attention_mask", "alibi")
-    )
+    forward_arg_names = ("attention_mask",)
+    if model.config.model_type == "RefinedWebModel":
+        forward_arg_names = (*forward_arg_names, "alibi")
+
     cache = {"i": 0, "attention_mask": None, "alibi": None}
 
     class Catcher(nn.Module):
@@ -128,7 +125,6 @@ def get_inps(model, args, data_iterable, device, nsamples=None):
     torch.cuda.empty_cache()
 
     forward_args = {k: cache[k] for k in forward_arg_names}
-    model.config.use_cache = use_cache
     return inps, forward_args
 
 
@@ -256,7 +252,7 @@ def compress_spqr(model, dataloader, args, dev):
         # Logging
         stats_payload["layer_time"] = time.time() - start_time
         stats_payload["ol_share"] = round(normal_outlier_count / max(w_count, 1), 6)
-        stats_payload["out_loss"] = torch.mean(out_losses).item()
+        stats_payload["out_loss"] = torch.mean(torch.Tensor(out_losses)).item()
         stats_payload["Step"] = i
 
         normal_outlier_count_global += normal_outlier_count
@@ -587,7 +583,6 @@ if __name__ == "__main__":
         dataloader, testloader = get_loaders(
             dataset, seed=args.seed, model_path=args.model_path, seqlen=model.seqlen
         )
-        print(dataset)
         args.dataset_name = dataset
         perplexity_eval(model, testloader, args, device)
 
