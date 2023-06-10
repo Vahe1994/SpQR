@@ -266,9 +266,8 @@ class HuggingFaceAutoLM(BaseLM):
         tokenizer: Optional[str] = None,
     ) -> transformers.PreTrainedTokenizer:
         """Returns a pre-trained tokenizer from a pre-trained tokenizer configuration."""
-        if "llama" in pretrained.lower() or "alpaca" in pretrained.lower():
+        if self.model.config.model_type == "llama":
             from transformers import LlamaTokenizer
-
             tokenizer = LlamaTokenizer.from_pretrained(pretrained)
         else:
             tokenizer = self.AUTO_TOKENIZER_CLASS.from_pretrained(
