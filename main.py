@@ -1,12 +1,22 @@
+import os
 import time
-
-import wandb
 from tqdm import trange
 
 from spqr_engine import SPQRUtil, Quantizer, quantize
+from datautils import get_loaders
 from modelutils import *
 
-from datautils import get_loaders
+try:
+    import wandb
+    has_wandb = True
+except:
+    has_wandb = False
+
+try:
+    import safetensors
+    has_safetensors = True
+except:
+    has_safetensors = False
 
 
 def get_average_number_of_bits(
@@ -44,23 +54,22 @@ def get_average_number_of_bits(
     # correct accounting for outliers
     if global_ol_n_share > 0:
         wbits_avg += 32 * global_ol_n_share
-        # wbits_avg += (32 - wbits) * global_ol_n_share  # variant from LM eval
     return round(wbits_avg, 2)
 
 
-def compress_model(model, dataloader, args, dev):
-    """main entry point to functions for model compression"""
+def quantize_model(model, dataloader, args, dev):
+    """main entry point to functions for model quantizeion"""
     tick = time.time()
     if args.load:
         raise NotImplementedError()
     elif args.wbits == 16:
-        print("not compressing the model with args.wbits=16", flush=True)
+        print("not quantizing the model with args.wbits=16", flush=True)
         results = None, args.wbits
     elif args.nearest:
-        results = compress_nearest(model, args, dev)
+        results = quantize_nearest(model, args, dev)
     else:
-        results = compress_spqr(model, dataloader, args, dev)
-    print(f"compression time: {time.time() - tick:.1f}")
+        results = quantize_spqr(model, dataloader, args, dev)
+    print(f"quantizeion time: {time.time() - tick:.1f}")
     return results
 
 
@@ -131,11 +140,11 @@ def get_inps(model, args, data_iterable, device, nsamples=None):
 
 
 @torch.no_grad()
-def compress_spqr(model, dataloader, args, dev):
+def quantize_spqr(model, dataloader, args, dev):
     inps, forward_args = get_inps(model, args, dataloader, dev)
     outs = torch.zeros_like(inps)
 
-    print("\nStarting SPQR compression ...")
+    print("\nStarting SPQR quantization ...")
     use_cache = model.config.use_cache  # TODO find proper context for no cache use
     model.config.use_cache = False
 
@@ -174,7 +183,7 @@ def compress_spqr(model, dataloader, args, dev):
             for name in subset:
                 handles.append(subset[name].register_forward_hook(add_batch(name)))
             for j in trange(
-                args.nsamples, desc="calc outs before compression", leave=False
+                args.nsamples, desc="calc outs before quantizeion", leave=False
             ):
                 outs[j] = layer(inps[j].unsqueeze(0), **forward_args)[0]
             for h in handles:
@@ -226,7 +235,7 @@ def compress_spqr(model, dataloader, args, dev):
             outs = outs.to(device)
 
         out_losses = []
-        for j in trange(args.nsamples, desc="calc outs after compression", leave=False):
+        for j in trange(args.nsamples, desc="calc outs after quantizeion", leave=False):
             outs_batch = layer(inps[j].unsqueeze(0), **forward_args)[0]
             if not args.skip_out_loss:
                 outs_batch_loss = (
@@ -286,10 +295,10 @@ def compress_spqr(model, dataloader, args, dev):
 
 
 @torch.no_grad()
-def compress_nearest(model, args, dev):
-    """Round-to-nearest compression"""
+def quantize_nearest(model, args, dev):
+    """Round-to-nearest quantizeion"""
     layers = get_layers(model)
-    for i in trange(len(layers), desc="compressing layers to nearest"):
+    for i in trange(len(layers), desc="quantizeing layers to nearest"):
         layer = layers[i].to(dev)
         subset = find_layers(layer)
         for name in subset:
@@ -373,7 +382,7 @@ if __name__ == "__main__":
         help="Where to extract calibration data from.",
     )
     parser.add_argument(
-        "--load_from_saved",
+        "--custom_data_path",
         type=str,
         default=None,
         help="Path to load if specified.",
@@ -484,30 +493,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--load", type=str, default="", help="Load quantized model.")
     parser.add_argument(
-        "--benchmark",
-        type=int,
-        default=0,
-        help="Number of tokens to use for benchmarking.",
-    )
-    parser.add_argument(
-        "--check",
-        action="store_true",
-        help="Whether to compute perplexity during benchmarking for verification.",
-    )
-    parser.add_argument(
         "--wandb", action="store_true", help="Whether to use wandb or store locally."
-    )
-    parser.add_argument(
-        "--wandb_dir",
-        type=str,
-        default="",
-        help="Directory where to store local wandb files.",
-    )
-    parser.add_argument(
-        "--wandb_exp_name",
-        type=str,
-        default="SpQR",
-        help="Suffix of wandb experiments name.",
     )
     parser.add_argument(
         "--skip_out_loss",
@@ -528,17 +514,11 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
+    # load model
+    model = get_model(args.model_path, args.dtype).train(False)
 
-    if type(args.load) is not str:
-        args.load = args.load.as_posix()
-
-    if args.load:
-        raise NotImplementedError()
-    else:
-        model = get_model(args.model_path, args.dtype).train(False)
-
-    if args.load_from_saved:
-        dataloader = torch.load(args.load_from_saved)[: args.nsamples]
+    if args.custom_data_path:
+        dataloader = torch.load(args.custom_data_path)[: args.nsamples]
         testloader = None
     else:
         assert args.dataset != "custom"
@@ -551,8 +531,9 @@ if __name__ == "__main__":
         )
 
     if args.wandb:
+        assert has_wandb, "`wandb` not installed, try pip install `wandb`"
         args.exp_name = (
-            args.wandb_exp_name
+            os.environ.get("WANDB_NAME", "SpQR_run")
             + f"_wbits_{args.wbits}"
             + f"_groupsize_{args.groupsize}"
             + f"_qq_scale_bits_{args.qq_scale_bits}"
@@ -562,21 +543,14 @@ if __name__ == "__main__":
             + f"_permord_{args.permutation_order}"
             + f"{'_new_eval' if args.new_eval else ''}"
         )
-        wandb.init(  # TODO add args for entity and project name or describe usage of env variables
-            name=args.exp_name,
-            dir=args.wandb_dir,
+        wandb.init(
             config={a: getattr(args, a) for a in dir(args) if not a.startswith("_")},
         )
         wandb.run.log_code(".")
-    else:
-        wandb.init(mode="disabled")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    compress_model(model, dataloader, args, device)
-
-    if args.benchmark:
-        raise NotImplementedError()
+    quantize_model(model, dataloader, args, device)
 
     datasets = ["wikitext2", "ptb", "c4"]
     if args.new_eval:
@@ -588,5 +562,9 @@ if __name__ == "__main__":
         args.dataset_name = dataset
         perplexity_eval(model, testloader, args, device)
 
-    if args.save or args.save_safetensors:
-        raise NotImplementedError()
+    if args.save_pt:
+        model.save_pretrained(args.save_pt)
+    
+    if args.save_safetensors:
+        assert has_safetensors, "`safetensors` not installed, try pip install `safetensors`"
+        safetensors.torch.save_file(model.state_dict(), args.save_safetensors)
