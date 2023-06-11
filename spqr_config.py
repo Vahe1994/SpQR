@@ -30,6 +30,7 @@ class QuantizationConfig:
     offload_activations: bool = False
     load: bool = False
     skip_out_loss: bool = False
+    wandb: bool = False
 
     @classmethod
     def from_dict(cls, d):

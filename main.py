@@ -571,7 +571,7 @@ if __name__ == "__main__":
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    model = compress_model(model, dataloader, args, device)
+    compress_model(model, dataloader, args, device)
 
     if args.benchmark:
         raise NotImplementedError()
