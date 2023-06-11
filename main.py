@@ -26,7 +26,9 @@ def get_average_number_of_bits(
     groupsize = groupsize or float("inf")
     qq_groupsize = qq_groupsize or float("inf")
 
-    if round_zero:
+    if groupsize is None:
+        wbits_avg = wbits
+    elif round_zero:
         wbits_avg = (
             wbits
             + (qq_scale_bits + wbits) / groupsize
@@ -42,7 +44,7 @@ def get_average_number_of_bits(
     # correct accounting for outliers
     if global_ol_n_share > 0:
         wbits_avg += 32 * global_ol_n_share
-
+        # wbits_avg += (32 - wbits) * global_ol_n_share  # variant from LM eval
     return round(wbits_avg, 2)
 
 
@@ -53,13 +55,13 @@ def compress_model(model, dataloader, args, dev):
         raise NotImplementedError()
     elif args.wbits == 16:
         print("not compressing the model with args.wbits=16", flush=True)
-        pass
+        results = None, args.wbits
     elif args.nearest:
-        model = compress_nearest(model, args, dev)
+        results = compress_nearest(model, args, dev)
     else:
-        model = compress_spqr(model, dataloader, args, dev)
+        results = compress_spqr(model, dataloader, args, dev)
     print(f"compression time: {time.time() - tick:.1f}")
-    return model
+    return results
 
 
 @torch.no_grad()
@@ -280,7 +282,7 @@ def compress_spqr(model, dataloader, args, dev):
         wandb.log({"wbits_avg": wbits_avg})
 
     model.config.use_cache = use_cache
-    return quantizers
+    return quantizers, wbits_avg
 
 
 @torch.no_grad()
@@ -301,7 +303,7 @@ def compress_nearest(model, args, dev):
         layers[i] = layer.cpu()
         del layer
         torch.cuda.empty_cache()
-    return model
+    return None, args.wbits
 
 
 @torch.no_grad()
