@@ -9,13 +9,13 @@ from modelutils import *
 try:
     import wandb
     has_wandb = True
-except:
+except ModuleNotFoundError:
     has_wandb = False
 
 try:
     import safetensors
     has_safetensors = True
-except:
+except ModuleNotFoundError:
     has_safetensors = False
 
 
@@ -58,7 +58,7 @@ def get_average_number_of_bits(
 
 
 def quantize_model(model, dataloader, args, dev):
-    """main entry point to functions for model quantizeion"""
+    """main entry point to functions for model quantization"""
     tick = time.time()
     if args.load:
         raise NotImplementedError()
@@ -69,7 +69,7 @@ def quantize_model(model, dataloader, args, dev):
         results = quantize_nearest(model, args, dev)
     else:
         results = quantize_spqr(model, dataloader, args, dev)
-    print(f"quantizeion time: {time.time() - tick:.1f}")
+    print(f"quantization time: {time.time() - tick:.1f}")
     return results
 
 
@@ -183,7 +183,7 @@ def quantize_spqr(model, dataloader, args, dev):
             for name in subset:
                 handles.append(subset[name].register_forward_hook(add_batch(name)))
             for j in trange(
-                args.nsamples, desc="calc outs before quantizeion", leave=False
+                args.nsamples, desc="calc outs before quantization", leave=False
             ):
                 outs[j] = layer(inps[j].unsqueeze(0), **forward_args)[0]
             for h in handles:
@@ -235,7 +235,7 @@ def quantize_spqr(model, dataloader, args, dev):
             outs = outs.to(device)
 
         out_losses = []
-        for j in trange(args.nsamples, desc="calc outs after quantizeion", leave=False):
+        for j in trange(args.nsamples, desc="calc outs after quantization", leave=False):
             outs_batch = layer(inps[j].unsqueeze(0), **forward_args)[0]
             if not args.skip_out_loss:
                 outs_batch_loss = (
@@ -296,9 +296,9 @@ def quantize_spqr(model, dataloader, args, dev):
 
 @torch.no_grad()
 def quantize_nearest(model, args, dev):
-    """Round-to-nearest quantizeion"""
+    """Round-to-nearest quantization"""
     layers = get_layers(model)
-    for i in trange(len(layers), desc="quantizeing layers to nearest"):
+    for i in trange(len(layers), desc="quantizing layers to nearest"):
         layer = layers[i].to(dev)
         subset = find_layers(layer)
         for name in subset:
@@ -339,7 +339,7 @@ def perplexity_eval(model, testenc, args, dev):
         torch.cuda.empty_cache()
         inps, outs = outs, inps
 
-    move_head(model, dev)
+    get_model_head(model).to(dev)
     testenc = testenc.to(dev)
 
     nlls = []
@@ -356,7 +356,7 @@ def perplexity_eval(model, testenc, args, dev):
     ppl = torch.exp(torch.stack(nlls).sum() / (nsamples * model.seqlen))
     print(f"\n{args.dataset_name} perplexity = {ppl.item():.4f}\n")
 
-    move_head(model, torch.device("cpu"))
+    get_model_head(model).to(torch.device("cpu"))
 
     if args.wandb:
         wandb.log({args.dataset_name: ppl.item()})
@@ -480,7 +480,7 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
-        "--save",
+        "--save_pt",
         type=str,
         default="",
         help="Save quantized checkpoint under this name.",

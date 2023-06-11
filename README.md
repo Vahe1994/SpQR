@@ -1,4 +1,4 @@
-# SPQR model compression
+# SpQR model compression
 
 
 **Note:** This repository contains quantization algorithm and the model evaluation code for SpQR method for LLM compression; 
@@ -31,7 +31,7 @@ This repository is expected to work with one of the `LLaMA` or `Falcon` models.
 #### Data
 
 For quantization with SpQR its is recommended to use the subset of the data model 
-was trained on. I.e for quantization of `LLaMA` models we recommend to use the subset
+was trained on. I.e. for quantization of `LLaMA` models we recommend to use the subset
 of [RedPajamas](https://huggingface.co/datasets/togethercomputer/RedPajama-Data-1T-Sample) and for `Falcon` quantization - (RefinedWeb)[https://huggingface.co/datasets/tiiuae/falcon-refinedweb]. Both subsets 
 are stored in `data` directory: 
 * `data/red_pajama_n=1024.pth`
@@ -52,7 +52,7 @@ Specify `WANDB_ENTITY`, `WANDB_PROJECT`, `WANDB_NAME` environmental prior to run
 This code was developed and tested using a single A100 GPU with 80GB GPU RAM. It may successfully run on GPUs with 32 - 40GB   
 
 ### Model downloading
-The code requires the LLaMA model to be dowloaded in Hugging Face format and saved locally. The scripts below require such model folder path as argument.
+The code requires the LLaMA model to be downloaded in Hugging Face format and saved locally. The scripts below require such model folder path as argument.
 
 ### Perplexity benchmarks:
 This script compresses the model and then tests its performance in terms of perplexity using WikiText2, 

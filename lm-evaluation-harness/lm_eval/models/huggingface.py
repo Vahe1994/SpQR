@@ -15,10 +15,9 @@ import sys
 
 import_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../..")
 sys.path.append(import_path)
-from main import compress_model
+from main import quantize_model
 from datautils import get_loaders
 from spqr_config import QuantizationConfig
-from modelutils import fix_rotary_embedding
 
 TokenSequence = Union[List[int], torch.LongTensor, torch.Tensor, BatchEncoding]
 
@@ -191,9 +190,6 @@ class HuggingFaceAutoLM(BaseLM):
             cache_dir=cache_dir,
             **accelerate_kwargs,
         )
-        if self.model.config.model_type == "RefinedWebModel":
-            fix_rotary_embedding(self.model)
-
         self.model.eval()
         torch.set_grad_enabled(False)
 
@@ -219,7 +215,7 @@ class HuggingFaceAutoLM(BaseLM):
                     seqlen=self.model.seqlen,
                 )
 
-            compress_model(self.model, train_data, quantization_config, device)
+            quantize_model(self.model, train_data, quantization_config, device)
 
         self._device = device
         if use_accelerate and "lm_head" in self.model.hf_device_map:

@@ -18,18 +18,19 @@ def get_model(model_path, dtype="auto"):
     return model
 
 
-def move_head(model, device):
+def get_model_head(model):
+    head = torch.nn.ModuleList()
     if model.config.model_type == "llama":
         if model.model.norm is not None:
-            model.model.norm = model.model.norm.to(device)
-        model.lm_head = model.lm_head.to(device)
+            head.append(model.model.norm)
+        head.append(model.lm_head)
     elif model.config.model_type == "RefinedWebModel":
         if model.transformer.ln_f is not None:
-            model.transformer.ln_f = model.transformer.ln_f.to(device)
-        model.lm_head = model.lm_head.to(device)
+            head.append(model.transformer.ln_f)
+        head.append(model.lm_head)
     else:
         raise ValueError(MODEL_ERROR_MSG.format(model.config.model_type))
-
+    return head
 
 def get_lm_logits(inps_, model):
     if model.config.model_type == "llama":
