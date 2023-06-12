@@ -517,18 +517,14 @@ if __name__ == "__main__":
     # load model
     model = get_model(args.model_path, args.dtype).train(False)
 
-    if args.custom_data_path:
-        dataloader = torch.load(args.custom_data_path)[: args.nsamples]
-        testloader = None
-    else:
-        assert args.dataset != "custom"
-        dataloader, testloader = get_loaders(
-            args.dataset,
-            nsamples=args.nsamples,
-            seed=args.seed,
-            model_path=args.model_path,
-            seqlen=model.seqlen,
-        )
+    dataloader, testloader = get_loaders(
+        args.dataset,
+        custom_data_path=args.custom_data_path,
+        nsamples=args.nsamples,
+        seed=args.seed,
+        model_path=args.model_path,
+        seqlen=model.seqlen,
+    )
 
     if args.wandb:
         assert has_wandb, "`wandb` not installed, try pip install `wandb`"

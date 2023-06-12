@@ -158,7 +158,13 @@ def get_c4_new(nsamples, seed, seqlen, tokenizer):
     return trainloader, valenc
 
 
-def get_loaders(name, nsamples=128, seed=0, seqlen=2048, model_path=""):
+def get_loaders(name, custom_data_path=None, nsamples=128, seed=0, seqlen=2048, model_path=""):
+    if custom_data_path:
+        dataloader = torch.load(custom_data_path)[: nsamples]
+        return dataloader, None
+
+    assert name != "custom"
+
     if "llama" in model_path:
         tokenizer = LlamaTokenizer.from_pretrained(model_path, use_fast=False)
         # addresses problem on inconsistent `LLaMATokenizer` capitalization
