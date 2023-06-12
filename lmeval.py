@@ -121,6 +121,8 @@ def main():
         check_integrity=args.check_integrity,
         log_wandb=args.log_wandb,
     )
+    if not isinstance(results["config"]["model"], str):
+        results["config"]["model"] = results["config"]["model"].model.config._name_or_path
 
     dumped = json.dumps(results, indent=2)
     print(dumped)
