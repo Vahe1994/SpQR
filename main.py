@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 from tqdm import trange
 
+from datautils import get_loaders
 from spqr_engine import SPQRUtil, Quantizer, quantize
 
 

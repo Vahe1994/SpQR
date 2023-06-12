@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 from transformers import AutoModelForCausalLM
 
+from datautils_for_rw import get_loaders
 from spqr_engine import SPQRUtil, Quantizer, quantize
 
 
