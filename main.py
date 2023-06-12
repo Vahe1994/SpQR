@@ -57,7 +57,7 @@ def get_average_number_of_bits(
     return round(wbits_avg, 2)
 
 
-def quantize_model(model, dataloader, args, dev):
+def quantize_model(model, dataloader, args, device):
     """main entry point to functions for model quantization"""
     tick = time.time()
     if args.load:
@@ -66,15 +66,15 @@ def quantize_model(model, dataloader, args, dev):
         print("not quantizing the model with args.wbits=16", flush=True)
         results = None, args.wbits
     elif args.nearest:
-        results = quantize_nearest(model, args, dev)
+        results = quantize_nearest(model, args, device)
     else:
-        results = quantize_spqr(model, dataloader, args, dev)
+        results = quantize_spqr(model, dataloader, args, device)
     print(f"quantization time: {time.time() - tick:.1f}")
     return results
 
 
 @torch.no_grad()
-def get_inps(model, args, data_iterable, device, nsamples=None):
+def get_inps(model, data_iterable, args, device, nsamples=None):
     """mocks model launch to collect inputs to the first model layer"""
     print("catching inputs from data", flush=True)
 
@@ -91,7 +91,9 @@ def get_inps(model, args, data_iterable, device, nsamples=None):
 
         data_iterable = batch_generator(data_iterable, model.seqlen, nsamples)
 
-    model.get_input_embeddings().to(device)
+    emb = model.get_input_embeddings().to(device)
+    emb_dev = emb.weight.device
+    layer_dev = next(layers[0].parameters()).device
     layers[0] = layers[0].to(device)
 
     dtype = next(iter(model.parameters())).dtype
@@ -131,8 +133,8 @@ def get_inps(model, args, data_iterable, device, nsamples=None):
     torch.set_num_threads(saved_num_threads)
     layers[0] = layers[0].module
 
-    layers[0] = layers[0].cpu()
-    model.get_input_embeddings().to(torch.device("cpu"))
+    layers[0] = layers[0].to(layer_dev)
+    model.get_input_embeddings().to(emb_dev)
     torch.cuda.empty_cache()
 
     forward_args = {k: cache[k] for k in forward_arg_names}
@@ -140,12 +142,13 @@ def get_inps(model, args, data_iterable, device, nsamples=None):
 
 
 @torch.no_grad()
-def quantize_spqr(model, dataloader, args, dev):
-    inps, forward_args = get_inps(model, args, dataloader, dev)
+def quantize_spqr(model, dataloader, args, device):
+    print(f"{device=}")
+    inps, forward_args = get_inps(model, dataloader, args, device)
     outs = torch.zeros_like(inps)
 
     print("\nStarting SPQR quantization ...")
-    use_cache = model.config.use_cache  # TODO find proper context for no cache use
+    use_cache = model.config.use_cache
     model.config.use_cache = False
 
     quantizers = {}
@@ -159,7 +162,8 @@ def quantize_spqr(model, dataloader, args, dev):
 
         start_time = time.time()
         layer_dev = next(layers[i].parameters()).device
-        layer = layers[i].to(dev)
+        print(f"{layer_dev=}")
+        layer = layers[i].to(device)
         full = find_layers(layer)
 
         if args.true_sequential:
