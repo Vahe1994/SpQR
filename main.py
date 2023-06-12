@@ -158,6 +158,7 @@ def quantize_spqr(model, dataloader, args, dev):
         stats_payload = {}
 
         start_time = time.time()
+        layer_dev = next(layers[i].parameters()).device
         layer = layers[i].to(dev)
         full = find_layers(layer)
 
@@ -253,7 +254,7 @@ def quantize_spqr(model, dataloader, args, dev):
             outs[j] = outs_batch
         del outs_batch
 
-        layers[i] = layer.cpu()
+        layers[i] = layer.to(layer_dev)
         del layer
         del spqr_handlers
         torch.cuda.empty_cache()
@@ -299,6 +300,7 @@ def quantize_nearest(model, args, dev):
     """Round-to-nearest quantization"""
     layers = get_layers(model)
     for i in trange(len(layers), desc="quantizing layers to nearest"):
+        layer_dev = next(layers[i].parameters()).device
         layer = layers[i].to(dev)
         subset = find_layers(layer)
         for name in subset:
@@ -309,7 +311,7 @@ def quantize_nearest(model, args, dev):
             subset[name].weight.data = quantize(
                 W, quantizer.scale, quantizer.zero, quantizer.maxq
             ).to(next(iter(layer.parameters())).dtype)
-        layers[i] = layer.cpu()
+        layers[i] = layer.to(layer_dev)
         del layer
         torch.cuda.empty_cache()
     return None, args.wbits
