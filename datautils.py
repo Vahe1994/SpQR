@@ -11,7 +11,7 @@ def set_seed(seed):
     torch.random.manual_seed(seed)
 
 
-def get_wikitext2(nsamples, seed, seqlen, tokenizer):
+def get_wikitext2(nsamples, seqlen, tokenizer):
     traindata = load_dataset("wikitext", "wikitext-2-raw-v1", split="train")
     testdata = load_dataset("wikitext", "wikitext-2-raw-v1", split="test")
 
@@ -29,14 +29,13 @@ def get_wikitext2(nsamples, seed, seqlen, tokenizer):
     return trainloader, testenc
 
 
-def get_ptb(nsamples, seed, seqlen, tokenizer):
+def get_ptb(nsamples, seqlen, tokenizer):
     traindata = load_dataset("ptb_text_only", "penn_treebank", split="train")
     valdata = load_dataset("ptb_text_only", "penn_treebank", split="validation")
 
     trainenc = tokenizer("\n\n".join(traindata["sentence"]), return_tensors="pt")
     testenc = tokenizer("\n\n".join(valdata["sentence"]), return_tensors="pt")
 
-    set_seed(seed)
     trainloader = []
     for _ in range(nsamples):
         i = random.randint(0, trainenc.input_ids.shape[1] - seqlen - 1)
@@ -48,7 +47,7 @@ def get_ptb(nsamples, seed, seqlen, tokenizer):
     return trainloader, testenc
 
 
-def get_c4(nsamples, seed, seqlen, tokenizer):
+def get_c4(nsamples, seqlen, tokenizer):
     traindata = load_dataset(
         "allenai/c4",
         "allenai--c4",
@@ -62,7 +61,6 @@ def get_c4(nsamples, seed, seqlen, tokenizer):
         split="validation",
     )
 
-    set_seed(seed)
     trainloader = []
     for _ in range(nsamples):
         while True:
@@ -77,7 +75,6 @@ def get_c4(nsamples, seed, seqlen, tokenizer):
         tar[:, :-1] = -100
         trainloader.append((inp, tar))
 
-    set_seed(seed)
     valenc = []
     for _ in range(256):
         while True:
@@ -98,14 +95,13 @@ def get_c4(nsamples, seed, seqlen, tokenizer):
     return trainloader, valenc
 
 
-def get_ptb_new(nsamples, seed, seqlen, tokenizer):
+def get_ptb_new(nsamples, seqlen, tokenizer):
     traindata = load_dataset("ptb_text_only", "penn_treebank", split="train")
     testdata = load_dataset("ptb_text_only", "penn_treebank", split="test")
 
     trainenc = tokenizer(" ".join(traindata["sentence"]), return_tensors="pt")
     testenc = tokenizer(" ".join(testdata["sentence"]), return_tensors="pt")
 
-    set_seed(seed)
     trainloader = []
     for _ in range(nsamples):
         i = random.randint(0, trainenc.input_ids.shape[1] - seqlen - 1)
@@ -117,7 +113,7 @@ def get_ptb_new(nsamples, seed, seqlen, tokenizer):
     return trainloader, testenc
 
 
-def get_c4_new(nsamples, seed, seqlen, tokenizer):
+def get_c4_new(nsamples, seqlen, tokenizer):
     traindata = load_dataset(
         "allenai/c4",
         "allenai--c4",
@@ -131,7 +127,6 @@ def get_c4_new(nsamples, seed, seqlen, tokenizer):
         split="validation",
     )
 
-    set_seed(seed)
     trainloader = []
     for _ in range(nsamples):
         while True:
@@ -159,13 +154,31 @@ def get_c4_new(nsamples, seed, seqlen, tokenizer):
 
 
 def get_loaders(name, custom_data_path=None, nsamples=128, seed=0, seqlen=2048, model_path=""):
+    """
+    Loads and prepares data for a Transformers model.
+    Args:
+        name (str): The name of the dataset to load. This can be one of 'wikitext2', 'c4', 'ptb' or 'custom'
+        custom_data_path (str, optional): The path to a custom dataset file. Assumes name=='custom'
+        nsamples (int, optional): The number of samples to load from the dataset. Defaults to 128.
+        seed (int, optional): The random seed value for data shuffling and splitting. Defaults to 0.
+        seqlen (int, optional): The maximum sequence length for input tokenization. Defaults to 2048.
+        model_path (str, optional): The path to the pretrained model weights or full model name.
+            used to detect llama to call proper tokenizer.
+            see https://github.com/huggingface/transformers/issues/22222#issuecomment-1488578722 for reasons.
+    Returns:
+        train_loader (torch.utils.data.DataLoader or iterable): DataLoader for the training dataset.
+        test_loader (torch.utils.data.DataLoader or iterable): DataLoader for the test dataset.
+    """
+
+    set_seed(seed)
+
     if custom_data_path:
         dataloader = torch.load(custom_data_path)[: nsamples]
         return dataloader, None
 
     assert name != "custom"
 
-    if "llama" in model_path:
+    if "llama" in model_path.split('/').lower():
         tokenizer = LlamaTokenizer.from_pretrained(model_path, use_fast=False)
         # addresses problem on inconsistent `LLaMATokenizer` capitalization
         # also fixable by changing `LLaMATokenizer` to `LlamaTokenizer` in tokenizer_config.json
@@ -174,15 +187,15 @@ def get_loaders(name, custom_data_path=None, nsamples=128, seed=0, seqlen=2048, 
         tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
 
     if "wikitext2" in name:
-        return get_wikitext2(nsamples, seed, seqlen, tokenizer)
+        return get_wikitext2(nsamples, seqlen, tokenizer)
     elif "ptb" in name:
         if "new" in name:
-            return get_ptb_new(nsamples, seed, seqlen, tokenizer)
-        return get_ptb(nsamples, seed, seqlen, tokenizer)
+            return get_ptb_new(nsamples, seqlen, tokenizer)
+        return get_ptb(nsamples, seqlen, tokenizer)
     elif "c4" in name:
         if "new" in name:
-            return get_c4_new(nsamples, seed, seqlen, tokenizer)
-        return get_c4(nsamples, seed, seqlen, tokenizer)
+            return get_c4_new(nsamples, seqlen, tokenizer)
+        return get_c4(nsamples, seqlen, tokenizer)
     else:
         raise ValueError(
             f"Unable to load {name} - only wikitext2, ptb, c4 are supported."
