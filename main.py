@@ -57,7 +57,7 @@ def get_average_number_of_bits(
     return round(wbits_avg, 2)
 
 
-def quantize_model(model, dataloader, args, device):
+def quantize_model(model, args, device):
     """main entry point to functions for model quantization"""
     tick = time.time()
     if args.load:
@@ -68,6 +68,15 @@ def quantize_model(model, dataloader, args, device):
     elif args.nearest:
         results = quantize_nearest(model, args, device)
     else:
+        print("Loading data ...")
+        dataloader, _ = get_loaders(
+            args.dataset,
+            custom_data_path=args.custom_data_path,
+            nsamples=args.nsamples,
+            seed=args.seed,
+            model_path=args.model_path,
+            seqlen=model.seqlen,
+        )
         results = quantize_spqr(model, dataloader, args, device)
     print(f"quantization time: {time.time() - tick:.1f}")
     return results
@@ -81,6 +90,9 @@ def get_inps(model, data_iterable, args, device, nsamples=None):
     layers = get_layers(model)
 
     nsamples = nsamples or args.nsamples
+
+    if hasattr(data_iterable, 'input_ids'):
+        data_iterable = data_iterable.input_ids
 
     if isinstance(data_iterable, torch.Tensor):
 
@@ -325,13 +337,15 @@ def quantize_nearest(model, args, dev):
 def perplexity_eval(model, testenc, args, dev):
     print(f"\nEvaluating perplexity for {args.dataset_name} dataset ...")
 
-    testenc = testenc.input_ids
+    if hasattr(testenc, 'input_ids'):
+        testenc = testenc.input_ids
+        print('ii fixed')
     nsamples = testenc.numel() // model.seqlen
 
     use_cache = model.config.use_cache
     model.config.use_cache = False
 
-    inps, forward_args = get_inps(model, args, testenc, device=dev, nsamples=nsamples)
+    inps, forward_args = get_inps(model, testenc, args, device=dev, nsamples=nsamples)
     outs = torch.zeros_like(inps)
 
     layers = get_layers(model)
@@ -520,17 +534,6 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
-    # load model
-    model = get_model(args.model_path, args.dtype).train(False)
-
-    dataloader, testloader = get_loaders(
-        args.dataset,
-        custom_data_path=args.custom_data_path,
-        nsamples=args.nsamples,
-        seed=args.seed,
-        model_path=args.model_path,
-        seqlen=model.seqlen,
-    )
 
     if args.wandb:
         assert has_wandb, "`wandb` not installed, try pip install `wandb`"
@@ -552,8 +555,13 @@ if __name__ == "__main__":
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    quantize_model(model, dataloader, args, device)
+    print("============  Loading model... ============")
+    model = get_model(args.model_path, args.dtype).train(False)
 
+    print("\n============ Quantizing model... ============")
+    quantize_model(model, args, device)
+
+    print("\n============ Evaluating perplexity... ============")
     datasets = ["wikitext2", "ptb", "c4"]
     if args.new_eval:
         datasets = ["wikitext2", "ptb-new", "c4-new"]
