@@ -180,9 +180,6 @@ def get_loaders(name, custom_data_path=None, nsamples=128, seed=0, seqlen=2048, 
 
     if "llama" in model_path.split('/').lower():
         tokenizer = LlamaTokenizer.from_pretrained(model_path, use_fast=False)
-        # addresses problem on inconsistent `LLaMATokenizer` capitalization
-        # also fixable by changing `LLaMATokenizer` to `LlamaTokenizer` in tokenizer_config.json
-        # see https://github.com/huggingface/transformers/issues/22222#issuecomment-1488578722
     else:
         tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
 
