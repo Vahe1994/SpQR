@@ -511,7 +511,6 @@ if __name__ == "__main__":
         default="",
         help="Save quantized `.safetensors` checkpoint under this name.",
     )
-    parser.add_argument("--load", type=str, default="", help="Load quantized model.")
     parser.add_argument(
         "--wandb", action="store_true", help="Whether to use wandb or store locally."
     )
