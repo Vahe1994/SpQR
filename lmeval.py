@@ -2,14 +2,23 @@ import argparse
 import json
 import logging
 import fnmatch
+import os
+import sys
 
-from lm_eval import tasks, evaluator
+from main import quantize_model
+from spqr_config import QuantizationConfig
+
+import_path = os.environ.get("LM_EVAL_HARNESS_PATH", "./lm-evaluation-harness")
+print(f"{import_path=}")
+sys.path.append(import_path)
+import lm_eval.models
+from lm_eval import tasks, evaluator, utils
+
 
 try:
     import wandb
-
     wandb_installed = True
-except:
+except ModuleNotFoundError:
     wandb_installed = False
 
 logging.getLogger("openai").setLevel(logging.WARNING)
@@ -108,17 +117,7 @@ def main():
 
         lm.model.seqlen = 2048
 
-        # get data
-        dataloader, _ = get_loaders(
-            quantization_config.dataset,
-            custom_data_path=quantization_config.custom_data_path,
-            nsamples=quantization_config.nsamples,
-            seed=quantization_config.seed,
-            model_path=quantization_config.model_path,
-            seqlen=lm.model.seqlen,
-        )
-
-        quantize_model(lm.model, dataloader, quantization_config, args.device)
+        quantize_model(lm.model, quantization_config, args.device)
 
     results = evaluator.simple_evaluate(
         model=lm,
