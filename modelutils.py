@@ -57,7 +57,7 @@ def get_layers(model):
         raise ValueError(MODEL_ERROR_MSG.format(model.config.model_type))
 
 
-def find_layers(module, layers=(nn.Conv2d, nn.Linear)):
+def find_sublayers(module, layers=(nn.Conv2d, nn.Linear)):
     res = {}
     for name, layer in module.named_modules():
         if isinstance(layer, layers):

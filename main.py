@@ -155,15 +155,16 @@ def get_inps(model, data_iterable, args, device, nsamples=None):
 
 @torch.no_grad()
 def quantize_spqr(model, dataloader, args, device):
-    print(f"{device=}")
+    print("\nStarting SPQR quantization ...")
+
     inps, forward_args = get_inps(model, dataloader, args, device)
     outs = torch.zeros_like(inps)
 
-    print("\nStarting SPQR quantization ...")
     use_cache = model.config.use_cache
     model.config.use_cache = False
 
     quantizers = {}
+
     normal_outlier_count_global, w_count_global = 0, 0
 
     layers = get_layers(model)
@@ -171,24 +172,30 @@ def quantize_spqr(model, dataloader, args, device):
         print(f"\n---------------- Layer {i} ----------------")
         normal_outlier_count, w_count = 0, 0
         stats_payload = {}
-
         start_time = time.time()
+
+        layer_dev_original = next(layers[i].parameters()).device  # quantized layer will return there
+        print(f"{layer_dev_original=}")
+        if layer_dev_original.type != "cuda":
+            layer = layers[i].to(device)
+        else:
+            layer = layers[i]
         layer_dev = next(layers[i].parameters()).device
-        print(f"{layer_dev=}")
-        layer = layers[i].to(device)
-        full = find_layers(layer)
+        all_sublayers = find_sublayers(layer)
+
+        inps = inps.to(layer_dev)
 
         if args.true_sequential:
             sequential = get_sequential_groups(model)
         else:
-            sequential = [list(full.keys())]
+            sequential = [list(all_sublayers.keys())]
 
         for names in sequential:
-            subset = {n: full[n] for n in names}
+            subset = {n: all_sublayers[n] for n in names}
 
             spqr_handlers = {}
-            for name in subset:
-                spqr_handlers[name] = SPQRUtil(subset[name])
+            for sublayer_name in subset:
+                spqr_handlers[sublayer_name] = SPQRUtil(subset[sublayer_name])
 
             def add_batch(name):
                 def tmp(_, inp, out):
@@ -197,8 +204,8 @@ def quantize_spqr(model, dataloader, args, device):
                 return tmp
 
             handles = []
-            for name in subset:
-                handles.append(subset[name].register_forward_hook(add_batch(name)))
+            for sublayer_name in subset:
+                handles.append(subset[sublayer_name].register_forward_hook(add_batch(sublayer_name)))
             for j in trange(
                 args.nsamples, desc="calc outs before quantization", leave=False
             ):
@@ -211,9 +218,9 @@ def quantize_spqr(model, dataloader, args, device):
                 outs = outs.cpu()
                 torch.cuda.empty_cache()
 
-            for name in subset:
-                print(f"Quantizing module {name} of layer {i}")
-                quantized = spqr_handlers[name].quantize(
+            for sublayer_name in subset:
+                print(f"Quantizing module {sublayer_name} of layer {i}")
+                quantized = spqr_handlers[sublayer_name].quantize(
                     percdamp=args.percdamp,
                     bits=args.wbits,
                     groupsize=args.groupsize,
@@ -229,27 +236,22 @@ def quantize_spqr(model, dataloader, args, device):
                     simplified_outliers=args.simplified_outliers,
                 )
 
-                spqr_handlers[name].layer.weight.data = quantized.weight.to(
-                    spqr_handlers[name].layer.weight.data.dtype
+                spqr_handlers[sublayer_name].layer.weight.data = quantized.weight.to(
+                    spqr_handlers[sublayer_name].layer.weight.data.dtype
                 )
-                quantizers["model.layers.%d.%s" % (i, name)] = ()  # to be updated
+                quantizers["model.layers.%d.%s" % (i, sublayer_name)] = ()  # to be updated
 
                 # OUTLIER STATS per module:
-                normal_outliers_count = quantized.unstructured_outlier_mask.to(
-                    torch.int32
-                ).sum()
-
-                stats_payload[f"n_{name}_ol_share"] = round(
-                    (normal_outliers_count / quantized.weight.numel()).item(), 6
-                )
-
+                normal_outliers_count = quantized.unstructured_outlier_mask.to(torch.int32).sum()
+                stats_payload[f"n_{sublayer_name}_ol_share"] = \
+                    round((normal_outliers_count / quantized.weight.numel()).item(), 6)
                 normal_outlier_count += normal_outliers_count.item()
                 w_count += quantized.weight.numel()
 
         # upload inputs back to the device
         if args.offload_activations:
-            inps = inps.to(device)
-            outs = outs.to(device)
+            inps = inps.to(layer_dev)
+            outs = outs.to(layer_dev)
 
         out_losses = []
         for j in trange(args.nsamples, desc="calc outs after quantization", leave=False):
@@ -270,7 +272,7 @@ def quantize_spqr(model, dataloader, args, device):
             outs[j] = outs_batch
         del outs_batch
 
-        layers[i] = layer.to(layer_dev)
+        layers[i] = layer.to(layer_dev_original)
         del layer
         del spqr_handlers
         torch.cuda.empty_cache()
@@ -278,9 +280,9 @@ def quantize_spqr(model, dataloader, args, device):
         inps, outs = outs, inps
 
         # Logging
-        stats_payload["layer_time"] = time.time() - start_time
+        stats_payload["layer_time"] = round(time.time() - start_time, 2)
         stats_payload["ol_share"] = round(normal_outlier_count / max(w_count, 1), 6)
-        stats_payload["out_loss"] = torch.mean(torch.Tensor(out_losses)).item()
+        stats_payload["out_loss"] = round(torch.mean(torch.Tensor(out_losses)).item(), 6)
         stats_payload["Step"] = i
 
         normal_outlier_count_global += normal_outlier_count
@@ -318,7 +320,7 @@ def quantize_nearest(model, args, dev):
     for i in trange(len(layers), desc="quantizing layers to nearest"):
         layer_dev = next(layers[i].parameters()).device
         layer = layers[i].to(dev)
-        subset = find_layers(layer)
+        subset = find_sublayers(layer)
         for name in subset:
             quantizer = Quantizer()
             quantizer.configure(args.wbits, perchannel=True, sym=False)
