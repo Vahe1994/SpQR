@@ -103,8 +103,11 @@ def get_inps(model, data_iterable, args, device, nsamples=None):
 
         data_iterable = batch_generator(data_iterable, model.seqlen, nsamples)
 
-    emb = model.get_input_embeddings().to(device)
+    emb = model.get_input_embeddings()
     emb_dev = emb.weight.device
+    if emb_dev.type != "cuda":
+        emb = emb.to(device)
+    device = emb.weight.device  # now default device is the one where the embeddings are.
     layer_dev = next(layers[0].parameters()).device
     layers[0] = layers[0].to(device)
 
@@ -249,9 +252,8 @@ def quantize_spqr(model, dataloader, args, device):
                 w_count += quantized.weight.numel()
 
         # upload inputs back to the device
-        if args.offload_activations:
-            inps = inps.to(layer_dev)
-            outs = outs.to(layer_dev)
+        inps = inps.to(layer_dev)
+        outs = outs.to(layer_dev)
 
         out_losses = []
         for j in trange(args.nsamples, desc="calc outs after quantization", leave=False):
@@ -341,7 +343,7 @@ def perplexity_eval(model, testenc, args, dev):
 
     if hasattr(testenc, 'input_ids'):
         testenc = testenc.input_ids
-        print('ii fixed')
+
     nsamples = testenc.numel() // model.seqlen
 
     use_cache = model.config.use_cache

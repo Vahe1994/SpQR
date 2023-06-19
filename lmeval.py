@@ -8,9 +8,7 @@ import sys
 from main import quantize_model
 from spqr_config import QuantizationConfig
 
-import_path = os.environ.get("LM_EVAL_HARNESS_PATH", "./lm-evaluation-harness")
-print(f"{import_path=}")
-sys.path.append(import_path)
+sys.path.append("./lm-evaluation-harness")
 import lm_eval.models
 from lm_eval import tasks, evaluator, utils
 
@@ -49,8 +47,8 @@ def parse_args():
     parser.add_argument("--tasks", default=None, choices=MultiChoice(tasks.ALL_TASKS))
     parser.add_argument("--provide_description", action="store_true")
     parser.add_argument("--num_fewshot", type=int, default=0)
-    parser.add_argument("--batch_size", type=int, default=None)
-    parser.add_argument("--device", type=str, default=None)
+    parser.add_argument("--batch_size", type=int, default=1)
+    parser.add_argument("--device", type=str, default="cuda:0")
     parser.add_argument("--output_path", default=None)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--no_cache", action="store_true")
@@ -108,6 +106,8 @@ def main():
     lm = lm_eval.models.get_model(args.model).create_from_arg_string(
         args.model_args, dict(batch_size=args.batch_size, device=args.device)
     )
+    if hasattr(lm.model, 'hf_device_map'):
+        print("Model device map:\n", lm.model.hf_device_map)
 
     if quantization_config is not None:
         assert lm.model.config.model_type in (
