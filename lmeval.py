@@ -99,7 +99,6 @@ def main():
         args.quantization_args = ""
         quantization_config = None
     else:
-        print("qA", args.quantization_args)  # TODO remove
         quantization_args = utils.simple_parse_args_string(args.quantization_args)
         quantization_config = QuantizationConfig.from_dict(quantization_args)
 
