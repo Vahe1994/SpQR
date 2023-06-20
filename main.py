@@ -60,9 +60,7 @@ def get_average_number_of_bits(
 def quantize_model(model, args, device):
     """main entry point to functions for model quantization"""
     tick = time.time()
-    if args.load:
-        raise NotImplementedError()
-    elif args.wbits == 16:
+    if args.wbits == 16:
         print("not quantizing the model with args.wbits=16", flush=True)
         results = None, args.wbits
     elif args.nearest:
