@@ -91,6 +91,7 @@ class HuggingFaceAutoLM(BaseLM):
         device: Optional[Union[int, str]] = "cuda",
         cache_dir: str = None,
         quantization_config: QuantizationConfig = None,
+        load_in_8bit=False
     ):
         """Initializes a HuggingFace `AutoModel` and `AutoTokenizer` for evaluation.
         Args:
@@ -188,6 +189,7 @@ class HuggingFaceAutoLM(BaseLM):
             subfolder=subfolder,
             torch_dtype=_get_dtype(dtype, self._config),
             cache_dir=cache_dir,
+            load_in_8bit=load_in_8bit,
             **accelerate_kwargs,
         )
         self.model.eval()
@@ -237,6 +239,7 @@ class HuggingFaceAutoLM(BaseLM):
         offload_folder: Optional[str] = None,
         torch_dtype: Optional[Union[str, torch.dtype]] = None,
         cache_dir=None,
+        load_in_8bit=False,
     ) -> transformers.AutoModel:
         """Returns a pre-trained pytorch model from a pre-trained model configuration."""
         model = self.AUTO_MODEL_CLASS.from_pretrained(
@@ -250,6 +253,7 @@ class HuggingFaceAutoLM(BaseLM):
             local_files_only=True,
             trust_remote_code=True,
             low_cpu_mem_usage=True,
+            load_in_8bit=load_in_8bit,
         )
         return model
 
