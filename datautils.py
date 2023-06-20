@@ -177,8 +177,8 @@ def get_loaders(name, custom_data_path=None, nsamples=128, seed=0, seqlen=2048, 
         return dataloader, None
 
     assert name != "custom"
-
-    if "llama" in model_path.split('/').lower():
+    # or model_path.split('/')[-1].lower()
+    if "llama" in model_path.lower():
         tokenizer = LlamaTokenizer.from_pretrained(model_path, use_fast=False)
     else:
         tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
