@@ -10,15 +10,6 @@ from transformers import BatchEncoding
 from lm_eval import utils
 from lm_eval.base import BaseLM
 
-import os
-import sys
-
-import_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../..")
-sys.path.append(import_path)
-from main import quantize_model
-from datautils import get_loaders
-from spqr_config import QuantizationConfig
-
 TokenSequence = Union[List[int], torch.LongTensor, torch.Tensor, BatchEncoding]
 
 _DeviceMapping = NewType("DeviceMapping", Mapping[str, Union[int, str, torch.device]])
@@ -90,8 +81,6 @@ class HuggingFaceAutoLM(BaseLM):
         dtype: Optional[Union[str, torch.dtype]] = None,
         device: Optional[Union[int, str]] = "cuda",
         cache_dir: str = None,
-        quantization_config: QuantizationConfig = None,
-        load_in_8bit=False
     ):
         """Initializes a HuggingFace `AutoModel` and `AutoTokenizer` for evaluation.
         Args:
@@ -189,35 +178,10 @@ class HuggingFaceAutoLM(BaseLM):
             subfolder=subfolder,
             torch_dtype=_get_dtype(dtype, self._config),
             cache_dir=cache_dir,
-            load_in_8bit=load_in_8bit,
             **accelerate_kwargs,
         )
         self.model.eval()
         torch.set_grad_enabled(False)
-
-        # quantization
-        if quantization_config is not None:
-            assert self.model.config.model_type in (
-                "llama",
-                "RefinedWebModel",
-            ), "Quantization is implemented only for llama and falcon families"
-            # suggestions?
-            self.model.seqlen = 2048
-            # get data
-            if quantization_config.dataset == "custom":
-                train_data = torch.load(quantization_config.custom_data_path)[
-                    : quantization_config.nsamples
-                ]
-            else:
-                train_data, _ = get_loaders(
-                    quantization_config.dataset,
-                    nsamples=quantization_config.nsamples,
-                    seed=quantization_config.seed,
-                    model_path=pretrained,
-                    seqlen=self.model.seqlen,
-                )
-
-            quantize_model(self.model, train_data, quantization_config, device)
 
         self._device = device
         if use_accelerate and "lm_head" in self.model.hf_device_map:
@@ -239,7 +203,6 @@ class HuggingFaceAutoLM(BaseLM):
         offload_folder: Optional[str] = None,
         torch_dtype: Optional[Union[str, torch.dtype]] = None,
         cache_dir=None,
-        load_in_8bit=False,
     ) -> transformers.AutoModel:
         """Returns a pre-trained pytorch model from a pre-trained model configuration."""
         model = self.AUTO_MODEL_CLASS.from_pretrained(
@@ -253,7 +216,6 @@ class HuggingFaceAutoLM(BaseLM):
             local_files_only=True,
             trust_remote_code=True,
             low_cpu_mem_usage=True,
-            load_in_8bit=load_in_8bit,
         )
         return model
 
@@ -266,7 +228,7 @@ class HuggingFaceAutoLM(BaseLM):
         tokenizer: Optional[str] = None,
     ) -> transformers.PreTrainedTokenizer:
         """Returns a pre-trained tokenizer from a pre-trained tokenizer configuration."""
-        if 'llama' in pretrained or 'alpaca' in pretrained:
+        if 'llama' in pretrained.lower() or 'alpaca' in pretrained.lower():
             from transformers import LlamaTokenizer
             tokenizer = LlamaTokenizer.from_pretrained(pretrained)
         else:
