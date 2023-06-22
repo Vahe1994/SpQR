@@ -22,11 +22,11 @@ __Note:__ the results reported in the ArXiv paper where obtained using `4.28.dev
 
 ### Loading / caching datasets and tokenizer
 
-The script will require downloading and caching locally the relevant tokenizer and the datasets. They will be saved in `DATASETS_CACHE` directory.
+The script will require downloading and caching locally the relevant tokenizer and the datasets. They will be saved in `$TRANSFORMERS_CACHE` directory.
 
 ### Models
 
-This repository is expected to work with one of the `LLaMA` or `Falcon` models.
+This repository is expected to work with models of `LLaMA` and `Falcon` families so far.
 
 #### Data
 
@@ -42,21 +42,21 @@ unexpected behavior.
 
 ### W&B logging
 
-For the sake of convenience one can optionally log the data to `wandb`.
+For the sake of convenience one can optionally log the data to `Weights and Biases` service (wandb).
 Run `pip install wandb` for W&B logging.
-Specify `WANDB_ENTITY`, `WANDB_PROJECT`, `WANDB_NAME` environmental prior to running experiments.
+Specify `$WANDB_ENTITY`, `$WANDB_PROJECT`, `$WANDB_NAME` environment variables prior to running experiments. use `--wandb` argument to enable logging
 
 # Launching
 
 ### GPU requirements
-This code was developed and tested using a single A100 GPU with 80GB GPU RAM. It may successfully run on GPUs with 32 - 40GB   
+This code was developed and tested using a single A100 GPU with 80GB GPU RAM. It may successfully run on GPUs with 32 - 40GB for perplexity evaluation of up to Llama-65B and Falcon-40B models.
+For LM-Eval-Harness evaluation one needs to have enough GPU memory to place the whole model and then some. 
 
 ### Model downloading
-The code requires the LLaMA model to be downloaded in Hugging Face format and saved locally. The scripts below require such model folder path as argument.
+The code requires the LLaMA model to be downloaded in Huggingface format and saved locally. The scripts below assume that `$TRANSFORMERS_CACHE` variable points to the Huggingface Transformers cache folder.
 
 ### Perplexity benchmarks:
-This script compresses the model and then tests its performance in terms of perplexity using WikiText2, 
-C4, and Penn Treebank datasets. 
+This script compresses the model and then tests its performance in terms of perplexity using WikiText2, C4, and Penn Treebank datasets. 
 
 The command to launch the script should look like this: 
 
@@ -90,9 +90,43 @@ run `python main.py --help` for more details on command line arguments, includin
 
 ### LM Evaluation Harness benchmark.
 
-To perform zero-shot evaluation, we use [lm-eval-harness](https://github.com/EleutherAI/lm-evaluation-harness) framework with slight modifications. 
+To perform zero-shot evaluation, we use [lm-eval-harness](https://github.com/EleutherAI/lm-evaluation-harness) framework with slight modifications. This repository contains a copy of LM Evaluation Harness repo from early 2023 in `lm-eval-harness` folder. 
+#### Installation
+Before running the code make sure that you have all the requirements and dependencies of lm-eval-harness installed. To install them run:
+```
+pip install -r lm-evaluation-harness/requirements.txt
+```
+#### Execution
 
-For instructions about zero-shot evaluation refer to `README.md` inside `lm-evaluation-harness` directory.
+The main script launching the evaluation procedure is `lmeval.py` .
+
+Note. Current version of the script support only LLaMA/Falcon quantization. Therefore, set:
+* `--model=hf-causal`
+* `--model_args pretrained=$MODEL_PATH` where `$MODEL_PATH` has to be one of the LLaMA models
+  
+`--quantization_args` - list of comma separated arguments for quantizer. For details and options
+refer to `spqr_config.py`.
+
+Below is presented an example of benchmark launch.
+
+```
+export MODEL_PATH=<INSERT PATH_TO_MODEL_DIR>
+export PAJAMAS_PATH=<INSERT PATH TO PAJAMAS DIR>
+
+python lmeval.py \
+    --model hf-causal \
+    --model_args pretrained=$MODEL_PATH,dtype=float16,use_accelerate=True \
+    --quantization_args dataset=custom,custom_data_path=$PAJAMAS_PATH,wbits=4,groupsize=16,perchannel=True,qq_scale_bits=3,qq_zero_bits=3,qq_groupsize=16,percdamp=1.0,outlier_threshold=0.2,simplified_outliers=False,nsamples=128,offload_activations=True \
+    --tasks winogrande,piqa,hellaswag,arc_easy,arc_challenge \
+    --batch_size 1
+```
+
+Performance and runtime notes:
+* For large models (LLaMA-30B, LLaMA-65B) specify `max_memory_per_gpu={value}GIB` so that there are free 15-20GIB of GPU memory for each GPU to store activations for calibration. 
+* `offload_activations=True` slightly reduces peak memory consumption 
+* Typically `Lllama-30B` requires 1-2 A100 GPUs with 80Gb of memory and `Llama-65B` requires 3 A100 with 80Gb each.
+* With enough spare GPU memory, one can raise batch size to accelerate evaluation process.
+
 
 ## Citation
 ```
