@@ -70,6 +70,7 @@ def get_c4(nsamples, seqlen, tokenizer):
         tar[:, :-1] = -100
         trainloader.append((inp, tar))
 
+    random.seed(0)
     valenc = []
     for _ in range(256):
         while True:
@@ -167,7 +168,7 @@ def get_loaders(name, custom_data_path=None, nsamples=128, seed=0, seqlen=2048, 
         return dataloader, None
 
     assert name != "custom"
-    # or model_path.split('/')[-1].lower()
+
     if "llama" in model_path.lower():
         tokenizer = LlamaTokenizer.from_pretrained(model_path, use_fast=False)
     else:
