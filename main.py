@@ -33,27 +33,22 @@ def get_average_number_of_bits(
     # if not quantized stats are in full precision
     qq_scale_bits = qq_scale_bits or 16
     qq_zero_bits = qq_zero_bits or 16
-    groupsize = groupsize or float("inf")
-    qq_groupsize = qq_groupsize or float("inf")
+    groupsize = groupsize or float('inf')
+    qq_groupsize = qq_groupsize or float('inf')
 
     if groupsize is None:
         wbits_avg = wbits
     elif round_zero:
-        wbits_avg = (
-            wbits
-            + (qq_scale_bits + wbits) / groupsize
-            + (qqq_scale_bits + qqq_zero_bits) / (groupsize * qq_groupsize)
-        )
+        wbits_avg = wbits + (qq_scale_bits + wbits) / groupsize \
+                    + (qqq_scale_bits + qqq_zero_bits) / (groupsize * qq_groupsize)
     else:
-        wbits_avg = (
-            wbits
-            + (qq_scale_bits + qq_zero_bits) / groupsize
-            + 2 * (qqq_scale_bits + qqq_zero_bits) / (groupsize * qq_groupsize)
-        )
+        wbits_avg = wbits + (qq_scale_bits + qq_zero_bits) / groupsize \
+                    + 2 * (qqq_scale_bits + qqq_zero_bits) / (groupsize * qq_groupsize)
 
     # correct accounting for outliers
     if global_ol_n_share > 0:
         wbits_avg += 32 * global_ol_n_share
+
     return round(wbits_avg, 2)
 
 
@@ -81,7 +76,7 @@ def quantize_model(model, args, device):
 
 
 @torch.no_grad()
-def get_inps(model, data_iterable, args, device, nsamples=None):
+def get_inps(model, data_iterable, args, dev, nsamples=None):
     """mocks model launch to collect inputs to the first model layer"""
     print("catching inputs from data", flush=True)
 
@@ -96,7 +91,7 @@ def get_inps(model, data_iterable, args, device, nsamples=None):
 
         def batch_generator(testenc, seqlen, nsamples):
             for i in range(nsamples):
-                batch = testenc[:, (i * seqlen) : ((i + 1) * seqlen)].to(device)
+                batch = testenc[:, (i * seqlen) : ((i + 1) * seqlen)].to(dev)
                 yield batch
 
         data_iterable = batch_generator(data_iterable, model.seqlen, nsamples)
@@ -104,19 +99,17 @@ def get_inps(model, data_iterable, args, device, nsamples=None):
     emb = model.get_input_embeddings()
     emb_dev = emb.weight.device
     if emb_dev.type != "cuda":
-        emb = emb.to(device)
-    device = emb.weight.device  # now default device is the one where the embeddings are.
+        emb = emb.to(dev)
+    dev = emb.weight.device  # now default device is the one where the embeddings are.
     layer_dev = next(layers[0].parameters()).device
-    layers[0] = layers[0].to(device)
+    layers[0] = layers[0].to(dev)
 
     dtype = next(iter(model.parameters())).dtype
-    inps = torch.zeros(
-        (nsamples, model.seqlen, model.config.hidden_size), dtype=dtype, device=device
-    )
+    inps = torch.zeros((nsamples, model.seqlen, model.config.hidden_size), dtype=dtype, device=dev)
 
-    forward_arg_names = ("attention_mask",)
+    forward_arg_names = ["attention_mask",]
     if model.config.model_type == "RefinedWebModel":
-        forward_arg_names = (*forward_arg_names, "alibi")
+        forward_arg_names.append("alibi")
 
     cache = {"i": 0, "attention_mask": None, "alibi": None}
 
@@ -138,9 +131,9 @@ def get_inps(model, data_iterable, args, device, nsamples=None):
     for batch in data_iterable:
         try:
             if isinstance(batch, (list, tuple)):
-                model(batch[0].to(device))
+                model(batch[0].to(dev))
             elif isinstance(batch, torch.Tensor):
-                model(batch.to(device))
+                model(batch.to(dev))
         except ValueError:
             pass
     torch.set_num_threads(saved_num_threads)
@@ -170,7 +163,7 @@ def quantize_spqr(model, dataloader, args, device):
 
     layers = get_layers(model)
     for i in range(len(layers)):
-        print(f"\n---------------- Layer {i} ----------------")
+        print(f"\n---------------- Layer {i} of {len(layers)} ----------------")
         normal_outlier_count, w_count = 0, 0
         stats_payload = {}
         start_time = time.time()
@@ -245,7 +238,7 @@ def quantize_spqr(model, dataloader, args, device):
                 # OUTLIER STATS per module:
                 normal_outliers_count = quantized.unstructured_outlier_mask.to(torch.int32).sum()
                 stats_payload[f"n_{sublayer_name}_ol_share"] = \
-                    round((normal_outliers_count / quantized.weight.numel()).item(), 6)
+                    (normal_outliers_count / quantized.weight.numel()).item()
                 normal_outlier_count += normal_outliers_count.item()
                 w_count += quantized.weight.numel()
 
@@ -257,17 +250,9 @@ def quantize_spqr(model, dataloader, args, device):
         for j in trange(args.nsamples, desc="calc outs after quantization", leave=False):
             outs_batch = layer(inps[j].unsqueeze(0), **forward_args)[0]
             if not args.skip_out_loss:
-                outs_batch_loss = (
-                    (outs_batch - outs[j])
-                    .float()
-                    .square()
-                    .view(outs_batch.shape[0], -1)
-                    .mean(dim=1)
-                    .sqrt()
-                )
-                outs_batch_loss /= (
-                    outs_batch.view(outs_batch.shape[0], -1).float().std(dim=1)
-                )
+                outs_batch_loss = (outs_batch - outs[j]).float().square().view(outs_batch.shape[0], -1)\
+                    .mean(dim=1).sqrt()
+                outs_batch_loss /= outs_batch.view(outs_batch.shape[0], -1).float().std(dim=1)
                 out_losses.append(outs_batch_loss.item())
             outs[j] = outs_batch
         del outs_batch
@@ -280,9 +265,9 @@ def quantize_spqr(model, dataloader, args, device):
         inps, outs = outs, inps
 
         # Logging
-        stats_payload["layer_time"] = round(time.time() - start_time, 2)
-        stats_payload["ol_share"] = round(normal_outlier_count / max(w_count, 1), 6)
-        stats_payload["out_loss"] = round(torch.mean(torch.Tensor(out_losses)).item(), 6)
+        stats_payload["layer_time"] = time.time() - start_time
+        stats_payload["ol_share"] = normal_outlier_count / max(w_count, 1)
+        stats_payload["out_loss"] = torch.mean(torch.Tensor(out_losses)).item()
         stats_payload["Step"] = i
 
         normal_outlier_count_global += normal_outlier_count
@@ -347,7 +332,7 @@ def perplexity_eval(model, testenc, args, dev):
     use_cache = model.config.use_cache
     model.config.use_cache = False
 
-    inps, forward_args = get_inps(model, testenc, args, device=dev, nsamples=nsamples)
+    inps, forward_args = get_inps(model, testenc, args, dev=dev, nsamples=nsamples)
     outs = torch.zeros_like(inps)
 
     layers = get_layers(model)

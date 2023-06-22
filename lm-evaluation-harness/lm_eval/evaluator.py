@@ -286,9 +286,7 @@ def evaluate(
 
         stderr = lm_eval.metrics.stderr_for_metric(
             metric=task.aggregation()[real_metric],
-            bootstrap_iters=min(bootstrap_iters, 1000)
-            if metric in ["bleu", "chrf", "ter"]
-            else bootstrap_iters,
+            bootstrap_iters=min(bootstrap_iters, 1000) if metric in ["bleu", "chrf", "ter"] else bootstrap_iters,
         )
 
         if stderr is not None:
