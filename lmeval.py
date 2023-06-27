@@ -1,16 +1,11 @@
-import argparse
 import json
 import logging
 import fnmatch
-import os
-import sys
+import argparse
 
 from main import quantize_model
 from spqr_config import QuantizationConfig
-
-sys.path.append("./lm-evaluation-harness")
-import lm_eval.models
-from lm_eval import tasks, evaluator, utils
+from lm_evaluation_harness.lm_eval import tasks, models, evaluator, utils
 
 
 try:
@@ -102,7 +97,7 @@ def main():
         quantization_args = utils.simple_parse_args_string(args.quantization_args)
         quantization_config = QuantizationConfig.from_dict(quantization_args)
 
-    lm = lm_eval.models.get_model(args.model).create_from_arg_string(
+    lm = models.get_model(args.model).create_from_arg_string(
         args.model_args, dict(batch_size=args.batch_size, device=args.device)
     )
     if hasattr(lm.model, 'hf_device_map'):

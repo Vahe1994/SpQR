@@ -1,5 +1,6 @@
 import os
 import time
+import argparse
 from tqdm import trange
 
 from spqr_engine import SPQRUtil, Quantizer, quantize
@@ -228,6 +229,7 @@ def quantize_spqr(model, dataloader, args, device):
                     outlier_relative_threshold=args.outlier_threshold,
                     permutation_order=args.permutation_order,
                     simplified_outliers=args.simplified_outliers,
+                    hessian_blocksize=args.hessian_blocksize
                 )
 
                 spqr_handlers[sublayer_name].layer.weight.data = quantized.weight.to(
@@ -372,8 +374,6 @@ def perplexity_eval(model, testenc, args, dev):
 
 
 if __name__ == "__main__":
-    import argparse
-
     parser = argparse.ArgumentParser(add_help=True)
 
     parser.add_argument(
@@ -415,6 +415,12 @@ if __name__ == "__main__":
         default=16,
         choices=[2, 3, 4, 8, 16],
         help="#bits to use for quantization; use 16 for evaluating base model.",
+    )
+    parser.add_argument(
+        "--hessian_blocksize",
+        type=int,
+        default=128,
+        help="Block-size of Hessian",
     )
     parser.add_argument(
         "--groupsize",
@@ -535,6 +541,7 @@ if __name__ == "__main__":
             + f"{'_new_eval' if args.new_eval else ''}"
         )
         wandb.init(
+            name=args.exp_name,
             config={a: getattr(args, a) for a in dir(args) if not a.startswith("_")},
         )
         wandb.run.log_code(".")

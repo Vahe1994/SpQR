@@ -48,6 +48,7 @@ class SPQRUtil:
         verbose=True,
         perchannel: bool = True,
         sym: bool = False,
+        hessian_blocksize: Optional[int] = None,
         **kwargs,
     ) -> QuantizationResult:
         """
@@ -75,11 +76,22 @@ class SPQRUtil:
         weight = self.layer.weight.detach().to(dtype=torch.float, copy=True)
         perm = get_permutation_order(self.H, weight, permutation_order)
         weight = weight[:, perm]  # note: weight is modified
+
+
         H = self.H
         if keep_H:
             H = H.clone()  # protect from in-place changes
         else:
             self.H = None
+
+        # zero out some elements 
+        if hessian_blocksize is not None:
+            in_dim = H.shape[0]
+            num_blocks = in_dim // hessian_blocksize
+            assert in_dim % hessian_blocksize == 0 and num_blocks >= 1
+            mask = torch.eye(hessian_blocksize).repeat_interleave(num_blocks, 0).repeat_interleave(num_blocks, 1).to(H.device)
+            H *= mask
+            del mask
 
         H = H[perm][:, perm]
         self.dead = torch.diag(H) == 0  # indices of input features that do not affect outputs

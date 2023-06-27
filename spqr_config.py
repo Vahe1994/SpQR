@@ -13,6 +13,7 @@ class QuantizationConfig:
     percdamp: float = 0.01
     nearest: bool = False
     wbits: int = 3
+    hessian_blocksize: int = None
     groupsize: int = None
     permutation_order: str = "act_order"
     true_sequential: bool = False
