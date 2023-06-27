@@ -190,7 +190,8 @@ class HuggingFaceAutoLM(BaseLM):
             # `lm_head`'s.
             self._device = self.model.hf_device_map["lm_head"]
         if not use_accelerate:
-            self.model.to(self._device)
+            # self.model.to(self._device)
+            pass
 
     def _create_auto_model(
         self,
@@ -205,18 +206,25 @@ class HuggingFaceAutoLM(BaseLM):
         cache_dir=None,
     ) -> transformers.AutoModel:
         """Returns a pre-trained pytorch model from a pre-trained model configuration."""
+        from transformers import BitsAndBytesConfig
         model = self.AUTO_MODEL_CLASS.from_pretrained(
             pretrained,
             revision=revision + ("/" + subfolder if subfolder is not None else ""),
             device_map=device_map,
             max_memory=max_memory,
             offload_folder=offload_folder,
-            torch_dtype=torch_dtype,
+            # torch_dtype=torch_dtype,
             cache_dir=cache_dir,
             local_files_only=True,
             trust_remote_code=True,
             low_cpu_mem_usage=True,
+            quantization_config=BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=torch.float16,
+                bnb_4bit_use_double_quant=True,
+                bnb_4bit_quant_type='nf4')
         )
+        print(f'{torch.cuda.memory_stats()["allocated_bytes.all.peak"]=:,}')
         return model
 
     def _create_auto_tokenizer(

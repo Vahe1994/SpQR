@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from transformers import AutoModelForCausalLM
+from transformers import AutoModelForCausalLM, BitsAndBytesConfig
 
 MODEL_ERROR_MSG = "Unsupported model type {} - only 'llama' and 'falcon' supported"
 
@@ -13,8 +13,15 @@ def get_model(model_path, dtype="auto"):
         trust_remote_code=True,
         torch_dtype=dtype,
         low_cpu_mem_usage=True,  # see https://stackoverflow.com/questions/76356591
+        quantization_config=BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_compute_dtype=torch.float16,
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_quant_type='nf4'
+        ),
     )
     model.seqlen = 2048
+    print(f'{torch.cuda.memory_stats()["allocated_bytes.all.peak"]=:,}')
     return model
 
 
