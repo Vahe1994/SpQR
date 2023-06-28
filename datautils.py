@@ -171,6 +171,16 @@ def get_loaders(name, custom_data_path=None, nsamples=128, seed=0, seqlen=2048, 
 
     if "llama" in model_path.lower():
         tokenizer = LlamaTokenizer.from_pretrained(model_path, use_fast=False)
+
+        # fix for transformer 4.28.0.dev0 compatibility
+        if tokenizer.bos_token_id != 1 or tokenizer.eos_token_id != 2:
+            try:
+                tokenizer.bos_token_id = 1
+                tokenizer.eos_token_id = 2
+                print(f"bos/eos tokens updated: {tokenizer.bos_token_id=},  {tokenizer.eos_token_id=}")
+            except AttributeError:
+                pass
+                print(f"bos/eos tokens unchanged: {tokenizer.bos_token_id=},  {tokenizer.eos_token_id=}")
     else:
         tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
 
