@@ -62,9 +62,8 @@ def quantize_model(model, args, device):
         results = quantize_nearest(model, args, device)
     else:
         print("Loading data ...")
-        dataloader, _ = get_loaders(
+        dataloader = get_loaders(
             args.dataset,
-            custom_data_path=args.custom_data_path,
             nsamples=args.nsamples,
             seed=args.seed,
             model_path=args.model_path,
@@ -83,9 +82,6 @@ def get_inps(model, data_iterable, args, dev, nsamples=None):
     layers = get_layers(model)
 
     nsamples = nsamples or args.nsamples
-
-    if hasattr(data_iterable, 'input_ids'):
-        data_iterable = data_iterable.input_ids
 
     if isinstance(data_iterable, torch.Tensor):
 
@@ -324,9 +320,6 @@ def quantize_nearest(model, args, dev):
 def perplexity_eval(model, testenc, args, dev):
     print(f"\nEvaluating perplexity for {args.dataset_name} dataset ...")
 
-    if hasattr(testenc, 'input_ids'):
-        testenc = testenc.input_ids
-
     nsamples = testenc.numel() // model.seqlen
 
     use_cache = model.config.use_cache
@@ -384,15 +377,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "dataset",
         type=str,
-        choices=["custom", "wikitext2", "ptb", "c4"],
         default="none",
-        help="Where to extract calibration data from.",
-    )
-    parser.add_argument(
-        "--custom_data_path",
-        type=str,
-        default=None,
-        help="Path to load if specified.",
+        help="Dataset name [c4, pajama, refinedweb, none, etc.] or path to data where to extract calibration data from.",
     )
     parser.add_argument(
         "--seed", type=int, default=0, help="Seed for sampling the calibration data."
@@ -552,8 +538,8 @@ if __name__ == "__main__":
     if args.new_eval:
         datasets = ["wikitext2", "ptb-new", "c4-new"]
     for dataset in datasets:
-        dataloader, testloader = get_loaders(
-            dataset, seed=args.seed, model_path=args.model_path, seqlen=model.seqlen
+        testloader = get_loaders(
+            dataset, seed=args.seed, model_path=args.model_path, seqlen=model.seqlen, eval_mode=True,
         )
         args.dataset_name = dataset
         perplexity_eval(model, testloader, args, device)
