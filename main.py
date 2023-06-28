@@ -341,7 +341,7 @@ def perplexity_eval(model, testenc, args, dev):
 
         for j in range(nsamples):
             outs[j] = layer(inps[j].unsqueeze(0), **forward_args)[0]
-        layers[i] = layer.cpu()
+        # layers[i] = layer.cpu()
         del layer
         torch.cuda.empty_cache()
         inps, outs = outs, inps
