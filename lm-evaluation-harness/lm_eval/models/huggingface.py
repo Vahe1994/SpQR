@@ -9,11 +9,6 @@ from transformers import BatchEncoding
 
 from lm_eval import utils
 from lm_eval.base import BaseLM
-from lm_eval.quantization import QuantizationConfig
-from lm_eval.quantization.datautils import get_loaders
-from lm_eval.quantization.llama_quantization import llama_sequential
-from lm_eval.quantization.falcon_quantization import falcon_sequential
-from lm_eval.quantization.modelutils import fix_rotary_embedding
 
 TokenSequence = Union[List[int], torch.LongTensor, torch.Tensor, BatchEncoding]
 
@@ -86,7 +81,6 @@ class HuggingFaceAutoLM(BaseLM):
         dtype: Optional[Union[str, torch.dtype]] = None,
         device: Optional[Union[int, str]] = "cuda",
         cache_dir: str = None,
-        quantization_config: QuantizationConfig = None,
     ):
         """Initializes a HuggingFace `AutoModel` and `AutoTokenizer` for evaluation.
         Args:
@@ -156,7 +150,8 @@ class HuggingFaceAutoLM(BaseLM):
         self._config = self.AUTO_CONFIG_CLASS.from_pretrained(
             pretrained,
             revision=revision + ("/" + subfolder if subfolder is not None else ""),
-            trust_remote_code=True
+            trust_remote_code=True,
+            low_cpu_mem_usage=True,
         )
 
         self._add_special_tokens = add_special_tokens
@@ -165,7 +160,6 @@ class HuggingFaceAutoLM(BaseLM):
             revision=revision,
             subfolder=subfolder,
             tokenizer=tokenizer,
-
         )
         self.tokenizer.model_max_length = self.max_length
 
@@ -177,19 +171,7 @@ class HuggingFaceAutoLM(BaseLM):
                 max_cpu_memory,
                 offload_folder,
             )
-        if 'llama' in pretrained.lower():
-            def skip(*args, **kwargs):
-                pass
-            torch.nn.init.kaiming_uniform_ = skip
-            torch.nn.init.uniform_ = skip
-            torch.nn.init.normal_ = skip
 
-        saved_inits = (
-            torch.nn.init.kaiming_uniform_,
-            torch.nn.init.uniform_,
-            torch.nn.init.normal_,
-        ) # preserving
-            
         self.model = self._create_auto_model(
             pretrained=pretrained,
             revision=revision,
@@ -198,41 +180,8 @@ class HuggingFaceAutoLM(BaseLM):
             cache_dir=cache_dir,
             **accelerate_kwargs,
         )
-        if 'falcon' in pretrained.lower():
-            fix_rotary_embedding(self.model)
-
         self.model.eval()
         torch.set_grad_enabled(False)
-
-        (
-            torch.nn.init.kaiming_uniform_,
-            torch.nn.init.uniform_,
-            torch.nn.init.normal_,
-        ) = saved_inits  # restoring
-
-        # quantization
-        if quantization_config is not None:
-            assert 'llama' in pretrained.lower() or 'alpaca' in pretrained.lower() or 'falcon' in pretrained.lower(), \
-                "Quantization is implemented only for llama family"
-            # suggestions?
-            self.model.seqlen = 2048
-            # get data
-            if quantization_config.dataset == "custom":
-                train_data = torch.load(quantization_config.custom_data_path)[:quantization_config.nsamples]
-            else:
-                train_data, _ = get_loaders(
-                    quantization_config.dataset,
-                    nsamples=quantization_config.nsamples,
-                    seed=quantization_config.seed,
-                    model_path=pretrained,
-                    seqlen=self.model.seqlen,
-                )
-
-            if 'llama' in pretrained.lower() or 'alpaca' in pretrained.lower():
-                llama_sequential(self.model, train_data, quantization_config, device)
-            elif 'falcon' in pretrained.lower():
-                falcon_sequential(self.model, train_data, quantization_config, device)
-
 
         self._device = device
         if use_accelerate and "lm_head" in self.model.hf_device_map:
@@ -253,7 +202,7 @@ class HuggingFaceAutoLM(BaseLM):
         max_memory: Optional[dict] = None,
         offload_folder: Optional[str] = None,
         torch_dtype: Optional[Union[str, torch.dtype]] = None,
-        cache_dir = None
+        cache_dir=None,
     ) -> transformers.AutoModel:
         """Returns a pre-trained pytorch model from a pre-trained model configuration."""
         model = self.AUTO_MODEL_CLASS.from_pretrained(
@@ -265,7 +214,8 @@ class HuggingFaceAutoLM(BaseLM):
             torch_dtype=torch_dtype,
             cache_dir=cache_dir,
             local_files_only=True,
-            trust_remote_code=True
+            trust_remote_code=True,
+            low_cpu_mem_usage=True,
         )
         return model
 
@@ -697,4 +647,3 @@ def stop_sequences_criteria(
             ],
         ]
     )
-
