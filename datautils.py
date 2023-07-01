@@ -98,17 +98,24 @@ def get_loaders(name, nsamples=128, seed=0, seqlen=2048, model_path="", eval_mod
     """
     Loads and prepares data for a Transformers model.
     Args:
-        name (str): The name of the dataset to load. This can be one of 'wikitext2', 'c4', 'ptb' or 'custom'
-        custom_data_path (str, optional): The path to a custom dataset file. Assumes name=='custom'
+        name (str): The name of the dataset to load.
+        This can be one of 'wikitext2', 'c4', 'ptb' for datasets loaded from Huggingface datasets,
+        'pajama' or 'refinedweb' for pre-tokenized datasets in folder `data` or 'none' for cases
+        where a dataset is not needed, like RTN. It can also accept data path to custom file.
         nsamples (int, optional): The number of samples to load from the dataset. Defaults to 128.
         seed (int, optional): The random seed value for data shuffling and splitting. Defaults to 0.
         seqlen (int, optional): The maximum sequence length for input tokenization. Defaults to 2048.
         model_path (str, optional): The path to the pretrained model weights or full model name.
             used to detect llama to call proper tokenizer.
             see https://github.com/huggingface/transformers/issues/22222#issuecomment-1488578722 for reasons.
+        eval_mode (bool, optional). defines slice selection for 'wikitext2', 'c4', 'ptb' datasets.
+        leave False for train slice.
     Returns:
-        train_loader (torch.utils.data.DataLoader or iterable): DataLoader for the training dataset.
-        test_loader (torch.utils.data.DataLoader or iterable): DataLoader for the test dataset.
+        data (torch.utils.data.DataLoader or iterable): Data iterable for the dataset.
+    Note:
+        the popular decapoda-research Llama models have errors in tokenizer config, specifically
+        incorrect token ids for BOS, EOS. This gets corrected to ensure compatibility with transformers
+        of versions 4.29 and above.
     """
     set_seed(seed)
 
