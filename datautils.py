@@ -113,7 +113,7 @@ def get_loaders(name, nsamples=128, seed=0, seqlen=2048, model_path="", eval_mod
     set_seed(seed)
 
     # handling pre-tokenized datasets
-    if name.lower() == "pajamas":
+    if name.lower() == "pajama":
         return torch.load("./data/red_pajama_n=1024.pth")[: nsamples]
     elif name.lower() == "refinedweb":
         return torch.load("./data/refined_web_n=128.pth")[: nsamples]
@@ -146,7 +146,7 @@ def get_loaders(name, nsamples=128, seed=0, seqlen=2048, model_path="", eval_mod
             data = torch.load(name)[: nsamples]
         except FileNotFoundError:
             print(f"Failed to load custom data from {name}.",
-                  "Check data path or use one of [c4, wikitext2, ptb, pajamas, refinedweb]")
+                  "Check data path or use one of [c4, wikitext2, ptb, pajama, refinedweb, none]")
             return
     if hasattr(data, 'input_ids'):
         data = data.input_ids

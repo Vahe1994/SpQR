@@ -378,7 +378,7 @@ if __name__ == "__main__":
         "dataset",
         type=str,
         default="none",
-        help="Dataset name or path to data where to extract calibration data from.",
+        help="Dataset name [c4, pajama, refinedweb, none, etc.] or path to data where to extract calibration data from.",
     )
     parser.add_argument(
         "--seed", type=int, default=0, help="Seed for sampling the calibration data."
