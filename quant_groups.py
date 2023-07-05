@@ -2,8 +2,10 @@ import torch
 import torch.nn as nn
 
 
-def quantize(x, scale, zero, maxq, eps=1e-9):
+def quantize(x, scale, zero, maxq, eps=1e-9, return_int: bool = False):
     q = torch.clamp(torch.round(x / scale.clamp_min(eps) + zero), 0, maxq)
+    if return_int:
+        return scale * (q - zero), q
     return scale * (q - zero)
 
 

@@ -186,3 +186,4 @@ def get_loaders(name, nsamples=128, seed=0, seqlen=2048, model_path=""):
         if "new" in name:
             return get_c4_new(nsamples, seed, seqlen, model_path)
         return get_c4(nsamples, seed, seqlen, model_path)
+
