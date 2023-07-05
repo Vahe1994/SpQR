@@ -1,13 +1,16 @@
 import torch
 import torch.nn as nn
-from transformers import AutoModelForCausalLM
+from transformers import AutoConfig, AutoModelForCausalLM
 
 MODEL_ERROR_MSG = "Unsupported model type {} - only 'llama' and 'falcon' supported"
 
 
 def get_model(model_path, dtype="auto"):
-    if dtype != "auto":
+    if dtype == "auto":
+        dtype = AutoConfig.from_pretrained(model_path).torch_dtype or "auto"
+    else:
         dtype = getattr(torch, dtype)
+
     def skip(*args, **kwargs):
         pass
 
