@@ -7,7 +7,7 @@ MODEL_ERROR_MSG = "Unsupported model type {} - only 'llama' and 'falcon' support
 
 def get_model(model_path, dtype="auto"):
     if dtype == "auto":
-        dtype = AutoConfig.from_pretrained(model_path).torch_dtype or "auto"
+        dtype = AutoConfig.from_pretrained(model_path).torch_dtype or "auto"  # force transformers 4.29.2 to follow the same rules as 4.30.x
     else:
         dtype = getattr(torch, dtype)
 
