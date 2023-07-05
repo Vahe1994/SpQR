@@ -1,20 +1,28 @@
 import torch
 import torch.nn as nn
-from transformers import AutoModelForCausalLM
+from transformers import AutoConfig, AutoModelForCausalLM
 
 MODEL_ERROR_MSG = "Unsupported model type {} - only 'llama' and 'falcon' supported"
 
 
 def get_model(model_path, dtype="auto"):
-    if dtype != "auto":
+    if dtype == "auto":
+        dtype = AutoConfig.from_pretrained(model_path).torch_dtype or "auto"  # force transformers 4.29.2 to follow the same rules as 4.30.x
+    else:
         dtype = getattr(torch, dtype)
+
+    def skip(*args, **kwargs):
+        pass
+
+    saved_inits = torch.nn.init.kaiming_uniform_, torch.nn.init.uniform_, torch.nn.init.normal_  # preserving
+    torch.nn.init.kaiming_uniform_ = torch.nn.init.uniform_ = torch.nn.init.normal_ = skip
     model = AutoModelForCausalLM.from_pretrained(
         pretrained_model_name_or_path=model_path,
         trust_remote_code=True,
         torch_dtype=dtype,
-        low_cpu_mem_usage=True,  # see https://stackoverflow.com/questions/76356591
     )
     model.seqlen = 2048
+    torch.nn.init.kaiming_uniform_, torch.nn.init.uniform_, torch.nn.init.normal_ = saved_inits  # restoring
     return model
 
 
