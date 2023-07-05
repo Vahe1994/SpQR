@@ -285,6 +285,7 @@ def quantize_spqr(model, dataloader, args, device):
         round_zero=args.round_zero,
         global_ol_n_share=normal_outlier_count_global / w_count_global,
     )
+    print(f"wbits_avg:  {wbits_avg:.3}")
 
     if args.wandb:
         wandb.log({"outlier_share": normal_outlier_count_global / w_count_global})
