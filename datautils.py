@@ -3,6 +3,7 @@ import torch
 import random
 from transformers import AutoTokenizer, LlamaTokenizer
 from datasets import load_dataset
+from warnings import warn
 
 
 def set_seed(seed):
@@ -94,7 +95,7 @@ def get_c4(nsamples, seqlen, tokenizer, new=False, eval_mode=False):
         return valenc
 
 
-def get_loaders(name, nsamples=128, seed=0, seqlen=2048, model_path="", eval_mode=False):
+def get_loaders(name, nsamples=128, seed=0, seqlen=2048, model_path="", eval_mode=False, custom_data_path=None):
     """
     Loads and prepares data for a Transformers model.
     Args:
@@ -149,6 +150,10 @@ def get_loaders(name, nsamples=128, seed=0, seqlen=2048, model_path="", eval_mod
     elif name.lower().startswith("c4"):
         data = get_c4(nsamples, seqlen, tokenizer, new=("new" in name), eval_mode=eval_mode)
     else:
+        if name.lower() == "custom":
+            warn(("Dataset option 'custom' is deprecated. insert dataset path directly or use 'pajama', 'refinedweb'"
+                 "See README for examples."), DeprecationWarning)
+            name = custom_data_path
         try:
             data = torch.load(name)[: nsamples]
         except FileNotFoundError:

@@ -68,6 +68,7 @@ def quantize_model(model, args, device):
             seed=args.seed,
             model_path=args.model_path,
             seqlen=model.seqlen,
+            custom_data_path=args.custom_data_path,
         )
         results = quantize_spqr(model, dataloader, args, device)
     print(f"quantization time: {time.time() - tick:.1f}")
@@ -382,6 +383,12 @@ if __name__ == "__main__":
         help="Dataset name [c4, pajama, refinedweb, none, etc.] or path to data where to extract calibration data from.",
     )
     parser.add_argument(
+        "--custom_data_path",
+        type=str,
+        default=None,
+        help="Path to load if specified. Deprecated",
+    )
+    parser.add_argument(
         "--seed", type=int, default=0, help="Seed for sampling the calibration data."
     )
     parser.add_argument(
@@ -460,7 +467,6 @@ if __name__ == "__main__":
         default=16,
         help="Quantize quantization scale in groups of this many scales",
     )
-
     parser.add_argument(
         "--outlier_threshold",
         type=float,
@@ -472,7 +478,6 @@ if __name__ == "__main__":
         action="store_true",
         help="do not perform leave-one-out evaluation when detecting outliers; works faster, but generally worse in perplexity",
     )
-
     parser.add_argument(
         "--save_pt",
         type=str,
