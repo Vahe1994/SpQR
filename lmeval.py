@@ -51,7 +51,6 @@ def parse_args():
     parser.add_argument("--device", type=str, default="cuda:0")
     parser.add_argument("--output_path", default=None)
     parser.add_argument("--limit", type=int, default=None)
-    parser.add_argument("--no_cache", action="store_true")
     parser.add_argument("--decontamination_ngrams_path", default=None)
     parser.add_argument("--description_dict_path", default=None)
     parser.add_argument("--check_integrity", action="store_true")
@@ -125,7 +124,7 @@ def main():
         num_fewshot=args.num_fewshot,
         batch_size=args.batch_size,
         device=args.device,
-        no_cache=args.no_cache,
+        no_cache=True,
         limit=args.limit,
         description_dict=description_dict,
         decontamination_ngrams_path=args.decontamination_ngrams_path,
