@@ -3,11 +3,12 @@ import torch.nn as nn
 from transformers import AutoConfig, AutoModelForCausalLM
 
 MODEL_ERROR_MSG = "Unsupported model type {} - only 'llama' and 'falcon' supported"
+FALCON_TYPES = ("falcon", "refinedweb", "refinedwebmodel")
 
 
 def get_model(model_path, dtype="auto"):
     if dtype == "auto":
-        dtype = AutoConfig.from_pretrained(model_path).torch_dtype or "auto"  # force transformers 4.29.2 to follow the same rules as 4.30.x
+        dtype = AutoConfig.from_pretrained(model_path, trust_remote_code=True).torch_dtype or "auto"  # force transformers 4.29.2 to follow the same rules as 4.30.x
     else:
         dtype = getattr(torch, dtype)
 
@@ -32,7 +33,7 @@ def get_model_head(model):
         if model.model.norm is not None:
             head.append(model.model.norm)
         head.append(model.lm_head)
-    elif model.config.model_type == "RefinedWebModel":
+    elif model.config.model_type.lower() in FALCON_TYPES:
         if model.transformer.ln_f is not None:
             head.append(model.transformer.ln_f)
         head.append(model.lm_head)
@@ -46,7 +47,7 @@ def get_lm_logits(inps_, model):
         if model.model.norm is not None:
             hidden_states = model.model.norm(hidden_states)
         lm_logits = model.lm_head(hidden_states)
-    elif model.config.model_type == "RefinedWebModel":
+    elif model.config.model_type.lower() in FALCON_TYPES:
         hidden_states = inps_.unsqueeze(0)
         if model.transformer.ln_f is not None:
             hidden_states = model.transformer.ln_f(hidden_states)
@@ -59,7 +60,7 @@ def get_lm_logits(inps_, model):
 def get_layers(model):
     if model.config.model_type == "llama":
         return model.model.layers
-    elif model.config.model_type == "RefinedWebModel":
+    elif model.config.model_type.lower() in FALCON_TYPES:
         return model.transformer.h
     else:
         raise ValueError(MODEL_ERROR_MSG.format(model.config.model_type))
@@ -81,7 +82,7 @@ def get_sequential_groups(model):
             ["mlp.up_proj", "mlp.gate_proj"],
             ["mlp.down_proj"],
         ]
-    elif model.config.model_type == "RefinedWebModel":
+    elif model.config.model_type.lower() in FALCON_TYPES:
         return [
             ["self_attention.query_key_value"],
             ["self_attention.dense"],

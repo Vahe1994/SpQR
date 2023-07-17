@@ -108,7 +108,7 @@ def get_inps(model, data_iterable, args, dev, nsamples=None):
     inps = torch.zeros((nsamples, model.seqlen, model.config.hidden_size), dtype=dtype, device=dev)
 
     forward_arg_names = ["attention_mask",]
-    if model.config.model_type == "RefinedWebModel":
+    if model.config.model_type.lower() in FALCON_TYPES:
         forward_arg_names.append("alibi")
 
     cache = {"i": 0, "attention_mask": None, "alibi": None}
