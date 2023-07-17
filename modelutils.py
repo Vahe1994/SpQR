@@ -8,7 +8,7 @@ FALCON_TYPES = ("falcon", "refinedweb", "refinedwebmodel")
 
 def get_model(model_path, dtype="auto"):
     if dtype == "auto":
-        dtype = AutoConfig.from_pretrained(model_path).torch_dtype or "auto"  # force transformers 4.29.2 to follow the same rules as 4.30.x
+        dtype = AutoConfig.from_pretrained(model_path, trust_remote_code=True).torch_dtype or "auto"  # force transformers 4.29.2 to follow the same rules as 4.30.x
     else:
         dtype = getattr(torch, dtype)
 
