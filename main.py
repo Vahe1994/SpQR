@@ -151,7 +151,7 @@ def get_inps(model, data_iterable, args, dev, nsamples=None):
 def quantize_spqr(model, dataloader, args, device):
     print("\nStarting SPQR quantization ...")
 
-    inps, forward_args = get_inps(model, dataloader, args, device)
+    inps, forward_args = get_inps(model, dataloader, args, dev='cpu' if args.offload_activations else device)
     outs = torch.zeros_like(inps)
 
     use_cache = model.config.use_cache
@@ -177,7 +177,8 @@ def quantize_spqr(model, dataloader, args, device):
         layer_dev = next(layers[i].parameters()).device
         all_sublayers = find_sublayers(layer)
 
-        inps = inps.to(layer_dev)
+        for k, v in forward_args.items():
+            forward_args[k] = v.to(layer_dev)
 
         if args.true_sequential:
             sequential = get_sequential_groups(model)
@@ -196,21 +197,19 @@ def quantize_spqr(model, dataloader, args, device):
                     spqr_handlers[name].add_batch(inp[0].data)
 
                 return tmp
-
             handles = []
             for sublayer_name in subset:
                 handles.append(subset[sublayer_name].register_forward_hook(add_batch(sublayer_name)))
             for j in trange(
                 args.nsamples, desc="calc outs before quantization", leave=False
-            ):
-                outs[j] = layer(inps[j].unsqueeze(0), **forward_args)[0]
+            ):  
+                outs[j] = layer(inps[j].to(layer_dev).unsqueeze(0), **forward_args)[0]
+                if args.offload_activations:
+                    outs[j] = outs[j].cpu()
             for h in handles:
                 h.remove()
 
-            if args.offload_activations:
-                inps = inps.cpu()
-                outs = outs.cpu()
-                torch.cuda.empty_cache()
+            torch.cuda.empty_cache()
 
             for sublayer_name in subset:
                 print(f"Quantizing module {sublayer_name} of layer {i}")
@@ -242,20 +241,19 @@ def quantize_spqr(model, dataloader, args, device):
                 normal_outlier_count += normal_outliers_count.item()
                 w_count += quantized.weight.numel()
 
-        # upload inputs back to the device
-        inps = inps.to(layer_dev)
-        outs = outs.to(layer_dev)
-
         out_losses = []
         for j in trange(args.nsamples, desc="calc outs after quantization", leave=False):
-            outs_batch = layer(inps[j].unsqueeze(0), **forward_args)[0]
-            if not args.skip_out_loss:
-                outs_batch_loss = (outs_batch - outs[j]).float().square().view(outs_batch.shape[0], -1)\
+            if args.skip_out_loss:
+                outs[j] = layer(inps[j].to(layer_dev).unsqueeze(0), **forward_args)[0]
+            else:
+                outs_batch = layer(inps[j].to(layer_dev).unsqueeze(0), **forward_args)[0]
+                outs_batch_loss = (outs_batch - outs[j].to(layer_dev)).float().square().view(outs_batch.shape[0], -1)\
                     .mean(dim=1).sqrt()
                 outs_batch_loss /= outs_batch.view(outs_batch.shape[0], -1).float().std(dim=1)
                 out_losses.append(outs_batch_loss.item())
-            outs[j] = outs_batch
-        del outs_batch
+                outs[j] = outs_batch
+            if args.offload_activations:
+                outs[j] = outs[j].cpu()
 
         layers[i] = layer.to(layer_dev_original)
         del layer
@@ -295,6 +293,7 @@ def quantize_spqr(model, dataloader, args, device):
         wandb.log({"wbits_avg": wbits_avg})
 
     model.config.use_cache = use_cache
+    print (f"quantize: {torch.cuda.max_memory_allocated()=:,}")
     return quantizers, wbits_avg
 
 
@@ -323,6 +322,7 @@ def quantize_nearest(model, args, dev):
 @torch.no_grad()
 def perplexity_eval(model, testenc, args, dev):
     print(f"\nEvaluating perplexity for {args.dataset_name} dataset ...")
+    torch.cuda.reset_peak_memory_stats()
 
     if hasattr(testenc, 'input_ids'):
         testenc = testenc.input_ids
@@ -332,15 +332,19 @@ def perplexity_eval(model, testenc, args, dev):
     use_cache = model.config.use_cache
     model.config.use_cache = False
 
-    inps, forward_args = get_inps(model, testenc, args, dev=dev, nsamples=nsamples)
+    inps, forward_args = get_inps(model, testenc, args, dev='cpu' if args.offload_activations else dev, nsamples=nsamples)
     outs = torch.zeros_like(inps)
+    for k, v in forward_args.items():
+        forward_args[k] = v.to(dev)
 
     layers = get_layers(model)
     for i in trange(len(layers), desc="processing eval data by layer"):
         layer = layers[i].to(dev)
 
         for j in range(nsamples):
-            outs[j] = layer(inps[j].unsqueeze(0), **forward_args)[0]
+            outs[j] = layer(inps[j].to(dev).unsqueeze(0), **forward_args)[0]
+            if args.offload_activations:
+                outs[j] = outs[j].cpu()
         layers[i] = layer.cpu()
         del layer
         torch.cuda.empty_cache()
@@ -351,7 +355,7 @@ def perplexity_eval(model, testenc, args, dev):
 
     nlls = []
     for i in range(nsamples):
-        lm_logits = get_lm_logits(inps[i], model)
+        lm_logits = get_lm_logits(inps[i].to(dev), model)
         shift_logits = lm_logits[:, :-1, :].contiguous()
         shift_labels = testenc[:, (i * model.seqlen) : ((i + 1) * model.seqlen)][:, 1:]
         loss_fct = nn.CrossEntropyLoss()
@@ -369,6 +373,7 @@ def perplexity_eval(model, testenc, args, dev):
         wandb.log({args.dataset_name: ppl.item()})
 
     model.config.use_cache = use_cache
+    print (f"eval: {torch.cuda.max_memory_allocated()=:,}")
 
 
 if __name__ == "__main__":
@@ -564,3 +569,4 @@ if __name__ == "__main__":
     if args.save_safetensors:
         assert has_safetensors, "`safetensors` not installed, try pip install `safetensors`"
         safetensors.torch.save_file(model.state_dict(), args.save_safetensors)
+        
