@@ -151,7 +151,6 @@ class HuggingFaceAutoLM(BaseLM):
             pretrained,
             revision=revision + ("/" + subfolder if subfolder is not None else ""),
             trust_remote_code=True,
-            low_cpu_mem_usage=True,
         )
 
         self._add_special_tokens = add_special_tokens
@@ -172,6 +171,11 @@ class HuggingFaceAutoLM(BaseLM):
                 offload_folder,
             )
 
+        def skip(*args, **kwargs):
+            pass
+        saved_inits = torch.nn.init.kaiming_uniform_, torch.nn.init.uniform_, torch.nn.init.normal_  # preserving
+        torch.nn.init.kaiming_uniform_ = torch.nn.init.uniform_ = torch.nn.init.normal_ = skip
+
         self.model = self._create_auto_model(
             pretrained=pretrained,
             revision=revision,
@@ -182,6 +186,8 @@ class HuggingFaceAutoLM(BaseLM):
         )
         self.model.eval()
         torch.set_grad_enabled(False)
+
+        torch.nn.init.kaiming_uniform_, torch.nn.init.uniform_, torch.nn.init.normal_ = saved_inits  # restoring
 
         self._device = device
         if use_accelerate and "lm_head" in self.model.hf_device_map:
@@ -205,6 +211,7 @@ class HuggingFaceAutoLM(BaseLM):
         cache_dir=None,
     ) -> transformers.AutoModel:
         """Returns a pre-trained pytorch model from a pre-trained model configuration."""
+
         model = self.AUTO_MODEL_CLASS.from_pretrained(
             pretrained,
             revision=revision + ("/" + subfolder if subfolder is not None else ""),
@@ -215,7 +222,6 @@ class HuggingFaceAutoLM(BaseLM):
             cache_dir=cache_dir,
             local_files_only=True,
             trust_remote_code=True,
-            low_cpu_mem_usage=True,
         )
         return model
 
