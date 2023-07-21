@@ -243,17 +243,16 @@ def quantize_spqr(model, dataloader, args, device):
 
         out_losses = []
         for j in trange(args.nsamples, desc="calc outs after quantization", leave=False):
-            if args.skip_out_loss:
-                outs[j] = layer(inps[j].to(layer_dev).unsqueeze(0), **forward_args)[0]
-            else:
-                outs_batch = layer(inps[j].to(layer_dev).unsqueeze(0), **forward_args)[0]
+            outs_batch = layer(inps[j].to(layer_dev).unsqueeze(0), **forward_args)[0]
+            if not args.skip_out_loss:
                 outs_batch_loss = (outs_batch - outs[j].to(layer_dev)).float().square().view(outs_batch.shape[0], -1)\
                     .mean(dim=1).sqrt()
                 outs_batch_loss /= outs_batch.view(outs_batch.shape[0], -1).float().std(dim=1)
                 out_losses.append(outs_batch_loss.item())
-                outs[j] = outs_batch
+            outs[j] = outs_batch
             if args.offload_activations:
                 outs[j] = outs[j].cpu()
+        del outs_batch
 
         layers[i] = layer.to(layer_dev_original)
         del layer
@@ -291,6 +290,7 @@ def quantize_spqr(model, dataloader, args, device):
     if args.wandb:
         wandb.log({"outlier_share": normal_outlier_count_global / w_count_global})
         wandb.log({"wbits_avg": wbits_avg})
+        wandb.log({"max_cuda_mem_quantize": round(torch.cuda.max_memory_allocated() / 1e9, 2)})
 
     model.config.use_cache = use_cache
     print (f"quantize: {torch.cuda.max_memory_allocated()=:,}")
@@ -322,7 +322,6 @@ def quantize_nearest(model, args, dev):
 @torch.no_grad()
 def perplexity_eval(model, testenc, args, dev):
     print(f"\nEvaluating perplexity for {args.dataset_name} dataset ...")
-    torch.cuda.reset_peak_memory_stats()
 
     if hasattr(testenc, 'input_ids'):
         testenc = testenc.input_ids
@@ -373,8 +372,6 @@ def perplexity_eval(model, testenc, args, dev):
         wandb.log({args.dataset_name: ppl.item()})
 
     model.config.use_cache = use_cache
-    print (f"eval: {torch.cuda.max_memory_allocated()=:,}")
-
 
 if __name__ == "__main__":
     import argparse
@@ -553,6 +550,7 @@ if __name__ == "__main__":
     quantize_model(model, args, device)
 
     print("\n============ Evaluating perplexity... ============")
+    torch.cuda.reset_peak_memory_stats()
     datasets = ["wikitext2", "ptb", "c4"]
     if args.new_eval:
         datasets = ["wikitext2", "ptb-new", "c4-new"]
@@ -562,6 +560,10 @@ if __name__ == "__main__":
         )
         args.dataset_name = dataset
         perplexity_eval(model, testloader, args, device)
+
+    print (f"eval: {torch.cuda.max_memory_allocated()=:,}")
+    if args.wandb:
+        wandb.log({"max_cuda_mem_eval": round(torch.cuda.max_memory_allocated() / 1e9, 2)})
 
     if args.save_pt:
         model.save_pretrained(args.save_pt)
