@@ -475,7 +475,6 @@ if __name__ == "__main__":
         default=16,
         help="Quantize quantization scale in groups of this many scales",
     )
-
     parser.add_argument(
         "--outlier_threshold",
         type=float,
@@ -487,7 +486,6 @@ if __name__ == "__main__":
         action="store_true",
         help="do not perform leave-one-out evaluation when detecting outliers; works faster, but generally worse in perplexity",
     )
-
     parser.add_argument(
         "--save_pt",
         type=str,
@@ -511,7 +509,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--offload_activations",
         action="store_true",
-        help="Whether to skip computation of out loss.",
+        help="Offload activations to RAM to save GPU memory.",
     )
     parser.add_argument(
         "--dtype",
