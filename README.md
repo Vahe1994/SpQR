@@ -51,9 +51,9 @@ Specify `$WANDB_ENTITY`, `$WANDB_PROJECT`, `$WANDB_NAME` environment variables p
 ### GPU and RAM requirements
 This code was developed and tested using a single A100 GPU with 80GB GPU RAM. It may successfully run on GPUs with 32GB+ VRAM for perplexity evaluation of up to `LLaMA-65B` and `Falcon-40B` models. 
 With `--offload activations` option, the model perplexity may be evaluated on machines with less VRAM: 24GB+ for Llama 65B and 6GB+ for Llama 7B.
+The perplexity testing code also requires RAM amount sufficient to hold uncompressed model weights (e.g. ~130GB for Llama65B) and testing datasets.
 For `Language Model Evaluation Harness` evaluation one needs to have enough memory to load whole model
-on one or several devices + activation tensors. 
-This code also requires RAM amount sufficient to hold uncompressed model weights (e.g. ~130GB for Llama65B) and testing datasets.
+on one or several devices + activation tensors.
 
 ### Model downloading
 The code requires the LLaMA model to be downloaded in Huggingface format and saved locally. The scripts below assume that `$TRANSFORMERS_CACHE` variable points to the Huggingface Transformers cache folder.
