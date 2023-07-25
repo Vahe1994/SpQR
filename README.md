@@ -48,10 +48,12 @@ Specify `$WANDB_ENTITY`, `$WANDB_PROJECT`, `$WANDB_NAME` environment variables p
 
 # Launching
 
-### GPU requirements
-This code was developed and tested using a single A100 GPU with 80GB GPU RAM. It may successfully run on GPUs with 32 - 40GB for perplexity evaluation of up to `LLaMA-65B` and `Falcon-40B` models.
+### GPU and RAM requirements
+This code was developed and tested using a single A100 GPU with 80GB GPU RAM. It may successfully run on GPUs with 32GB+ VRAM for perplexity evaluation of up to `LLaMA-65B` and `Falcon-40B` models. 
+With `--offload activations` option, the model perplexity may be evaluated on machines with less VRAM: 24GB+ for Llama 65B and 6GB+ for Llama 7B.
+The perplexity testing code also requires RAM amount sufficient to hold uncompressed model weights (e.g. ~130GB for Llama65B) and testing datasets.
 For `Language Model Evaluation Harness` evaluation one needs to have enough memory to load whole model
-on one or several devices + activation tensors. 
+on one or several devices + activation tensors.
 
 ### Model downloading
 The code requires the LLaMA model to be downloaded in Huggingface format and saved locally. The scripts below assume that `$TRANSFORMERS_CACHE` variable points to the Huggingface Transformers cache folder.
@@ -88,6 +90,7 @@ Note the launch arguments:
 - `--groupsize 16` -- size of first-order groups for compression
 - `--qq_groupsize 16` -- size of second-order (quantized) groups for compression
 - `--qq_scale_bits 3 --qq_zero_bits 3` -- bit sizes for quantizing first order weights' scale and zeros.
+- `--offload activations` -- moves activations to RAM when not used. Reduces VRAM usage while slowing work by ~10%. 
 run `python main.py --help` for more details on command line arguments, including compression parameters.
 
 ### LM Evaluation Harness benchmark.
