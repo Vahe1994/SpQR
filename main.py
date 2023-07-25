@@ -565,8 +565,8 @@ if __name__ == "__main__":
 
     if args.save_pt:
         model.save_pretrained(args.save_pt)
-    
+
     if args.save_safetensors:
         assert has_safetensors, "`safetensors` not installed, try pip install `safetensors`"
         safetensors.torch.save_file(model.state_dict(), args.save_safetensors)
-        
+
