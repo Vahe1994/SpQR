@@ -22,8 +22,9 @@ __Note:__ the results reported in the ArXiv paper where obtained using `4.28.dev
 
 ### Loading / caching datasets and tokenizer
 
-The script will require downloading and caching locally the relevant tokenizer and the datasets. They will be saved in `$TRANSFORMERS_CACHE` directory.
-
+The script will require downloading and caching locally the relevant tokenizer and the datasets. 
+They will be saved in default Huggingface Datasets directory unless alternative location is provided by env variables.
+See [relevant Datasets documentation section](https://huggingface.co/docs/datasets/main/en/cache#cache-directory)
 ### Models
 
 This repository is expected to work with models of `LLaMA` and `Falcon` families so far.
@@ -32,7 +33,7 @@ This repository is expected to work with models of `LLaMA` and `Falcon` families
 
 For quantization with SpQR its is recommended to use the subset of the data model 
 was trained on. I.e. for quantization of `LLaMA` models we recommend to use the subset
-of [RedPajamas](https://huggingface.co/datasets/togethercomputer/RedPajama-Data-1T-Sample) and for `Falcon` quantization - [RefinedWeb](https://huggingface.co/datasets/tiiuae/falcon-refinedweb). Both subsets 
+of [RedPajama](https://huggingface.co/datasets/togethercomputer/RedPajama-Data-1T-Sample) and for `Falcon` quantization - [RefinedWeb](https://huggingface.co/datasets/tiiuae/falcon-refinedweb). Both subsets 
 are stored in `data` directory: 
 * `data/red_pajama_n=1024.pth`
 * `data/refined_web_n=128.pth`
@@ -65,10 +66,9 @@ The command to launch the script should look like this:
 
 ```
 export MODEL_PATH=<PATH_TO_MODEL_DIR>
-export CUSTOM_DATA_PATH=<INSERT PATH TO CUSTOM DATA>
+export DATASET=<INSERT DATASET NAME OR PATH TO CUSTOM DATA>
 
-python main.py $MODEL_PATH custom \
-    --custom_data_path=$CUSTOM_DATA_PATH \
+python main.py $MODEL_PATH $DATASET \
     --wbits 4 \
     --groupsize 16 \
     --perchannel \
@@ -84,8 +84,7 @@ The command above runs near-lossless compression as described in the article. Ad
 
 Note the launch arguments:
 - `<PATH_TO_MODEL_DIR>` - path to model folder, which contains `config.json `
-- `one of [c4, ptb, wikitext2, custom]` -- name of dataset to use for compression
-- `--custom_data_path` - path to preprocessed and tokenized dataset (if `custom` chosen). Otherwise do not specify.
+- `one of [c4, ptb, wikitext2, pajama, refinedweb, none]` -- name of dataset to use for compression, or path to an alternative preprocessed and tokenized dataset.
 - `--wbits 3` -- number of bits for quantized weights representation
 - `--groupsize 16` -- size of first-order groups for compression
 - `--qq_groupsize 16` -- size of second-order (quantized) groups for compression
@@ -116,12 +115,12 @@ Below is presented an example of benchmark launch.
 
 ```
 export MODEL_PATH=<INSERT PATH_TO_MODEL_DIR>
-export CUSTOM_DATA_PATH=<INSERT PATH TO CUSTOM DATA>
+export DATASET=<INSERT DATASET NAME OR PATH TO CUSTOM DATA>
 
 python lmeval.py \
     --model hf-causal \
     --model_args pretrained=$MODEL_PATH,dtype=float16,use_accelerate=True \
-    --quantization_args dataset=custom,custom_data_path=$CUSTOM_DATA_PATH,wbits=4,groupsize=16,perchannel=True,qq_scale_bits=3,qq_zero_bits=3,qq_groupsize=16,percdamp=1.0,outlier_threshold=0.2,simplified_outliers=False,nsamples=128,offload_activations=True \
+    --quantization_args dataset=$DATASET,wbits=4,groupsize=16,perchannel=True,qq_scale_bits=3,qq_zero_bits=3,qq_groupsize=16,percdamp=1.0,outlier_threshold=0.2,simplified_outliers=False,nsamples=128,offload_activations=True \
     --tasks winogrande,piqa,hellaswag,arc_easy,arc_challenge \
     --batch_size 1
 ```
