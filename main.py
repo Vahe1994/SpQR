@@ -198,7 +198,7 @@ def quantize_spqr(model, dataloader, args, device):
                 handles.append(subset[sublayer_name].register_forward_hook(add_batch(sublayer_name)))
             for j in trange(
                 args.nsamples, desc="calc outs before quantization", leave=False
-            ):  
+            ):
                 outs[j] = layer(inps[j].to(layer_dev).unsqueeze(0), **forward_args)[0]
                 if args.offload_activations:
                     outs[j] = outs[j].cpu()
@@ -223,7 +223,14 @@ def quantize_spqr(model, dataloader, args, device):
                     outlier_relative_threshold=args.outlier_threshold,
                     permutation_order=args.permutation_order,
                     simplified_outliers=args.simplified_outliers,
+                    save_quantization=args.save_quantization
                 )
+
+                if args.save_quantization:
+                    quantized.save_quant_dict['sublayer_name'] = sublayer_name
+                    full_path = args.save_quantization_path+'quantized/' + str(i) + '/'
+                    os.makedirs(full_path, exist_ok=True)
+                    torch.save(quantized.save_quant_dict, full_path + sublayer_name)
 
                 spqr_handlers[sublayer_name].layer.weight.data = quantized.weight.to(
                     spqr_handlers[sublayer_name].layer.weight.data.dtype
@@ -478,6 +485,14 @@ if __name__ == "__main__":
         action="store_true",
         help="do not perform leave-one-out evaluation when detecting outliers; works faster, but generally worse in perplexity",
     )
+    parser.add_argument("--save_quantization",
+                        action="store_true",
+                        help="Flag to store quantization statistic")
+
+    parser.add_argument("--save_quantization_path",
+                        type=str,
+                        default="model_quant/",
+                        help="Path to save quantized statistics.")
     parser.add_argument(
         "--save_pt",
         type=str,
@@ -517,7 +532,7 @@ if __name__ == "__main__":
         print("WARNING: `--custom_data_path` argument and `--dataset=custom` option are DEPRECATED. ",
              "Pass dataset path directly to `dataset` argument or use 'pajama', 'refinedweb'",
              "See README.md for examples.")
-        args.dataset = args.custom_data_path 
+        args.dataset = args.custom_data_path
 
     if args.wandb:
         assert has_wandb, "`wandb` not installed, try pip install `wandb`"
