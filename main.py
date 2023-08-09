@@ -228,7 +228,11 @@ def quantize_spqr(model, dataloader, args, device):
 
                 if args.save_quantization:
                     quantized.save_quant_dict['sublayer_name'] = sublayer_name
-                    full_path = args.save_quantization_path+'quantized/' + str(i) + '/'
+                    if args.load_quantization:
+                        print("\n Warning: You are saving quantization of  quantized model!")
+                        full_path = args.quantized_statistics_pt + '_q/' + str(i) + '/'
+                    else:
+                        full_path = args.quantized_statistics_pt + '/' + str(i) + '/'
                     os.makedirs(full_path, exist_ok=True)
                     torch.save(quantized.save_quant_dict, full_path + sublayer_name)
 
@@ -238,7 +242,7 @@ def quantize_spqr(model, dataloader, args, device):
                 quantizers["model.layers.%d.%s" % (i, sublayer_name)] = ()  # to be updated
 
                 # OUTLIER STATS per module:
-                normal_outliers_count = quantized.unstructured_outlier_mask.to(torch.int32).sum()
+                normal_outliers_count = quantized.unstructured_outlier_mask.to(torch.uint16).sum()
                 stats_payload[f"n_{sublayer_name}_ol_share"] = \
                     (normal_outliers_count / quantized.weight.numel()).item()
                 normal_outlier_count += normal_outliers_count.item()
@@ -395,6 +399,16 @@ if __name__ == "__main__":
         default=None,
         help="Path to load if specified. Deprecated",
     )
+    parser.add_argument("--load_quantization",
+                        action="store_true",
+                        help="Flag to store quantization statistic")
+    parser.add_argument("--save_quantization",
+                        action="store_true",
+                        help="Flag to store quantization statistic")
+    parser.add_argument("--quantized_statistics_pt",
+                        type=str,
+                        default="model_quant/",
+                        help="Path to save/load quantized statistics.")
     parser.add_argument(
         "--seed", type=int, default=0, help="Seed for sampling the calibration data."
     )
@@ -485,26 +499,6 @@ if __name__ == "__main__":
         action="store_true",
         help="do not perform leave-one-out evaluation when detecting outliers; works faster, but generally worse in perplexity",
     )
-    parser.add_argument("--save_quantization",
-                        action="store_true",
-                        help="Flag to store quantization statistic")
-
-    parser.add_argument("--save_quantization_path",
-                        type=str,
-                        default="model_quant/",
-                        help="Path to save quantized statistics.")
-    parser.add_argument(
-        "--save_pt",
-        type=str,
-        default="",
-        help="Save quantized checkpoint under this name.",
-    )
-    parser.add_argument(
-        "--save_safetensors",
-        type=str,
-        default="",
-        help="Save quantized `.safetensors` checkpoint under this name.",
-    )
     parser.add_argument(
         "--wandb", action="store_true", help="Whether to use wandb or store locally."
     )
@@ -555,9 +549,11 @@ if __name__ == "__main__":
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     print("============  Loading model... ============")
-    model = get_model(args.model_path, args.dtype).train(False)
+    model = get_model(args.model_path, args.quantized_statistics_pt, args.load_quantization,  args.dtype, ).train(False)
 
     print("\n============ Quantizing model... ============")
+    if args.wbits<16 and  args.load_quantization:
+        print("\n Warning: You are quantizing quantized model!")
     quantize_model(model, args, device)
 
     print("\n============ Evaluating perplexity... ============")
@@ -575,11 +571,3 @@ if __name__ == "__main__":
     print (f"eval: {torch.cuda.max_memory_allocated()=:,}")
     if args.wandb:
         wandb.log({"max_cuda_mem_eval": round(torch.cuda.max_memory_allocated() / 1e9, 2)})
-
-    if args.save_pt:
-        model.save_pretrained(args.save_pt)
-
-    if args.save_safetensors:
-        assert has_safetensors, "`safetensors` not installed, try pip install `safetensors`"
-        safetensors.torch.save_file(model.state_dict(), args.save_safetensors)
-
