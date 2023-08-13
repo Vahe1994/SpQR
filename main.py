@@ -228,11 +228,7 @@ def quantize_spqr(model, dataloader, args, device):
 
                 if args.save_quantization:
                     quantized.save_quant_dict['sublayer_name'] = sublayer_name
-                    if args.load_quantization:
-                        print("\n Warning: You are saving quantization of  quantized model!")
-                        full_path = args.quantized_statistics_pt + '_q/' + str(i) + '/'
-                    else:
-                        full_path = args.quantized_statistics_pt + '/' + str(i) + '/'
+                    full_path = args.save_quantization_pt + '/' + str(i) + '/'
                     os.makedirs(full_path, exist_ok=True)
                     torch.save(quantized.save_quant_dict, full_path + sublayer_name)
 
@@ -242,7 +238,7 @@ def quantize_spqr(model, dataloader, args, device):
                 quantizers["model.layers.%d.%s" % (i, sublayer_name)] = ()  # to be updated
 
                 # OUTLIER STATS per module:
-                normal_outliers_count = quantized.unstructured_outlier_mask.to(torch.uint16).sum()
+                normal_outliers_count = quantized.unstructured_outlier_mask.to(torch.int32).sum()
                 stats_payload[f"n_{sublayer_name}_ol_share"] = \
                     (normal_outliers_count / quantized.weight.numel()).item()
                 normal_outlier_count += normal_outliers_count.item()
@@ -293,6 +289,16 @@ def quantize_spqr(model, dataloader, args, device):
         round_zero=args.round_zero,
         global_ol_n_share=normal_outlier_count_global / w_count_global,
     )
+    if args.save_quantization:
+        already_saved_weights = set()
+        for name, layer in nn.ModuleList(model.model.layers).named_modules():
+            if isinstance(layer, (nn.Conv2d, nn.Linear)):
+                already_saved_weights.add(layer.weight)
+        not_quantized_weights = {
+            name: param for name, param in model.named_parameters()
+            if param not in already_saved_weights
+        }
+        torch.save(not_quantized_weights,args.save_quantization_pt + "/not_quantized_wrights.pt")
 
     if args.wandb:
         wandb.log({"outlier_share": normal_outlier_count_global / w_count_global})
@@ -402,13 +408,17 @@ if __name__ == "__main__":
     parser.add_argument("--load_quantization",
                         action="store_true",
                         help="Flag to store quantization statistic")
+    parser.add_argument("--load_quantization_pt",
+                        type=str,
+                        default="model_quant/",
+                        help="Path to load quantized statistics.")
     parser.add_argument("--save_quantization",
                         action="store_true",
                         help="Flag to store quantization statistic")
-    parser.add_argument("--quantized_statistics_pt",
+    parser.add_argument("--save_quantization_pt",
                         type=str,
                         default="model_quant/",
-                        help="Path to save/load quantized statistics.")
+                        help="Path to save quantized statistics.")
     parser.add_argument(
         "--seed", type=int, default=0, help="Seed for sampling the calibration data."
     )
@@ -549,7 +559,7 @@ if __name__ == "__main__":
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     print("============  Loading model... ============")
-    model = get_model(args.model_path, args.quantized_statistics_pt, args.load_quantization,  args.dtype, ).train(False)
+    model = get_model(args.model_path, args.load_quantization_pt, args.load_quantization,  args.dtype ).train(False)
 
     print("\n============ Quantizing model... ============")
     if args.wbits<16 and  args.load_quantization:

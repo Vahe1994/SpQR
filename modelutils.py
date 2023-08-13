@@ -1,21 +1,18 @@
 import torch
 import torch.nn as nn
 from transformers import AutoConfig, AutoModelForCausalLM
-from quant_groups import  dequantize
-from accelerate import init_empty_weights
-
+from quant_groups import dequantize
 
 MODEL_ERROR_MSG = "Unsupported model type {} - only 'llama' and 'falcon' supported"
 FALCON_TYPES = ("falcon", "refinedweb", "refinedwebmodel")
 
 
-def get_model(model_path,  quantized_statistics_pt="", load_quantization=False, dtype="auto"):
+def get_model(model_path, quantized_statistics_pt="", load_quantization=False, dtype="auto"):
     if dtype == "auto":
         dtype = AutoConfig.from_pretrained(model_path,
                                            trust_remote_code=True).torch_dtype or "auto"  # force transformers 4.29.2 to follow the same rules as 4.30.x
     else:
         dtype = getattr(torch, dtype)
-
 
     def skip(*args, **kwargs):
         pass
@@ -23,19 +20,22 @@ def get_model(model_path,  quantized_statistics_pt="", load_quantization=False, 
     saved_inits = torch.nn.init.kaiming_uniform_, torch.nn.init.uniform_, torch.nn.init.normal_  # preserving
     torch.nn.init.kaiming_uniform_ = torch.nn.init.uniform_ = torch.nn.init.normal_ = skip
     if load_quantization:
+        print("Initializing model with random weights...")
         config = AutoConfig.from_pretrained(model_path)
-        with init_empty_weights():
-            model = AutoModelForCausalLM.from_config(config).train(False)
+        model = AutoModelForCausalLM.from_config(config).train(False)
     else:
+        "Loading pretrained model ..."
         model = AutoModelForCausalLM.from_pretrained(
             pretrained_model_name_or_path=model_path,
             trust_remote_code=True,
             torch_dtype=dtype,
         )
+    if load_quantization:
+        print("Loading quantized model ...")
+        model = load_quantized_model(model, quantized_statistics_pt)
     model.seqlen = 2048
     torch.nn.init.kaiming_uniform_, torch.nn.init.uniform_, torch.nn.init.normal_ = saved_inits  # restoring
-    if load_quantization:
-        model = load_quantized_model(model,quantized_statistics_pt),
+
     return model
 
 
@@ -120,6 +120,7 @@ def load_quantized_model(model, load_path):
             sub_layers[name].weight = nn.Parameter(layer_weight_dequantization(dic).to(
                 sub_layers[name].weight.data.dtype))
         layers[i] = layer
+    model.load_state_dict(torch.load(load_path  + "/not_quantized_weights.pt"), strict=False)
     return model
 
 
