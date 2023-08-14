@@ -299,7 +299,7 @@ def quantize_spqr(model, dataloader, args, device):
             name: param for name, param in model.named_parameters()
             if param not in already_saved_weights
         }
-        torch.save(not_quantized_weights,args.save_quantization_pt + "/not_quantized_wrights.pt")
+        torch.save(not_quantized_weights,args.save_quantization_pt + "/not_quantized_weights.pt")
 
     if args.wandb:
         wandb.log({"outlier_share": normal_outlier_count_global / w_count_global})
