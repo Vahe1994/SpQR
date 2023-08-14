@@ -290,6 +290,7 @@ def quantize_spqr(model, dataloader, args, device):
         global_ol_n_share=normal_outlier_count_global / w_count_global,
     )
     if args.save_quantization:
+        torch.save(vars(args), args.save_quantization_pt + "/args.pt")
         already_saved_weights = set()
         for name, layer in nn.ModuleList(model.model.layers).named_modules():
             if isinstance(layer, (nn.Conv2d, nn.Linear)):
