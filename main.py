@@ -1,3 +1,4 @@
+import imp
 import os
 import time
 from tqdm import trange
@@ -5,6 +6,7 @@ from tqdm import trange
 from spqr_engine import SPQRUtil, Quantizer, quantize
 from datautils import get_loaders
 from modelutils import *
+from qmodules import QLinear
 
 try:
     import wandb
@@ -240,6 +242,30 @@ def quantize_spqr(model, dataloader, args, device):
                 )
                 quantizers["model.layers.%d.%s" % (i, sublayer_name)] = ()  # to be updated
 
+                # TODO shorter name
+                if args.replace_by_quantized_layer and args.save_quantization: 
+                    dic = quantized.save_quant_dict
+                    # TODO add classmethod?
+                    qlayer = QLinear(
+                        quant_weights=dic['quant_weights'],
+                        scale=dic['quant_layer_scale'],
+                        zero=dic['quant_layer_zeros'],
+                        scale_qq_scale=dic['quant_layer_scale_qq_scale'],
+                        scale_qq_zero=dic['quant_layer_scale_qq_zero'],
+                        zero_qq_scale=dic['quant_layer_zero_qq_scale'],
+                        zero_qq_zero=dic['quant_layer_zero_qq_zero'],
+                        outliers_matrix=dic['outliers_matrix'],
+                        bias=spqr_handlers[sublayer_name].layer.bias,
+                        perm=(dic['perm'].to(torch.long) if args.permutation_order != 'identity' else None),
+                        bits=(8 if args.wbits > 4 else 4)
+                    )
+                    if '.' in sublayer_name:
+                        parent_name, child_name = sublayer_name.rsplit('.', 1)
+                        parent_module = layer.get_submodule(parent_name)
+                        setattr(parent_module, child_name, qlayer)
+                    elif sublayer_name:
+                        setattr(layer, sublayer_name, qlayer)
+                    
                 # OUTLIER STATS per module:
                 normal_outliers_count = quantized.unstructured_outlier_mask.to(torch.int32).sum()
                 stats_payload[f"n_{sublayer_name}_ol_share"] = \
@@ -538,6 +564,11 @@ if __name__ == "__main__":
         default="auto",
         choices=["auto", "float16", "float32"],
         help="dtype to load the model.",
+    )
+    parser.add_argument(
+        "--replace_by_quantized_layer",
+        action="store_true",
+        help="Whether to replace the original layer by its quantized version."
     )
 
     args = parser.parse_args()
