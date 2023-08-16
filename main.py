@@ -197,7 +197,7 @@ def quantize_spqr(model, dataloader, args, device):
             for sublayer_name in subset:
                 handles.append(subset[sublayer_name].register_forward_hook(add_batch(sublayer_name)))
             for j in trange(
-               args.nsamples, desc="calc outs before quantization", leave=False
+                args.nsamples, desc="calc outs before quantization", leave=False
             ):
                 outs[j] = layer(inps[j].to(layer_dev).unsqueeze(0), **forward_args)[0]
                 if args.offload_activations:
@@ -367,7 +367,7 @@ def perplexity_eval(model, testenc, args, dev):
     for i in range(nsamples):
         lm_logits = get_lm_logits(inps[i].to(dev), model)
         shift_logits = lm_logits[:, :-1, :].contiguous()
-        shift_labels = testenc[:, (i * model.seqlen): ((i + 1) * model.seqlen)][:, 1:]
+        shift_labels = testenc[:, (i * model.seqlen) : ((i + 1) * model.seqlen)][:, 1:]
         loss_fct = nn.CrossEntropyLoss()
         loss = loss_fct(
             shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1)
@@ -531,8 +531,8 @@ if __name__ == "__main__":
 
     if args.dataset == "custom":
         print("WARNING: `--custom_data_path` argument and `--dataset=custom` option are DEPRECATED. ",
-            "Pass dataset path directly to `dataset` argument or use 'pajama', 'refinedweb'",
-            "See README.md for examples.")
+             "Pass dataset path directly to `dataset` argument or use 'pajama', 'refinedweb'",
+             "See README.md for examples.")
         args.dataset = args.custom_data_path
 
     if args.wandb:
@@ -556,7 +556,7 @@ if __name__ == "__main__":
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     print("============  Loading model... ============")
-    model = get_model(args.model_path, args.load, args.load, args.dtype).train(False)
+    model = get_model(args.model_path, args.load, args.dtype).train(False)
 
     print("\n============ Quantizing model... ============")
     if args.wbits < 16 and args.load:
