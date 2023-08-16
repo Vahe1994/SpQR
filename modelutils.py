@@ -7,10 +7,9 @@ MODEL_ERROR_MSG = "Unsupported model type {} - only 'llama' and 'falcon' support
 FALCON_TYPES = ("falcon", "refinedweb", "refinedwebmodel")
 
 
-def get_model(model_path, quantized_statistics_pt="", load_quantization=False, dtype="auto"):
+def get_model(model_path, load_quantization=None, dtype="auto"):
     if dtype == "auto":
-        dtype = AutoConfig.from_pretrained(model_path,
-                                           trust_remote_code=True).torch_dtype or "auto"  # force transformers 4.29.2 to follow the same rules as 4.30.x
+        dtype = AutoConfig.from_pretrained(model_path, trust_remote_code=True).torch_dtype or "auto"  # force transformers 4.29.2 to follow the same rules as 4.30.x
     else:
         dtype = getattr(torch, dtype)
 
@@ -23,19 +22,17 @@ def get_model(model_path, quantized_statistics_pt="", load_quantization=False, d
         print("Initializing model with random weights...")
         config = AutoConfig.from_pretrained(model_path)
         model = AutoModelForCausalLM.from_config(config).train(False)
+        print("Loading quantized model ...")
+        model = load_quantized_model(model, load_quantization)
     else:
-        "Loading pretrained model ..."
+        print("Loading pretrained model ...")
         model = AutoModelForCausalLM.from_pretrained(
             pretrained_model_name_or_path=model_path,
             trust_remote_code=True,
             torch_dtype=dtype,
         )
-    if load_quantization:
-        print("Loading quantized model ...")
-        model = load_quantized_model(model, quantized_statistics_pt)
     model.seqlen = 2048
     torch.nn.init.kaiming_uniform_, torch.nn.init.uniform_, torch.nn.init.normal_ = saved_inits  # restoring
-
     return model
 
 
@@ -52,7 +49,6 @@ def get_model_head(model):
     else:
         raise ValueError(MODEL_ERROR_MSG.format(model.config.model_type))
     return head
-
 
 def get_lm_logits(inps_, model):
     if model.config.model_type == "llama":
@@ -104,7 +100,6 @@ def get_sequential_groups(model):
         ]
     else:
         raise ValueError(MODEL_ERROR_MSG.format(model.config.model_type))
-
 
 def read_quant_weight_from_file(load_path, block_i, layer_name):
     return torch.load(load_path + '/' + str(block_i) + '/' + layer_name)

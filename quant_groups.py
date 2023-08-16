@@ -6,11 +6,9 @@ def quantize_dequantize(x, scale, zero, maxq, eps=1e-9):
     q = torch.clamp(torch.round(x / scale.clamp_min(eps) + zero), 0, maxq)
     return scale * (q - zero)
 
-
 def quantize(x, scale, zero, maxq, eps=1e-9):
     q = torch.clamp(torch.round(x / scale.clamp_min(eps) + zero), 0, maxq)
     return q
-
 
 def dequantize(x, scale, zero, eps=1e-9):
     return scale * (x - zero)
@@ -24,23 +22,23 @@ class Quantizer(nn.Module):
         self.register_buffer("zero", torch.zeros(shape))
 
     def configure(
-            self,
-            bits,
-            perchannel=False,
-            sym=True,
-            norm=2.0,
-            grid=100,
-            maxshrink=0.8,
-            round_zero: bool = False,
-            qq_scale_bits=None,
-            qq_zero_bits=None,
-            qq_groupsize=16,
-            qq_zero_sym=False,
-            reserved_bins: int = 0,
-            qqq_params=None,
+        self,
+        bits,
+        perchannel=False,
+        sym=True,
+        norm=2.0,
+        grid=100,
+        maxshrink=0.8,
+        round_zero: bool = False,
+        qq_scale_bits=None,
+        qq_zero_bits=None,
+        qq_groupsize=16,
+        qq_zero_sym=False,
+        reserved_bins: int = 0,
+        qqq_params=None,
     ):
         self.bits = bits
-        self.maxq = torch.tensor(2 ** bits - 1 - reserved_bins)
+        self.maxq = torch.tensor(2**bits - 1 - reserved_bins)
         self.perchannel = perchannel
         self.sym = sym
         self.norm = norm
@@ -112,8 +110,7 @@ class Quantizer(nn.Module):
         if self.qq_zero_bits is not None and ((not self.round_zero) or self.qq_zero_bits < self.bits):
             zero_groups = self.zero.reshape(-1, self.qq_groupsize)
             self.qq_zero = Quantizer(shape=zero_groups.shape)
-            self.qq_zero.configure(self.qq_zero_bits, perchannel=True, sym=self.qq_zero_sym, round_zero=False,
-                                   **self.qqq_params)
+            self.qq_zero.configure(self.qq_zero_bits, perchannel=True, sym=self.qq_zero_sym, round_zero=False, **self.qqq_params)
             self.qq_zero.find_params(zero_groups, weight=True)
             assert self.qq_zero.scale.shape == (zero_groups.shape[0], 1), self.qq_zero.scale.shape
             self.quant_zero = self.qq_zero.quantize(zero_groups)
