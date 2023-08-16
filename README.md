@@ -91,7 +91,7 @@ Note the launch arguments:
 - `--qq_scale_bits 3 --qq_zero_bits 3` -- bit sizes for quantizing first order weights' scale and zeros.
 - `--offload activations` -- moves activations to RAM when not used. Reduces VRAM usage while slowing work by ~10%. 
 run `python main.py --help` for more details on command line arguments, including compression parameters.
-
+- `--save --load` -- path to save/load quantized model.
 ### LM Evaluation Harness benchmark.
 
 To perform zero-shot evaluation, we use [Language Model Evaluation Harness](https://github.com/EleutherAI/lm-evaluation-harness) framework with slight modifications. This repository contains a copy of LM Evaluation Harness repo from early 2023 in `lm-eval-harness` folder. 
