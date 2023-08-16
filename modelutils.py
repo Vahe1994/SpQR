@@ -2,37 +2,45 @@ import torch
 import torch.nn as nn
 from transformers import AutoConfig, AutoModelForCausalLM
 from quant_groups import dequantize
+from contextlib import contextmanager
 
 MODEL_ERROR_MSG = "Unsupported model type {} - only 'llama' and 'falcon' supported"
 FALCON_TYPES = ("falcon", "refinedweb", "refinedwebmodel")
 
+@contextmanager
+def suspend_nn_inits():
+    skip = lambda *args, **kwargs: None
+    saved_inits = torch.nn.init.kaiming_uniform_, torch.nn.init.uniform_, torch.nn.init.normal_  #saving
+    torch.nn.init.kaiming_uniform_ = torch.nn.init.uniform_ = torch.nn.init.normal_ = skip  #replacing
+    try:
+        yield
+    finally:
+        torch.nn.init.kaiming_uniform_, torch.nn.init.uniform_, torch.nn.init.normal_ = saved_inits  # restoring
 
-def get_model(model_path, load_quantization=None, dtype="auto"):
+def get_model(model_path, load_quantized=None, dtype="auto"):
     if dtype == "auto":
         dtype = AutoConfig.from_pretrained(model_path, trust_remote_code=True).torch_dtype or "auto"  # force transformers 4.29.2 to follow the same rules as 4.30.x
     else:
         dtype = getattr(torch, dtype)
 
-    def skip(*args, **kwargs):
-        pass
-
-    saved_inits = torch.nn.init.kaiming_uniform_, torch.nn.init.uniform_, torch.nn.init.normal_  # preserving
-    torch.nn.init.kaiming_uniform_ = torch.nn.init.uniform_ = torch.nn.init.normal_ = skip
-    if load_quantization:
-        print("Initializing model with random weights...")
-        config = AutoConfig.from_pretrained(model_path)
-        model = AutoModelForCausalLM.from_config(config).train(False)
-        print("Loading quantized model ...")
-        model = load_quantized_model(model, load_quantization)
-    else:
-        print("Loading pretrained model ...")
-        model = AutoModelForCausalLM.from_pretrained(
-            pretrained_model_name_or_path=model_path,
-            trust_remote_code=True,
-            torch_dtype=dtype,
-        )
+    with suspend_nn_inits():
+        if load_quantized:
+            print("Initializing model with random weights...")
+            config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)  # consider trust_remote_code=True
+            model = AutoModelForCausalLM.from_config(config, trust_remote_code=True,torch_dtype=dtype).eval()
+            print("Loading quantized model ...")
+            model = load_quantized_model(model, load_quantized)
+        else:
+            print("Loading pretrained model ...")
+            model = AutoModelForCausalLM.from_pretrained(
+                pretrained_model_name_or_path=model_path,
+                trust_remote_code=True,
+                torch_dtype=dtype,
+            )
     model.seqlen = 2048
-    torch.nn.init.kaiming_uniform_, torch.nn.init.uniform_, torch.nn.init.normal_ = saved_inits  # restoring
+
+    print("Model loaded sucessfully ...")
+
     return model
 
 
@@ -150,6 +158,6 @@ def layer_weight_dequantization(quantized_params_dict):
                                                                ).reshape_as(reconstructed_weight[:, column_index])
     reconstructed_weight = reconstructed_weight * (quantized_params_dict['outliers_matrix'].to_dense().cpu() == 0) + quantized_params_dict[
         'outliers_matrix'].to_dense().cpu()
-    invperm = torch.argsort(quantized_params_dict['perm'])
+    invperm = torch.argsort(quantized_params_dict['perm']).cpu()
     reconstructed_weight = reconstructed_weight[:, invperm]
     return reconstructed_weight

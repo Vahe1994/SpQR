@@ -174,7 +174,7 @@ def quantize_spqr(model, dataloader, args, device):
         all_sublayers = find_sublayers(layer)
 
         for k, v in forward_args.items():
-            forward_args[k] = v.to(layer_dev)
+            forward_args[k] = v.to(layer_dev) if isinstance(v, torch.Tensor) else v
 
         if args.true_sequential:
             sequential = get_sequential_groups(model)
@@ -292,7 +292,7 @@ def quantize_spqr(model, dataloader, args, device):
     if args.save:
         torch.save(vars(args), args.save + "/args.pt")
         already_saved_weights = set()
-        for name, layer in nn.ModuleList(model.model.layers).named_modules():
+        for name, layer in nn.ModuleList(get_layers(model)).named_modules():
             if isinstance(layer, (nn.Conv2d, nn.Linear)):
                 already_saved_weights.add(layer.weight)
         not_quantized_weights = {
@@ -345,7 +345,7 @@ def perplexity_eval(model, testenc, args, dev):
     inps, forward_args = get_inps(model, testenc, args, dev='cpu' if args.offload_activations else dev, nsamples=nsamples)
     outs = torch.zeros_like(inps)
     for k, v in forward_args.items():
-        forward_args[k] = v.to(dev)
+        forward_args[k] = v.to(dev) if isinstance(v, torch.Tensor) else v
 
     layers = get_layers(model)
     for i in trange(len(layers), desc="processing eval data by layer"):
