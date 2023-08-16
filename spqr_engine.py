@@ -250,7 +250,7 @@ class SPQRUtil:
             save_quant_dict['weight_shape'] = weight.shape
             save_quant_dict['groupsize'] = groupsize if groupsize else weight.shape[1]
             save_quant_dict["quant_weights"] = torch.cat(save_quant_dict["quant_weights"],dim=1)
-            save_quant_dict["outliers_matrix"] = save_quant_dict["outliers_matrix"].to_sparse().cpu()
+            save_quant_dict["outliers_matrix"] = save_quant_dict["outliers_matrix"].to_sparse()
 
         return QuantizationResult(
             weight=weight,

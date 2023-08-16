@@ -111,19 +111,19 @@ def load_quantized_model(model, load_path):
         layer = layers[i]
         sub_layers = find_sublayers(layer)
         for name in sub_layers:
-            dic = read_quant_weight_from_file(load_path, i, name)
-            sub_layers[name].weight = nn.Parameter(layer_weight_dequantization(dic).to(
+            quantized_params_dict = read_quant_weight_from_file(load_path, i, name)
+            sub_layers[name].weight = nn.Parameter(layer_weight_dequantization(quantized_params_dict).to(
                 sub_layers[name].weight.data.dtype))
         layers[i] = layer
     model.load_state_dict(torch.load(load_path  + "/not_quantized_weights.pt"), strict=False)
     return model
 
 
-def layer_weight_dequantization(dic):
-    out_dim, in_dim = dic['weight_shape']
-    blocksize = dic['blocksize']
-    keep_last_columns = dic['keep_last_columns']
-    reconstructed_weight = torch.zeros(dic['weight_shape'])
+def layer_weight_dequantization(quantized_params_dict):
+    out_dim, in_dim = quantized_params_dict['weight_shape']
+    blocksize = quantized_params_dict['blocksize']
+    keep_last_columns = quantized_params_dict['keep_last_columns']
+    reconstructed_weight = torch.zeros(quantized_params_dict['weight_shape'])
     block_start_iter = range(0, in_dim - keep_last_columns, blocksize)
     block_start_iter = block_start_iter
     current_ind = 0
@@ -131,25 +131,25 @@ def layer_weight_dequantization(dic):
     for block_start in block_start_iter:
         block_end = min(block_start + blocksize, in_dim)
         for column_index in range(block_start, block_end):
-            if column_index % dic['groupsize'] == 0:
-                if dic['quant_layer_scale_qq_scale']:
-                    dequantize_zeros = dequantize(dic['quant_layer_zeros'][current_ind],
-                                                  dic['quant_layer_zero_qq_scale'][current_ind],
-                                                  dic['quant_layer_zero_qq_zero'][current_ind])
-                    dequantize_scale = dequantize(dic['quant_layer_scale'][current_ind],
-                                                  dic['quant_layer_scale_qq_scale'][current_ind],
-                                                  dic['quant_layer_scale_qq_zero'][current_ind])
+            if column_index % quantized_params_dict['groupsize'] == 0:
+                if quantized_params_dict['quant_layer_scale_qq_scale']:
+                    dequantize_zeros = dequantize(quantized_params_dict['quant_layer_zeros'][current_ind],
+                                                  quantized_params_dict['quant_layer_zero_qq_scale'][current_ind],
+                                                  quantized_params_dict['quant_layer_zero_qq_zero'][current_ind])
+                    dequantize_scale = dequantize(quantized_params_dict['quant_layer_scale'][current_ind],
+                                                  quantized_params_dict['quant_layer_scale_qq_scale'][current_ind],
+                                                  quantized_params_dict['quant_layer_scale_qq_zero'][current_ind])
                 else:
-                    dequantize_zeros = dic['quant_layer_zeros'][current_ind]
-                    dequantize_scale = dic['quant_layer_scale'][current_ind]
+                    dequantize_zeros = quantized_params_dict['quant_layer_zeros'][current_ind]
+                    dequantize_scale = quantized_params_dict['quant_layer_scale'][current_ind]
                 current_ind += 1
 
-            reconstructed_weight[:, column_index] = dequantize(dic['quant_weights'][:, column_index].unsqueeze(1),
+            reconstructed_weight[:, column_index] = dequantize(quantized_params_dict['quant_weights'][:, column_index].unsqueeze(1),
                                                                dequantize_scale.reshape(-1, 1),
                                                                dequantize_zeros.reshape(-1, 1)
                                                                ).reshape_as(reconstructed_weight[:, column_index])
-    reconstructed_weight = reconstructed_weight * (dic['outliers_matrix'].to_dense().cpu() == 0) + dic[
+    reconstructed_weight = reconstructed_weight * (quantized_params_dict['outliers_matrix'].to_dense().cpu() == 0) + quantized_params_dict[
         'outliers_matrix'].to_dense().cpu()
-    invperm = torch.argsort(dic['perm'])
+    invperm = torch.argsort(quantized_params_dict['perm'])
     reconstructed_weight = reconstructed_weight[:, invperm]
     return reconstructed_weight
