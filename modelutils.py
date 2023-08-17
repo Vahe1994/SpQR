@@ -3,6 +3,7 @@ import torch.nn as nn
 from transformers import AutoConfig, AutoModelForCausalLM
 from quant_groups import dequantize
 from contextlib import contextmanager
+from  tqdm import trange
 
 MODEL_ERROR_MSG = "Unsupported model type {} - only 'llama' and 'falcon' supported"
 FALCON_TYPES = ("falcon", "refinedweb", "refinedwebmodel")
@@ -115,7 +116,7 @@ def read_quant_weight_from_file(load_path, block_i, layer_name):
 
 def load_quantized_model(model, load_path):
     layers = get_layers(model)
-    for i in range(len(layers)):
+    for i in trange(len(layers)):
         layer = layers[i]
         sub_layers = find_sublayers(layer)
         for name in sub_layers:
