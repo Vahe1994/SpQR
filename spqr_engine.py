@@ -85,7 +85,7 @@ class SPQRUtil:
             save_quant_dict['quant_layer_scale_qq_zero'] = []
             save_quant_dict['quant_layer_zero_qq_scale'] = []
             save_quant_dict['quant_layer_zero_qq_zero'] = []
-            save_quant_dict['save_float_dtype'] = torch.float16
+            save_quant_dict['save_float_dtype'] = self.layer.weight.dtype
             save_quant_dict['outliers_matrix'] = torch.zeros(weight.shape,dtype=save_quant_dict['save_float_dtype']).to(
                 weight.device)  # shape = [out_features, in_features]
 
