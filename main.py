@@ -174,7 +174,7 @@ def quantize_spqr(model, dataloader, args, device):
         all_sublayers = find_sublayers(layer)
 
         for k, v in forward_args.items():
-            forward_args[k] = v.to(layer_dev)
+            forward_args[k] = v.to(layer_dev) if isinstance(v, torch.Tensor) else v
 
         if args.true_sequential:
             sequential = get_sequential_groups(model)
@@ -198,7 +198,7 @@ def quantize_spqr(model, dataloader, args, device):
                 handles.append(subset[sublayer_name].register_forward_hook(add_batch(sublayer_name)))
             for j in trange(
                 args.nsamples, desc="calc outs before quantization", leave=False
-            ):  
+            ):
                 outs[j] = layer(inps[j].to(layer_dev).unsqueeze(0), **forward_args)[0]
                 if args.offload_activations:
                     outs[j] = outs[j].cpu()
@@ -223,7 +223,14 @@ def quantize_spqr(model, dataloader, args, device):
                     outlier_relative_threshold=args.outlier_threshold,
                     permutation_order=args.permutation_order,
                     simplified_outliers=args.simplified_outliers,
+                    save_quantization=args.save
                 )
+
+                if args.save:
+                    quantized.save_quant_dict['sublayer_name'] = sublayer_name
+                    full_path = args.save + '/' + str(i) + '/'
+                    os.makedirs(full_path, exist_ok=True)
+                    torch.save(quantized.save_quant_dict, full_path + sublayer_name)
 
                 spqr_handlers[sublayer_name].layer.weight.data = quantized.weight.to(
                     spqr_handlers[sublayer_name].layer.weight.data.dtype
@@ -282,6 +289,17 @@ def quantize_spqr(model, dataloader, args, device):
         round_zero=args.round_zero,
         global_ol_n_share=normal_outlier_count_global / w_count_global,
     )
+    if args.save:
+        torch.save(vars(args), args.save + "/args.pt")
+        already_saved_weights = set()
+        for name, layer in nn.ModuleList(get_layers(model)).named_modules():
+            if isinstance(layer, (nn.Conv2d, nn.Linear)):
+                already_saved_weights.add(layer.weight)
+        not_quantized_weights = {
+            name: param for name, param in model.named_parameters()
+            if param not in already_saved_weights
+        }
+        torch.save(not_quantized_weights, args.save + "/not_quantized_weights.pt")
 
     if args.wandb:
         wandb.log({"outlier_share": normal_outlier_count_global / w_count_global})
@@ -289,7 +307,7 @@ def quantize_spqr(model, dataloader, args, device):
         wandb.log({"max_cuda_mem_quantize": round(torch.cuda.max_memory_allocated() / 1e9, 2)})
 
     model.config.use_cache = use_cache
-    print (f"quantize: {torch.cuda.max_memory_allocated()=:,}")
+    print(f"quantize: {torch.cuda.max_memory_allocated()=:,}")
     return quantizers, wbits_avg
 
 
@@ -327,7 +345,7 @@ def perplexity_eval(model, testenc, args, dev):
     inps, forward_args = get_inps(model, testenc, args, dev='cpu' if args.offload_activations else dev, nsamples=nsamples)
     outs = torch.zeros_like(inps)
     for k, v in forward_args.items():
-        forward_args[k] = v.to(dev)
+        forward_args[k] = v.to(dev) if isinstance(v, torch.Tensor) else v
 
     layers = get_layers(model)
     for i in trange(len(layers), desc="processing eval data by layer"):
@@ -388,6 +406,16 @@ if __name__ == "__main__":
         default=None,
         help="Path to load if specified. Deprecated",
     )
+    parser.add_argument(
+        "--load",
+        type=str,
+        default=None,
+        help="Path to load quantized statistics.")
+    parser.add_argument(
+        "--save",
+        type=str,
+        default=None,
+        help="Path to save quantized statistics.")
     parser.add_argument(
         "--seed", type=int, default=0, help="Seed for sampling the calibration data."
     )
@@ -479,18 +507,6 @@ if __name__ == "__main__":
         help="do not perform leave-one-out evaluation when detecting outliers; works faster, but generally worse in perplexity",
     )
     parser.add_argument(
-        "--save_pt",
-        type=str,
-        default="",
-        help="Save quantized checkpoint under this name.",
-    )
-    parser.add_argument(
-        "--save_safetensors",
-        type=str,
-        default="",
-        help="Save quantized `.safetensors` checkpoint under this name.",
-    )
-    parser.add_argument(
         "--wandb", action="store_true", help="Whether to use wandb or store locally."
     )
     parser.add_argument(
@@ -517,7 +533,7 @@ if __name__ == "__main__":
         print("WARNING: `--custom_data_path` argument and `--dataset=custom` option are DEPRECATED. ",
              "Pass dataset path directly to `dataset` argument or use 'pajama', 'refinedweb'",
              "See README.md for examples.")
-        args.dataset = args.custom_data_path 
+        args.dataset = args.custom_data_path
 
     if args.wandb:
         assert has_wandb, "`wandb` not installed, try pip install `wandb`"
@@ -540,9 +556,11 @@ if __name__ == "__main__":
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     print("============  Loading model... ============")
-    model = get_model(args.model_path, args.dtype).train(False)
+    model = get_model(args.model_path, args.load, args.dtype).train(False)
 
     print("\n============ Quantizing model... ============")
+    if args.wbits < 16 and args.load:
+        print("\n Warning: You are quantizing quantized model!")
     quantize_model(model, args, device)
 
     print("\n============ Evaluating perplexity... ============")
@@ -560,11 +578,3 @@ if __name__ == "__main__":
     print (f"eval: {torch.cuda.max_memory_allocated()=:,}")
     if args.wandb:
         wandb.log({"max_cuda_mem_eval": round(torch.cuda.max_memory_allocated() / 1e9, 2)})
-
-    if args.save_pt:
-        model.save_pretrained(args.save_pt)
-
-    if args.save_safetensors:
-        assert has_safetensors, "`safetensors` not installed, try pip install `safetensors`"
-        safetensors.torch.save_file(model.state_dict(), args.save_safetensors)
-
