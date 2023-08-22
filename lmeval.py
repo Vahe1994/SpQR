@@ -15,6 +15,7 @@ from lm_eval import tasks, evaluator, utils
 
 try:
     import wandb
+
     wandb_installed = True
 except ModuleNotFoundError:
     wandb_installed = False
@@ -104,7 +105,7 @@ def main():
     lm = lm_eval.models.get_model(args.model).create_from_arg_string(
         args.model_args, dict(batch_size=args.batch_size, device=args.device)
     )
-    if hasattr(lm.model, 'hf_device_map'):
+    if hasattr(lm.model, "hf_device_map"):
         print("Model device map:\n", lm.model.hf_device_map)
 
     if quantization_config is not None:
