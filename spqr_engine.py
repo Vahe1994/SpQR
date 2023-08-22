@@ -78,18 +78,19 @@ class SPQRUtil:
         perm = get_permutation_order(self.H, weight, permutation_order)
 
         if save_quantization:
-            save_quant_dict['quant_weights'] = []
-            save_quant_dict['quant_layer_scale'] = []
-            save_quant_dict['quant_layer_zeros'] = []
-            save_quant_dict['quant_layer_scale_qq_scale'] = []
-            save_quant_dict['quant_layer_scale_qq_zero'] = []
-            save_quant_dict['quant_layer_zero_qq_scale'] = []
-            save_quant_dict['quant_layer_zero_qq_zero'] = []
-            save_quant_dict['save_float_dtype'] = self.layer.weight.dtype
-            save_quant_dict['outliers_matrix'] = torch.zeros(weight.shape,dtype=save_quant_dict['save_float_dtype']).to(
-                weight.device)  # shape = [out_features, in_features]
-
-
+            save_quant_dict["quant_weights"] = []
+            save_quant_dict["quant_layer_scale"] = []
+            save_quant_dict["quant_layer_zeros"] = []
+            save_quant_dict["quant_layer_scale_qq_scale"] = []
+            save_quant_dict["quant_layer_scale_qq_zero"] = []
+            save_quant_dict["quant_layer_zero_qq_scale"] = []
+            save_quant_dict["quant_layer_zero_qq_zero"] = []
+            save_quant_dict["save_float_dtype"] = self.layer.weight.dtype
+            save_quant_dict["outliers_matrix"] = torch.zeros(
+                weight.shape, dtype=save_quant_dict["save_float_dtype"]
+            ).to(
+                weight.device
+            )  # shape = [out_features, in_features]
 
         weight = weight[:, perm]  # note: weight is modified
         H = self.H
@@ -153,12 +154,14 @@ class SPQRUtil:
                         )
                         # ^-- dequantized(quantized(group_weight)) using a quantizer trained on all weights except the reconstructed one
 
-                        likely_unstructured_outlier_mask = (loo_quantization_error_sq > unstructured_outlier_threshold).float()
+                        likely_unstructured_outlier_mask = (
+                            loo_quantization_error_sq > unstructured_outlier_threshold
+                        ).float()
 
                         non_outlier_mask = 1 - likely_unstructured_outlier_mask
-                        mean_over_non_outliers = torch.sum(group_weight * non_outlier_mask, dim=1, keepdim=True) / torch.sum(
-                            non_outlier_mask, dim=1, keepdim=True
-                        ).clamp_min(1)
+                        mean_over_non_outliers = torch.sum(
+                            group_weight * non_outlier_mask, dim=1, keepdim=True
+                        ) / torch.sum(non_outlier_mask, dim=1, keepdim=True).clamp_min(1)
                         group_weight_without_outliers = group_weight * non_outlier_mask + mean_over_non_outliers * (
                             1 - non_outlier_mask
                         )
@@ -168,36 +171,45 @@ class SPQRUtil:
 
                     if save_quantization:
                         if quantizer.qq_scale_bits is not None:
-                            save_quant_dict['quant_layer_scale'].append(quantizer.quant_scale.to(torch.int8))
-                            save_quant_dict['quant_layer_scale_qq_scale'].append(
-                                quantizer.qq_scale.scale.to(save_quant_dict['save_float_dtype']))
-                            save_quant_dict['quant_layer_scale_qq_zero'].append(
-                                quantizer.qq_scale.zero.to(save_quant_dict['save_float_dtype']))
+                            save_quant_dict["quant_layer_scale"].append(quantizer.quant_scale.to(torch.int8))
+                            save_quant_dict["quant_layer_scale_qq_scale"].append(
+                                quantizer.qq_scale.scale.to(save_quant_dict["save_float_dtype"])
+                            )
+                            save_quant_dict["quant_layer_scale_qq_zero"].append(
+                                quantizer.qq_scale.zero.to(save_quant_dict["save_float_dtype"])
+                            )
                         else:
-                            save_quant_dict['quant_layer_scale'].append(
-                                quantizer.scale.to(save_quant_dict['save_float_dtype']))
+                            save_quant_dict["quant_layer_scale"].append(
+                                quantizer.scale.to(save_quant_dict["save_float_dtype"])
+                            )
 
                         if quantizer.qq_zero_bits is not None and (
-                                (not quantizer.round_zero) or quantizer.qq_zero_bits < quantizer.bits):
-                            save_quant_dict['quant_layer_zeros'].append(quantizer.quant_zero.to(torch.int8))
-                            save_quant_dict['quant_layer_zero_qq_scale'].append(
-                                quantizer.qq_zero.scale.to(save_quant_dict['save_float_dtype']))
-                            save_quant_dict['quant_layer_zero_qq_zero'].append(
-                                quantizer.qq_zero.zero.to(save_quant_dict['save_float_dtype']))
+                            (not quantizer.round_zero) or quantizer.qq_zero_bits < quantizer.bits
+                        ):
+                            save_quant_dict["quant_layer_zeros"].append(quantizer.quant_zero.to(torch.int8))
+                            save_quant_dict["quant_layer_zero_qq_scale"].append(
+                                quantizer.qq_zero.scale.to(save_quant_dict["save_float_dtype"])
+                            )
+                            save_quant_dict["quant_layer_zero_qq_zero"].append(
+                                quantizer.qq_zero.zero.to(save_quant_dict["save_float_dtype"])
+                            )
                         else:
-                            save_quant_dict['quant_layer_zeros'].append(
-                                quantizer.zero.to(save_quant_dict['save_float_dtype']))
+                            save_quant_dict["quant_layer_zeros"].append(
+                                quantizer.zero.to(save_quant_dict["save_float_dtype"])
+                            )
                     del group_weight
 
                 weight_quant_i = quantize(
                     weight[:, column_index].unsqueeze(1), quantizer.scale, quantizer.zero, quantizer.maxq
                 )
-                weight_i_quantized = dequantize(
-                    weight_quant_i, quantizer.scale, quantizer.zero
-                ).reshape_as(weight[:, column_index])
+                weight_i_quantized = dequantize(weight_quant_i, quantizer.scale, quantizer.zero).reshape_as(
+                    weight[:, column_index]
+                )
 
                 delta_weight_i = weight[:, column_index] - weight_i_quantized  # [out_dim]
-                quantization_errors[:, column_index] = delta_weight_i / H_inv_cho[column_index, column_index]  # [out_dim]
+                quantization_errors[:, column_index] = (
+                    delta_weight_i / H_inv_cho[column_index, column_index]
+                )  # [out_dim]
 
                 if unstructured_outlier_threshold != float("inf"):
                     unstructured_outlier_mask[:, column_index] = (
@@ -206,8 +218,12 @@ class SPQRUtil:
                     # re-quantize without outliers
                     is_outlier = unstructured_outlier_mask[:, column_index].float()
 
-                    weight_quant_i = quantize((weight[:, column_index] * (1 - is_outlier)).unsqueeze(1),
-                                              quantizer.scale, quantizer.zero, quantizer.maxq)
+                    weight_quant_i = quantize(
+                        (weight[:, column_index] * (1 - is_outlier)).unsqueeze(1),
+                        quantizer.scale,
+                        quantizer.zero,
+                        quantizer.maxq,
+                    )
                     weight_i_quantized_wo_outliers = dequantize(
                         weight_quant_i, quantizer.scale, quantizer.zero
                     ).reshape_as(weight[:, column_index])
@@ -216,15 +232,17 @@ class SPQRUtil:
                     )  # [out_dim]
 
                     if save_quantization:
-                        save_quant_dict['outliers_matrix'][:, column_index] = weight[:, column_index] * is_outlier
+                        save_quant_dict["outliers_matrix"][:, column_index] = weight[:, column_index] * is_outlier
 
                     del weight_i_quantized_wo_outliers
 
                     delta_weight_i = weight[:, column_index] - weight_i_quantized  # [out_dim]
-                    quantization_errors[:, column_index] = delta_weight_i / H_inv_cho[column_index, column_index]  # [out_dim]
+                    quantization_errors[:, column_index] = (
+                        delta_weight_i / H_inv_cho[column_index, column_index]
+                    )  # [out_dim]
 
                 if save_quantization:
-                    save_quant_dict['quant_weights'].append(weight_quant_i.to(torch.int8))
+                    save_quant_dict["quant_weights"].append(weight_quant_i.to(torch.int8))
 
                 weight[:, column_index] = weight_i_quantized
                 weight[:, column_index + 1 : block_end].addr_(
@@ -244,12 +262,12 @@ class SPQRUtil:
             weight = weight[:, invperm]
 
         if save_quantization:
-            save_quant_dict['perm'] = perm.to(torch.int32)
-            save_quant_dict['keep_last_columns'] = 0
-            save_quant_dict['blocksize'] = 128
-            save_quant_dict['weight_shape'] = weight.shape
-            save_quant_dict['groupsize'] = groupsize if groupsize else weight.shape[1]
-            save_quant_dict["quant_weights"] = torch.cat(save_quant_dict["quant_weights"],dim=1)
+            save_quant_dict["perm"] = perm.to(torch.int32)
+            save_quant_dict["keep_last_columns"] = 0
+            save_quant_dict["blocksize"] = 128
+            save_quant_dict["weight_shape"] = weight.shape
+            save_quant_dict["groupsize"] = groupsize if groupsize else weight.shape[1]
+            save_quant_dict["quant_weights"] = torch.cat(save_quant_dict["quant_weights"], dim=1)
             save_quant_dict["outliers_matrix"] = save_quant_dict["outliers_matrix"].to_sparse()
 
         return QuantizationResult(
@@ -258,7 +276,8 @@ class SPQRUtil:
             quantization_errors=quantization_errors,
             unstructured_outlier_threshold=unstructured_outlier_threshold,
             unstructured_outlier_mask=unstructured_outlier_mask,
-            save_quant_dict=save_quant_dict)
+            save_quant_dict=save_quant_dict,
+        )
 
 
 class QuantizationResult(NamedTuple):
@@ -288,13 +307,16 @@ def get_leave_one_out_error(group_weight: torch.Tensor, group_diag_hessian_inv_c
     # compute error improvement from not quantizing each one weight
     # to do so, we shall first train quantizer on leave-one-out data (which can be done faster since not all data affects quantization)
     loo_groupwise_reconstructed_weights = fast_quantizer.quantize_dequantize(
-        groupwise_loo_data.flatten(0, 1)).reshape_as(groupwise_loo_data)
+        groupwise_loo_data.flatten(0, 1)
+    ).reshape_as(groupwise_loo_data)
     loo_group_diag_hessian_inv_cho = group_diag_hessian_inv_cho[loo_indices]  # [num_loo = groupsize, groupsize - 1]
     assert group_diag_hessian_inv_cho.ndim == 1
 
     # total quantization error consists of hessian-weighted mse on all remaining weights except for the one that's left out
     # -- this is because the left-out weights will not be quantized, and therefore, has zero quantization error
-    loo_errors_sq = ((loo_groupwise_reconstructed_weights - groupwise_loo_data) / loo_group_diag_hessian_inv_cho).square().sum(-1)
+    loo_errors_sq = (
+        ((loo_groupwise_reconstructed_weights - groupwise_loo_data) / loo_group_diag_hessian_inv_cho).square().sum(-1)
+    )
     assert loo_errors_sq.shape == group_weight.shape  # [num_groups, num_loo = groupsize]
 
     # as a baseline error, quantize data normally without outliers

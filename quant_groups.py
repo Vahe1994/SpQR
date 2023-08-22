@@ -6,9 +6,11 @@ def quantize_dequantize(x, scale, zero, maxq, eps=1e-9):
     q = torch.clamp(torch.round(x / scale.clamp_min(eps) + zero), 0, maxq)
     return scale * (q - zero)
 
+
 def quantize(x, scale, zero, maxq, eps=1e-9):
     q = torch.clamp(torch.round(x / scale.clamp_min(eps) + zero), 0, maxq)
     return q
+
 
 def dequantize(x, scale, zero, eps=1e-9):
     return scale * (x - zero)
@@ -110,7 +112,9 @@ class Quantizer(nn.Module):
         if self.qq_zero_bits is not None and ((not self.round_zero) or self.qq_zero_bits < self.bits):
             zero_groups = self.zero.reshape(-1, self.qq_groupsize)
             self.qq_zero = Quantizer(shape=zero_groups.shape)
-            self.qq_zero.configure(self.qq_zero_bits, perchannel=True, sym=self.qq_zero_sym, round_zero=False, **self.qqq_params)
+            self.qq_zero.configure(
+                self.qq_zero_bits, perchannel=True, sym=self.qq_zero_sym, round_zero=False, **self.qqq_params
+            )
             self.qq_zero.find_params(zero_groups, weight=True)
             assert self.qq_zero.scale.shape == (zero_groups.shape[0], 1), self.qq_zero.scale.shape
             self.quant_zero = self.qq_zero.quantize(zero_groups)

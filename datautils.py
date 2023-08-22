@@ -69,11 +69,13 @@ def get_c4(nsamples, seqlen, tokenizer, eval_mode=False):
             tar[:, :-1] = -100
             trainloader.append((inp, tar))
         return trainloader
-    
+
     else:
         valdata = load_dataset(
-            "allenai/c4", "allenai--c4", data_files={"validation": "en/c4-validation.00000-of-00008.json.gz"},
-            split="validation"
+            "allenai/c4",
+            "allenai--c4",
+            data_files={"validation": "en/c4-validation.00000-of-00008.json.gz"},
+            split="validation",
         )
         random.seed(0)
         valenc = []
@@ -130,8 +132,10 @@ def get_c4_new(nsamples, seqlen, tokenizer, eval_mode=False):
         return trainloader
     else:
         valdata = load_dataset(
-            "allenai/c4", "allenai--c4", data_files={"validation": "en/c4-validation.00000-of-00008.json.gz"},
-            split="validation"
+            "allenai/c4",
+            "allenai--c4",
+            data_files={"validation": "en/c4-validation.00000-of-00008.json.gz"},
+            split="validation",
         )
         valenc = tokenizer(" ".join(valdata[:1100]["text"]), return_tensors="pt")
         valenc = valenc.input_ids[:, : (256 * seqlen)]
@@ -165,18 +169,20 @@ def get_loaders(name, nsamples=128, seed=0, seqlen=2048, eval_mode=False, model_
 
     # for pre-tokenized datasets
     if name.lower() == "pajama":
-        data = torch.load("./data/red_pajama_n=1024.pth")[: nsamples]
+        data = torch.load("./data/red_pajama_n=1024.pth")[:nsamples]
     elif name.lower() == "refinedweb":
-        data = torch.load("./data/refined_web_n=128.pth")[: nsamples]
+        data = torch.load("./data/refined_web_n=128.pth")[:nsamples]
     elif name.lower() == "none":
         print("Not loading any dataset. (OK if you use no compression or methods like RTN.)")
-        return None    
+        return None
     elif os.path.isfile(name):
         try:
             data = torch.load(name)[:nsamples]
         except:
-            raise ValueError(f"Failed to load custom data from {name}.",
-                  "Check data path or use one of [c4, wikitext2, ptb, pajama, refinedweb, none]")
+            raise ValueError(
+                f"Failed to load custom data from {name}.",
+                "Check data path or use one of [c4, wikitext2, ptb, pajama, refinedweb, none]",
+            )
     else:
         # for datasets requiring tokenization
         if "llama" in model_path.lower():
@@ -192,7 +198,7 @@ def get_loaders(name, nsamples=128, seed=0, seqlen=2048, eval_mode=False, model_
                     pass
                     print(f"bos/eos tokens unchanged: {tokenizer.bos_token_id=},  {tokenizer.eos_token_id=}")
         else:
-            tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)                
+            tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
 
         if name.lower() == "wikitext2":
             data = get_wikitext2(nsamples, seqlen, tokenizer, eval_mode=eval_mode)
@@ -205,10 +211,12 @@ def get_loaders(name, nsamples=128, seed=0, seqlen=2048, eval_mode=False, model_
         elif name.lower() == "c4_new":
             data = get_c4_new(nsamples, seqlen, tokenizer, eval_mode=eval_mode)
         else:
-            raise ValueError (f"Failed to load data from {name}.",
-                    "Check dataset name or path or use one of [c4, wikitext2, ptb, pajama, refinedweb, none]")
+            raise ValueError(
+                f"Failed to load data from {name}.",
+                "Check dataset name or path or use one of [c4, wikitext2, ptb, pajama, refinedweb, none]",
+            )
 
-    if hasattr(data, 'input_ids'):
+    if hasattr(data, "input_ids"):
         data = data.input_ids
 
     print(f"Loaded data from {name}; {len(data)=}")

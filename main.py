@@ -8,12 +8,14 @@ from modelutils import *
 
 try:
     import wandb
+
     has_wandb = True
 except ModuleNotFoundError:
     has_wandb = False
 
 try:
     import safetensors
+
     has_safetensors = True
 except ModuleNotFoundError:
     has_safetensors = False
@@ -33,17 +35,21 @@ def get_average_number_of_bits(
     # if not quantized stats are in full precision
     qq_scale_bits = qq_scale_bits or 16
     qq_zero_bits = qq_zero_bits or 16
-    groupsize = groupsize or float('inf')
-    qq_groupsize = qq_groupsize or float('inf')
+    groupsize = groupsize or float("inf")
+    qq_groupsize = qq_groupsize or float("inf")
 
     if groupsize is None:
         wbits_avg = wbits
     elif round_zero:
-        wbits_avg = wbits + (qq_scale_bits + wbits) / groupsize \
-                    + (qqq_scale_bits + qqq_zero_bits) / (groupsize * qq_groupsize)
+        wbits_avg = (
+            wbits + (qq_scale_bits + wbits) / groupsize + (qqq_scale_bits + qqq_zero_bits) / (groupsize * qq_groupsize)
+        )
     else:
-        wbits_avg = wbits + (qq_scale_bits + qq_zero_bits) / groupsize \
-                    + 2 * (qqq_scale_bits + qqq_zero_bits) / (groupsize * qq_groupsize)
+        wbits_avg = (
+            wbits
+            + (qq_scale_bits + qq_zero_bits) / groupsize
+            + 2 * (qqq_scale_bits + qqq_zero_bits) / (groupsize * qq_groupsize)
+        )
 
     # correct accounting for outliers
     if global_ol_n_share > 0:
@@ -103,7 +109,9 @@ def get_inps(model, data_iterable, args, dev, nsamples=None):
     dtype = next(iter(model.parameters())).dtype
     inps = torch.zeros((nsamples, model.seqlen, model.config.hidden_size), dtype=dtype, device=dev)
 
-    forward_arg_names = ["attention_mask",]
+    forward_arg_names = [
+        "attention_mask",
+    ]
     if model.config.model_type.lower() in FALCON_TYPES:
         forward_arg_names.append("alibi")
 
@@ -147,7 +155,7 @@ def get_inps(model, data_iterable, args, dev, nsamples=None):
 def quantize_spqr(model, dataloader, args, device):
     print("\nStarting SPQR quantization ...")
 
-    inps, forward_args = get_inps(model, dataloader, args, dev='cpu' if args.offload_activations else device)
+    inps, forward_args = get_inps(model, dataloader, args, dev="cpu" if args.offload_activations else device)
     outs = torch.zeros_like(inps)
 
     use_cache = model.config.use_cache
@@ -193,12 +201,11 @@ def quantize_spqr(model, dataloader, args, device):
                     spqr_handlers[name].add_batch(inp[0].data)
 
                 return tmp
+
             handles = []
             for sublayer_name in subset:
                 handles.append(subset[sublayer_name].register_forward_hook(add_batch(sublayer_name)))
-            for j in trange(
-                args.nsamples, desc="calc outs before quantization", leave=False
-            ):
+            for j in trange(args.nsamples, desc="calc outs before quantization", leave=False):
                 outs[j] = layer(inps[j].to(layer_dev).unsqueeze(0), **forward_args)[0]
                 if args.offload_activations:
                     outs[j] = outs[j].cpu()
@@ -223,12 +230,12 @@ def quantize_spqr(model, dataloader, args, device):
                     outlier_relative_threshold=args.outlier_threshold,
                     permutation_order=args.permutation_order,
                     simplified_outliers=args.simplified_outliers,
-                    save_quantization=args.save
+                    save_quantization=args.save,
                 )
 
                 if args.save:
-                    quantized.save_quant_dict['sublayer_name'] = sublayer_name
-                    full_path = args.save + '/' + str(i) + '/'
+                    quantized.save_quant_dict["sublayer_name"] = sublayer_name
+                    full_path = args.save + "/" + str(i) + "/"
                     os.makedirs(full_path, exist_ok=True)
                     torch.save(quantized.save_quant_dict, full_path + sublayer_name)
 
@@ -239,8 +246,7 @@ def quantize_spqr(model, dataloader, args, device):
 
                 # OUTLIER STATS per module:
                 normal_outliers_count = quantized.unstructured_outlier_mask.to(torch.int32).sum()
-                stats_payload[f"n_{sublayer_name}_ol_share"] = \
-                    (normal_outliers_count / quantized.weight.numel()).item()
+                stats_payload[f"n_{sublayer_name}_ol_share"] = (normal_outliers_count / quantized.weight.numel()).item()
                 normal_outlier_count += normal_outliers_count.item()
                 w_count += quantized.weight.numel()
 
@@ -248,8 +254,14 @@ def quantize_spqr(model, dataloader, args, device):
         for j in trange(args.nsamples, desc="calc outs after quantization", leave=False):
             outs_batch = layer(inps[j].to(layer_dev).unsqueeze(0), **forward_args)[0]
             if not args.skip_out_loss:
-                outs_batch_loss = (outs_batch - outs[j].to(layer_dev)).float().square().view(outs_batch.shape[0], -1)\
-                    .mean(dim=1).sqrt()
+                outs_batch_loss = (
+                    (outs_batch - outs[j].to(layer_dev))
+                    .float()
+                    .square()
+                    .view(outs_batch.shape[0], -1)
+                    .mean(dim=1)
+                    .sqrt()
+                )
                 outs_batch_loss /= outs_batch.view(outs_batch.shape[0], -1).float().std(dim=1)
                 out_losses.append(outs_batch_loss.item())
             outs[j] = outs_batch
@@ -296,8 +308,7 @@ def quantize_spqr(model, dataloader, args, device):
             if isinstance(layer, (nn.Conv2d, nn.Linear)):
                 already_saved_weights.add(layer.weight)
         not_quantized_weights = {
-            name: param for name, param in model.named_parameters()
-            if param not in already_saved_weights
+            name: param for name, param in model.named_parameters() if param not in already_saved_weights
         }
         torch.save(not_quantized_weights, args.save + "/not_quantized_weights.pt")
 
@@ -324,9 +335,9 @@ def quantize_nearest(model, args, dev):
             quantizer.configure(args.wbits, perchannel=True, sym=False)
             W = subset[name].weight.data
             quantizer.find_params(W, weight=True)
-            subset[name].weight.data = quantize(
-                W, quantizer.scale, quantizer.zero, quantizer.maxq
-            ).to(next(iter(layer.parameters())).dtype)
+            subset[name].weight.data = quantize(W, quantizer.scale, quantizer.zero, quantizer.maxq).to(
+                next(iter(layer.parameters())).dtype
+            )
         layers[i] = layer.to(layer_dev)
         del layer
         torch.cuda.empty_cache()
@@ -342,7 +353,9 @@ def perplexity_eval(model, testenc, args, dev):
     use_cache = model.config.use_cache
     model.config.use_cache = False
 
-    inps, forward_args = get_inps(model, testenc, args, dev='cpu' if args.offload_activations else dev, nsamples=nsamples)
+    inps, forward_args = get_inps(
+        model, testenc, args, dev="cpu" if args.offload_activations else dev, nsamples=nsamples
+    )
     outs = torch.zeros_like(inps)
     for k, v in forward_args.items():
         forward_args[k] = v.to(dev) if isinstance(v, torch.Tensor) else v
@@ -369,9 +382,7 @@ def perplexity_eval(model, testenc, args, dev):
         shift_logits = lm_logits[:, :-1, :].contiguous()
         shift_labels = testenc[:, (i * model.seqlen) : ((i + 1) * model.seqlen)][:, 1:]
         loss_fct = nn.CrossEntropyLoss()
-        loss = loss_fct(
-            shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1)
-        )
+        loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
         neg_log_likelihood = loss.float() * model.seqlen
         nlls.append(neg_log_likelihood)
     ppl = torch.exp(torch.stack(nlls).sum() / (nsamples * model.seqlen))
@@ -383,6 +394,7 @@ def perplexity_eval(model, testenc, args, dev):
         wandb.log({args.dataset_name: ppl.item()})
 
     model.config.use_cache = use_cache
+
 
 if __name__ == "__main__":
     import argparse
@@ -406,31 +418,17 @@ if __name__ == "__main__":
         default=None,
         help="Path to load if specified. Deprecated",
     )
-    parser.add_argument(
-        "--load",
-        type=str,
-        default=None,
-        help="Path to load quantized statistics.")
-    parser.add_argument(
-        "--save",
-        type=str,
-        default=None,
-        help="Path to save quantized statistics.")
-    parser.add_argument(
-        "--seed", type=int, default=0, help="Seed for sampling the calibration data."
-    )
-    parser.add_argument(
-        "--nsamples", type=int, default=128, help="Number of calibration data samples."
-    )
+    parser.add_argument("--load", type=str, default=None, help="Path to load quantized statistics.")
+    parser.add_argument("--save", type=str, default=None, help="Path to save quantized statistics.")
+    parser.add_argument("--seed", type=int, default=0, help="Seed for sampling the calibration data.")
+    parser.add_argument("--nsamples", type=int, default=128, help="Number of calibration data samples.")
     parser.add_argument(
         "--percdamp",
         type=float,
         default=0.01,
         help="Percent of the average Hessian diagonal to use for dampening.",
     )
-    parser.add_argument(
-        "--nearest", action="store_true", help="Whether to run the RTN baseline."
-    )
+    parser.add_argument("--nearest", action="store_true", help="Whether to run the RTN baseline.")
     parser.add_argument(
         "--wbits",
         type=int,
@@ -506,9 +504,7 @@ if __name__ == "__main__":
         action="store_true",
         help="do not perform leave-one-out evaluation when detecting outliers; works faster, but generally worse in perplexity",
     )
-    parser.add_argument(
-        "--wandb", action="store_true", help="Whether to use wandb or store locally."
-    )
+    parser.add_argument("--wandb", action="store_true", help="Whether to use wandb or store locally.")
     parser.add_argument(
         "--skip_out_loss",
         action="store_true",
@@ -530,9 +526,11 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.dataset == "custom":
-        print("WARNING: `--custom_data_path` argument and `--dataset=custom` option are DEPRECATED. ",
-             "Pass dataset path directly to `dataset` argument or use 'pajama', 'refinedweb'",
-             "See README.md for examples.")
+        print(
+            "WARNING: `--custom_data_path` argument and `--dataset=custom` option are DEPRECATED. ",
+            "Pass dataset path directly to `dataset` argument or use 'pajama', 'refinedweb'",
+            "See README.md for examples.",
+        )
         args.dataset = args.custom_data_path
 
     if args.wandb:
@@ -570,11 +568,15 @@ if __name__ == "__main__":
         datasets = ["wikitext2", "ptb-new", "c4-new"]
     for dataset in datasets:
         testloader = get_loaders(
-            dataset, seed=args.seed, model_path=args.model_path, seqlen=model.seqlen, eval_mode=True,
+            dataset,
+            seed=args.seed,
+            model_path=args.model_path,
+            seqlen=model.seqlen,
+            eval_mode=True,
         )
         args.dataset_name = dataset
         perplexity_eval(model, testloader, args, device)
 
-    print (f"eval: {torch.cuda.max_memory_allocated()=:,}")
+    print(f"eval: {torch.cuda.max_memory_allocated()=:,}")
     if args.wandb:
         wandb.log({"max_cuda_mem_eval": round(torch.cuda.max_memory_allocated() / 1e9, 2)})
