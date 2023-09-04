@@ -6,6 +6,7 @@ from tqdm import trange
 from datautils import get_loaders
 from modelutils import *
 from spqr_engine import Quantizer, SPQRUtil, quantize
+from qmodules import QLinear
 
 try:
     import wandb
@@ -232,6 +233,7 @@ def quantize_spqr(model, dataloader, args, device):
                     permutation_order=args.permutation_order,
                     simplified_outliers=args.simplified_outliers,
                     save_quantization=args.save,
+                    save_float_dtype=args.save_float_dtype
                 )
 
                 if args.save:
@@ -244,6 +246,29 @@ def quantize_spqr(model, dataloader, args, device):
                     spqr_handlers[sublayer_name].layer.weight.data.dtype
                 )
                 quantizers["model.layers.%d.%s" % (i, sublayer_name)] = ()  # to be updated
+
+                if args.replace_by_quantized_layer and args.save: 
+                    dic = quantized.save_quant_dict
+                    # TODO add classmethod?
+                    qlayer = QLinear(
+                        quant_weights=dic['quant_weights'],
+                        scale=dic['quant_layer_scale'],
+                        zero=dic['quant_layer_zeros'],
+                        scale_qq_scale=dic['quant_layer_scale_qq_scale'],
+                        scale_qq_zero=dic['quant_layer_scale_qq_zero'],
+                        zero_qq_scale=dic['quant_layer_zero_qq_scale'],
+                        zero_qq_zero=dic['quant_layer_zero_qq_zero'],
+                        outliers_matrix=dic['outliers_matrix'],
+                        bias=spqr_handlers[sublayer_name].layer.bias,
+                        perm=(dic['perm'].to(torch.long) if args.permutation_order != 'identity' else None),
+                        bits=(8 if args.wbits > 4 else 4)
+                    )
+                    if '.' in sublayer_name:
+                        parent_name, child_name = sublayer_name.rsplit('.', 1)
+                        parent_module = layer.get_submodule(parent_name)
+                        setattr(parent_module, child_name, qlayer)
+                    elif sublayer_name:
+                        setattr(layer, sublayer_name, qlayer)
 
                 # OUTLIER STATS per module:
                 normal_outliers_count = quantized.unstructured_outlier_mask.to(torch.int32).sum()
@@ -523,6 +548,18 @@ if __name__ == "__main__":
         choices=["auto", "float16", "float32"],
         help="dtype to load the model.",
     )
+    parser.add_argument(
+        "--replace_by_quantized_layer",
+        action="store_true",
+        help="Whether to replace the original layer by its quantized version."
+    )
+    parser.add_argument(
+        "--save_float_dtype",
+        type=str,
+        default=None,
+        choices=[None, "float16", "float32"],
+        help="dtype to save the model.",
+    )
 
     args = parser.parse_args()
 
@@ -533,6 +570,12 @@ if __name__ == "__main__":
             "See README.md for examples.",
         )
         args.dataset = args.custom_data_path
+
+    if args.replace_by_quantized_layer:
+        assert args.save_float_dtype == "float32"
+    # get torch dtype
+    if args.save_float_dtype:
+        args.save_float_dtype = getattr(torch, args.save_float_dtype)
 
     if args.wandb:
         assert has_wandb, "`wandb` not installed, try pip install `wandb`"
@@ -551,6 +594,7 @@ if __name__ == "__main__":
             config={a: getattr(args, a) for a in dir(args) if not a.startswith("_")},
         )
         wandb.run.log_code(".")
+
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 

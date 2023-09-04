@@ -51,6 +51,7 @@ class SPQRUtil:
         perchannel: bool = True,
         sym: bool = False,
         save_quantization: bool = False,
+        save_float_dtype: torch.dtype = None,
         **kwargs,
     ) -> QuantizationResult:
         """
@@ -87,7 +88,7 @@ class SPQRUtil:
             save_quant_dict["quant_layer_scale_qq_zero"] = []
             save_quant_dict["quant_layer_zero_qq_scale"] = []
             save_quant_dict["quant_layer_zero_qq_zero"] = []
-            save_quant_dict["save_float_dtype"] = self.layer.weight.dtype
+            save_quant_dict["save_float_dtype"] = save_float_dtype or self.layer.weight.dtype
             save_quant_dict["outliers_matrix"] = torch.zeros(
                 weight.shape, dtype=save_quant_dict["save_float_dtype"]
             ).to(
@@ -266,7 +267,7 @@ class SPQRUtil:
         if save_quantization:
             save_quant_dict["perm"] = perm.to(torch.int32)
             save_quant_dict["keep_last_columns"] = 0
-            save_quant_dict["blocksize"] = 128
+            save_quant_dict["blocksize"] = blocksize
             save_quant_dict["weight_shape"] = weight.shape
             save_quant_dict["groupsize"] = groupsize if groupsize else weight.shape[1]
             save_quant_dict["quant_weights"] = torch.cat(save_quant_dict["quant_weights"], dim=1)
