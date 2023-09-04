@@ -9,12 +9,13 @@ https://github.com/mjpost/sacrebleu/blob/master/sacrebleu/dataset.py
 
 Homepage: https://github.com/mjpost/sacrebleu/blob/master/sacrebleu/dataset.py
 """
-import pycountry
 from pprint import pprint
-from sacrebleu import sacrebleu
+from typing import List
+
+import pycountry
 from lm_eval import metrics
 from lm_eval.base import Task, rf
-from typing import List
+from sacrebleu import sacrebleu
 
 try:
     import nagisa
@@ -79,8 +80,7 @@ def zh_split(zh_text: List[str]) -> List[str]:
     """Chinese splitting"""
     if not HAS_JIEBA:
         raise ImportError(
-            "Chinese text splitting requires the `jieba` package. "
-            "Please install it with:\npip install jieba"
+            "Chinese text splitting requires the `jieba` package. " "Please install it with:\npip install jieba"
         )
 
     return [" ".join(jieba.cut(txt.strip())) for txt in zh_text]
@@ -90,8 +90,7 @@ def ja_split(ja_text: List[str]) -> List[str]:
     """Japanese splitting"""
     if not HAS_NAGISA:
         raise ImportError(
-            "Japanese text splitting requires the `nagisa` package. "
-            "Please install it with:\npip install nagisa"
+            "Japanese text splitting requires the `nagisa` package. " "Please install it with:\npip install nagisa"
         )
 
     return [" ".join(nagisa.tagging(txt.strip()).words) for txt in ja_text]
@@ -127,12 +126,9 @@ class GeneralTranslationTask(Task):
 
     def download(self, data_dir=None, cache_dir=None, download_mode=None):
         # This caches in the users home dir automatically
-        self.src_file, self.ref_file = sacrebleu.download_test_set(
-            self.sacrebleu_dataset, self.sacrebleu_language_pair
-        )
+        self.src_file, self.ref_file = sacrebleu.download_test_set(self.sacrebleu_dataset, self.sacrebleu_language_pair)
         self.src_data, self.ref_data = [
-            [line.rstrip() for line in sacrebleu.smart_open(file)]
-            for file in (self.src_file, self.ref_file)
+            [line.rstrip() for line in sacrebleu.smart_open(file)] for file in (self.src_file, self.ref_file)
         ]
 
     def has_training_docs(self):
@@ -153,9 +149,7 @@ class GeneralTranslationTask(Task):
         :return: Iterable[obj]
             A iterable of any object, that doc_to_text can handle
         """
-        return [
-            {"src": src, "ref": ref} for src, ref in zip(self.src_data, self.ref_data)
-        ]
+        return [{"src": src, "ref": ref} for src, ref in zip(self.src_data, self.ref_data)]
 
     def doc_to_text(self, doc):
         language_codes = self.sacrebleu_language_pair.split("-")

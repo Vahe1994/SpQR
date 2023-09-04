@@ -1,10 +1,10 @@
-from lm_eval.decontamination.archiver import Reader
-import os
-import json
-from functools import reduce
 import glob
-import tqdm
+import json
+import os
+from functools import reduce
 
+import tqdm
+from lm_eval.decontamination.archiver import Reader
 from tqdm_multiprocess import TqdmMultiProcessPool
 
 
@@ -15,9 +15,7 @@ def get_file_stats(file_path, tqdm_func, global_tqdm):
     update_frequency = 10000
     current_file_position = 0
 
-    with tqdm_func(
-        total=os.path.getsize(file_path), dynamic_ncols=True, unit="byte", unit_scale=1
-    ) as progress:
+    with tqdm_func(total=os.path.getsize(file_path), dynamic_ncols=True, unit="byte", unit_scale=1) as progress:
         for document in reader.read(file_path, get_meta=True):
             total_size += len(document)
             total_documents += 1
@@ -44,9 +42,7 @@ def get_stats():
     total_size_bytes = sum(map(lambda x: os.path.getsize(x), files))
 
     pool = TqdmMultiProcessPool(4)
-    global_tqdm = tqdm.tqdm(
-        total=total_size_bytes, dynamic_ncols=True, unit="byte", unit_scale=1
-    )
+    global_tqdm = tqdm.tqdm(total=total_size_bytes, dynamic_ncols=True, unit="byte", unit_scale=1)
 
     # Generate minhashes with pool
     tasks = [(get_file_stats, (file,)) for file in files]
@@ -59,9 +55,7 @@ def get_stats():
 
     results = pool.map(global_tqdm, tasks, on_error, on_done)
 
-    total_documents, total_size = reduce(
-        lambda x, y: (x[0] + y[0], x[1] + y[1]), results
-    )
+    total_documents, total_size = reduce(lambda x, y: (x[0] + y[0], x[1] + y[1]), results)
 
     start_offsets = []
     current_offset = 0

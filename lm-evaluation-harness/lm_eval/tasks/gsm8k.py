@@ -17,9 +17,9 @@ model's sample/generation function.
 Homepage: https://github.com/openai/grade-school-math
 """
 import re
+
 from lm_eval.base import Task, rf
 from lm_eval.metrics import mean
-
 
 _CITATION = """
 @misc{cobbe2021training,

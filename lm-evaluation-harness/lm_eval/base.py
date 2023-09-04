@@ -1,20 +1,20 @@
 import abc
-from typing import Iterable
-import numpy as np
+import hashlib
+import json
+import os
 import random
 import re
-import os
-import json
-import hashlib
+from abc import abstractmethod
+from typing import Iterable
+
 import datasets
-from sqlitedict import SqliteDict
-from tqdm import tqdm
+import numpy as np
 import torch
 import torch.nn.functional as F
-
-from lm_eval.metrics import mean, weighted_perplexity, weighted_mean, bits_per_byte
 from lm_eval import utils
-from abc import abstractmethod
+from lm_eval.metrics import bits_per_byte, mean, weighted_mean, weighted_perplexity
+from sqlitedict import SqliteDict
+from tqdm import tqdm
 
 
 class LM(abc.ABC):
@@ -285,7 +285,9 @@ class BaseLM(LM):
             batched_inps = torch.cat(inps, dim=0)  # [batch, padding_length
             multi_logits = F.log_softmax(self._model_call(batched_inps), dim=-1).cpu()  # [batch, padding_length, vocab]
 
-            for (cache_key, _, _), logits, inp, inplen, cont_toks in zip(chunk, multi_logits, inps, inplens, cont_toks_list):
+            for (cache_key, _, _), logits, inp, inplen, cont_toks in zip(
+                chunk, multi_logits, inps, inplens, cont_toks_list
+            ):
                 # Slice to original seq length
                 contlen = len(cont_toks)
                 logits = logits[inplen - contlen : inplen].unsqueeze(0)  # [1, seq, vocab]
@@ -329,7 +331,9 @@ class BaseLM(LM):
 
             (primary_until,) = self.tok_encode(until[0])
 
-            context_enc = torch.tensor([self.tok_encode(context)[self.max_gen_toks - self.max_length :]]).to(self.device)
+            context_enc = torch.tensor([self.tok_encode(context)[self.max_gen_toks - self.max_length :]]).to(
+                self.device
+            )
 
             cont = self._model_generate(context_enc, context_enc.shape[1] + self.max_gen_toks, primary_until)
 
@@ -588,14 +592,18 @@ class Task(abc.ABC):
                 fewshotex = self.fewshot_examples(k=num_fewshot, rnd=rnd)
             else:
                 if self._fewshot_docs is None:
-                    self._fewshot_docs = list(self.validation_docs() if self.has_validation_docs() else self.test_docs())
+                    self._fewshot_docs = list(
+                        self.validation_docs() if self.has_validation_docs() else self.test_docs()
+                    )
 
                 fewshotex = rnd.sample(self._fewshot_docs, num_fewshot + 1)
 
                 # get rid of the doc that's the one we're evaluating, if it's in the fewshot
                 fewshotex = [x for x in fewshotex if x != doc][:num_fewshot]
 
-            labeled_examples = "\n\n".join([self.doc_to_text(doc) + self.doc_to_target(doc) for doc in fewshotex]) + "\n\n"
+            labeled_examples = (
+                "\n\n".join([self.doc_to_text(doc) + self.doc_to_target(doc) for doc in fewshotex]) + "\n\n"
+            )
 
         example = self.doc_to_text(doc)
         return description + labeled_examples + example

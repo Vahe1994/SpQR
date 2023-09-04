@@ -1,13 +1,12 @@
 import hashlib
 import json
-import openai
 import os
 import pickle
-import pytest
 import unittest.mock as mock
 
 import lm_eval.models as models
-
+import openai
+import pytest
 
 LOGLIKELIHOOD_TEST_CASES = [
     ("The quick brown fox jumps over the lazy", " dog"),
@@ -78,9 +77,7 @@ def test_gpt2():
     # test empty context
     gpt2.loglikelihood([("", "test")])
 
-    (gen,) = gpt2.greedy_until(
-        [("The quick brown fox jumps over the lazy", [".", "\n"])]
-    )
+    (gen,) = gpt2.greedy_until([("The quick brown fox jumps over the lazy", [".", "\n"])])
 
     assert gen == ", lazy fox and they both fall to the ground"
 
@@ -127,9 +124,7 @@ def test_gpt2_perplexity():
     )
     assert perplexity == pytest.approx(tgt, rel=1e-3)
 
-    with mock.patch.object(
-        models.gpt2.HFLM, "max_length", new_callable=mock.PropertyMock
-    ) as mock_max_length:
+    with mock.patch.object(models.gpt2.HFLM, "max_length", new_callable=mock.PropertyMock) as mock_max_length:
         mock_max_length.return_value = 5
         gpt2 = models.get_model("gpt2").create_from_arg_string("device=cpu")
         perplexity = gpt2.loglikelihood_rolling([(test_string,)])[0]
@@ -164,9 +159,7 @@ def openai_mock_completion(**kwargs):
     # Mock completion function
     # Loads from a cached+pickled response if it exists, otherwise it will actually try to ping
     os.makedirs("tests/testdata", exist_ok=True)
-    hash = hashlib.sha256(
-        json.dumps(kwargs, sort_keys=True).encode("utf-8")
-    ).hexdigest()
+    hash = hashlib.sha256(json.dumps(kwargs, sort_keys=True).encode("utf-8")).hexdigest()
     fname = f"tests/testdata/gpt3_test_{hash}.pkl"
 
     if os.path.exists(fname):
@@ -204,9 +197,7 @@ def test_gpt3():
     # test empty context
     gpt3.loglikelihood([("", "test")])
 
-    (gen,) = gpt3.greedy_until(
-        [("The quick brown fox jumps over the lazy", [".", "\n"])]
-    )
+    (gen,) = gpt3.greedy_until([("The quick brown fox jumps over the lazy", [".", "\n"])])
 
     assert gen == " dog"
 
@@ -239,9 +230,7 @@ def test_gpt3_perplexity():
     assert perplexity == pytest.approx(tgt, rel=1e-3)
 
     # Hack: modify gpt3 to have shorter context length to induce rolling windows
-    with mock.patch.object(
-        models.gpt3.GPT3LM, "max_length", new_callable=mock.PropertyMock
-    ) as mock_max_length:
+    with mock.patch.object(models.gpt3.GPT3LM, "max_length", new_callable=mock.PropertyMock) as mock_max_length:
         mock_max_length.return_value = 5
         gpt3 = models.get_model("gpt3").create_from_arg_string("engine=ada")
         perplexity = gpt3.loglikelihood_rolling([(test_string,)])[0]
@@ -259,9 +248,7 @@ def textsynth_mock_completion(**kwargs):
 
     os.makedirs("tests/testdata", exist_ok=True)
     hash_kwargs = {k: v for k, v in kwargs.items() if k != "headers"}
-    hash = hashlib.sha256(
-        json.dumps(hash_kwargs, sort_keys=True).encode("utf-8")
-    ).hexdigest()
+    hash = hashlib.sha256(json.dumps(hash_kwargs, sort_keys=True).encode("utf-8")).hexdigest()
     fname = f"tests/testdata/textsynth_test_{hash}.pkl"
 
     if os.path.exists(fname):
@@ -273,9 +260,7 @@ def textsynth_mock_completion(**kwargs):
     return ret
 
 
-@mock.patch(
-    "lm_eval.models.textsynth.textsynth_completion", new=textsynth_mock_completion
-)
+@mock.patch("lm_eval.models.textsynth.textsynth_completion", new=textsynth_mock_completion)
 def test_textsynth():
     if "TEXTSYNTH_API_SECRET_KEY" not in os.environ:
         os.environ["TEXTSYNTH_API_SECRET_KEY"] = ""
@@ -300,9 +285,7 @@ def test_textsynth():
     # test empty context
     textsynth.loglikelihood([("", "test")])
 
-    (gen,) = textsynth.greedy_until(
-        [("The quick brown fox jumps over the lazy", [".", "\n"])]
-    )
+    (gen,) = textsynth.greedy_until([("The quick brown fox jumps over the lazy", [".", "\n"])])
 
     assert gen == " dog"
 

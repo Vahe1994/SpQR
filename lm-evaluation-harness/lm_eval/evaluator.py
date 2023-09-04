@@ -1,12 +1,14 @@
 import collections
 import itertools
-import numpy as np
 import random
+
+import lm_eval.base
 import lm_eval.metrics
 import lm_eval.models
 import lm_eval.tasks
-import lm_eval.base
+import numpy as np
 from lm_eval.utils import positional_deprecated, run_task_tests, simple_parse_args_string
+
 from spqr_config import QuantizationConfig
 
 try:
@@ -170,11 +172,15 @@ def evaluate(
     assert not provide_description  # not implemented.
     if provide_description is not None:
         # nudge people to not specify it at all
-        print("WARNING: provide_description is deprecated and will be removed in a future version in favor of description_dict")
+        print(
+            "WARNING: provide_description is deprecated and will be removed in a future version in favor of description_dict"
+        )
 
     decontaminate = decontamination_ngrams_path is not None
 
-    task_dict_items = [(name, task) for name, task in task_dict.items() if (task.has_validation_docs() or task.has_test_docs())]
+    task_dict_items = [
+        (name, task) for name, task in task_dict.items() if (task.has_validation_docs() or task.has_test_docs())
+    ]
 
     results = collections.defaultdict(dict)
     versions = collections.defaultdict(dict)
@@ -297,7 +303,7 @@ def evaluate(
 
 def make_table(result_dict):
     """Generate table of results."""
-    from pytablewriter import MarkdownTableWriter, LatexTableWriter
+    from pytablewriter import LatexTableWriter, MarkdownTableWriter
 
     md_writer = MarkdownTableWriter()
     latex_writer = LatexTableWriter()

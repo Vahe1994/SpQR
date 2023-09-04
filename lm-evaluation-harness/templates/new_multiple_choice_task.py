@@ -9,7 +9,6 @@ Homepage: TODO: Add the URL to the task's Homepage here.
 """
 from lm_eval.base import MultipleChoiceTask
 
-
 # TODO: Add the BibTeX citation for the task.
 _CITATION = """
 """
@@ -46,9 +45,7 @@ class NewTask(MultipleChoiceTask):
                 # TODO: Return the training document generator from `self.dataset`.
                 # In most case you can leave this as is unless the dataset split is
                 # named differently than the default `"train"`.
-                self._training_docs = list(
-                    map(self._process_doc, self.dataset["train"])
-                )
+                self._training_docs = list(map(self._process_doc, self.dataset["train"]))
             return self._training_docs
 
     def validation_docs(self):

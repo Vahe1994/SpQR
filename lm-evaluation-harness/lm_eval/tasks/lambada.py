@@ -15,7 +15,6 @@ Homepage: https://zenodo.org/record/2630551#.X4Xzn5NKjUI
 from lm_eval.base import Task, rf
 from lm_eval.metrics import mean, perplexity
 
-
 _CITATION = """
 @misc{
     author={Paperno, Denis and Kruszewski, Germán and Lazaridou, Angeliki and Pham, Quan Ngoc and Bernardi, Raffaella and Pezzelle, Sandro and Baroni, Marco and Boleda, Gemma and Fernández, Raquel},

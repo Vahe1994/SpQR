@@ -4,9 +4,9 @@ Usage:
 """
 import argparse
 import logging
+
 from lm_eval import tasks
 from pytablewriter import MarkdownTableWriter
-
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -37,11 +37,7 @@ if __name__ == "__main__":
             check(task.has_training_docs()),
             check(task.has_validation_docs()),
             check(task.has_test_docs()),
-            len(
-                list(
-                    task.test_docs() if task.has_test_docs() else task.validation_docs()
-                )
-            ),
+            len(list(task.test_docs() if task.has_test_docs() else task.validation_docs())),
             ", ".join(task.aggregation().keys()),
         ]
         logger.info(v)

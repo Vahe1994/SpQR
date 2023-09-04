@@ -11,7 +11,6 @@ Homepage: https://allenai.org/data/sciq
 """
 from lm_eval.base import MultipleChoiceTask
 
-
 _CITATION = """
 @inproceedings{Welbl2017CrowdsourcingMC,
     title={Crowdsourcing Multiple Choice Science Questions},

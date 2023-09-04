@@ -10,11 +10,11 @@ appear in a conversation.
 Homepage: https://stanfordnlp.github.io/coqa/
 """
 import inspect
-import transformers.data.metrics.squad_metrics as squad_metrics
-import lm_eval.datasets.coqa.coqa
-from lm_eval.base import Task, rf, mean
 from itertools import zip_longest
 
+import lm_eval.datasets.coqa.coqa
+import transformers.data.metrics.squad_metrics as squad_metrics
+from lm_eval.base import Task, mean, rf
 
 _CITATION = """
 @misc{reddy2018coqa,
@@ -79,9 +79,7 @@ class CoQA(Task):
         additional_answers = doc.get("additional_answers")
         if additional_answers:
             for key in additional_answers:
-                additional_answer_for_turn = additional_answers[key]["input_text"][
-                    turn_id - 1
-                ]
+                additional_answer_for_turn = additional_answers[key]["input_text"][turn_id - 1]
                 if additional_answer_for_turn.lower() not in map(str.lower, answers):
                     answers.append(additional_answer_for_turn)
         return answers
@@ -110,9 +108,7 @@ class CoQA(Task):
             for i in range(len(gold_list)):
                 gold_answers = gold_list[0:i] + gold_list[i + 1 :]
                 # predictions compared against (n) golds and take maximum
-                em_sum += max(
-                    squad_metrics.compute_exact(a, pred) for a in gold_answers
-                )
+                em_sum += max(squad_metrics.compute_exact(a, pred) for a in gold_answers)
                 f1_sum += max(squad_metrics.compute_f1(a, pred) for a in gold_answers)
         else:
             em_sum += max(squad_metrics.compute_exact(a, pred) for a in gold_list)

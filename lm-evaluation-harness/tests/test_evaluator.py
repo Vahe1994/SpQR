@@ -1,11 +1,11 @@
 import os
-import lm_eval.base as base
-import lm_eval.tasks as tasks
-import lm_eval.models as models
-import lm_eval.evaluator as evaluator
 import random
-import pytest
 
+import lm_eval.base as base
+import lm_eval.evaluator as evaluator
+import lm_eval.models as models
+import lm_eval.tasks as tasks
+import pytest
 
 # TODO: more fine grained unit tests rather than this big honking integration
 # test once we break evaluator into smaller, more manageable pieces

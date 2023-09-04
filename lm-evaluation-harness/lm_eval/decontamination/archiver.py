@@ -1,12 +1,13 @@
-import os
-import zstandard
-import json
-import jsonlines
-import io
 import datetime
+import io
+import json
 import mmap
-import tqdm
+import os
 from pathlib import Path
+
+import jsonlines
+import tqdm
+import zstandard
 
 
 def json_serial(obj):
@@ -29,12 +30,7 @@ class Archive:
         self.compressor = self.cctx.stream_writer(self.fh)
 
     def add_data(self, data, meta={}):
-        self.compressor.write(
-            json.dumps({"text": data, "meta": meta}, default=json_serial).encode(
-                "UTF-8"
-            )
-            + b"\n"
-        )
+        self.compressor.write(json.dumps({"text": data, "meta": meta}, default=json_serial).encode("UTF-8") + b"\n")
 
     def commit(self):
         self.compressor.flush(zstandard.FLUSH_FRAME)

@@ -16,7 +16,6 @@ Homepage: https://allenai.org/data/open-book-qa
 """
 from lm_eval.base import MultipleChoiceTask
 
-
 _CITATION = """
 @inproceedings{OpenBookQA2018,
     title={Can a Suit of Armor Conduct Electricity? A New Dataset for Open Book Question Answering},

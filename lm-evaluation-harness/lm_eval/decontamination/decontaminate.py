@@ -1,13 +1,13 @@
-import time
-import random
-import pickle
-import json
-import glob
-import os
 import collections
+import glob
+import json
+import os
+import pickle
+import random
+import time
 
-from .janitor import Janitor, word_ngrams
 from .archiver import ZStdTextReader
+from .janitor import Janitor, word_ngrams
 
 
 # Was used for testing the evaluator decoupled from the full logic below
@@ -58,27 +58,19 @@ def get_train_overlap(docs_by_task_set, ngrams_path, limit):
             os.mkdir(f"data/{task_name}")
 
         # Check if we've decontaminated this combination before
-        overlaps_dump_path = get_overlaps_dump_path(
-            task_name, task_set, ngrams_n_size, limit
-        )
+        overlaps_dump_path = get_overlaps_dump_path(task_name, task_set, ngrams_n_size, limit)
         if os.path.exists(overlaps_dump_path):
-            duplicates[(task_name, task_set)] = pickle.load(
-                open(overlaps_dump_path, "rb")
-            )
+            duplicates[(task_name, task_set)] = pickle.load(open(overlaps_dump_path, "rb"))
             sets_to_decontaminate -= 1
             continue
         else:
             duplicates[(task_name, task_set)] = set()
 
         # Build/load the task lookup {ngram: set(documents)}.
-        task_set_lookup_path = (
-            f"data/{task_name}/{task_set}_{ngrams_n_size}grams_limit{limit}.lookup"
-        )
+        task_set_lookup_path = f"data/{task_name}/{task_set}_{ngrams_n_size}grams_limit{limit}.lookup"
         if os.path.exists(task_set_lookup_path):
             print(f"{task_set_lookup_path} available, loading...")
-            lookups[(task_name, task_set)] = pickle.load(
-                open(task_set_lookup_path, "rb")
-            )
+            lookups[(task_name, task_set)] = pickle.load(open(task_set_lookup_path, "rb"))
         else:
             print(f"{task_set_lookup_path} not available, building...")
             lookup = collections.defaultdict(set)
@@ -124,9 +116,7 @@ def get_train_overlap(docs_by_task_set, ngrams_path, limit):
             for line in reader.read_tqdm():  # Scan training set ngrams file
                 total_ngrams += 1
                 [ngram, document_id] = line.rsplit(" ", 1)
-                if (
-                    ngram != current_ngram
-                ):  # Only need to match the ngram once in training set
+                if ngram != current_ngram:  # Only need to match the ngram once in training set
                     unique_ngrams += 1
                     current_ngram = ngram
                     if ngram in merged_lookup:
@@ -134,11 +124,7 @@ def get_train_overlap(docs_by_task_set, ngrams_path, limit):
                         matching_unique += 1
                         for task_name, task_set, doc_ids in merged_lookup[ngram]:
                             task_doc_set = duplicates[(task_name, task_set)]
-                            for (
-                                doc_id
-                            ) in (
-                                doc_ids
-                            ):  # Record contamination across all relevant task/set combos
+                            for doc_id in doc_ids:  # Record contamination across all relevant task/set combos
                                 task_doc_set.add(doc_id)
                         del merged_lookup[ngram]  # No point matching again
                     else:
@@ -160,9 +146,7 @@ def get_train_overlap(docs_by_task_set, ngrams_path, limit):
 
         # Dump overlaps separately
         for (task_name, task_set), doc_ids in duplicates.items():
-            overlaps_dump_path = get_overlaps_dump_path(
-                task_name, task_set, ngrams_n_size, limit
-            )
+            overlaps_dump_path = get_overlaps_dump_path(task_name, task_set, ngrams_n_size, limit)
             pickle.dump(doc_ids, open(overlaps_dump_path, "wb"))
 
     # Strip task set and return

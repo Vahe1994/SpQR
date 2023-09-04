@@ -19,7 +19,6 @@ import json
 
 import datasets
 
-
 _CITATION = """\
 @article{choi2018quac,
     title={Quac: Question answering in context},
@@ -54,9 +53,7 @@ class Quac(datasets.GeneratorBasedBuilder):
     VERSION = datasets.Version("1.1.0")
 
     BUILDER_CONFIGS = [
-        datasets.BuilderConfig(
-            name="quac", version=VERSION, description="The QuAC dataset"
-        ),
+        datasets.BuilderConfig(name="quac", version=VERSION, description="The QuAC dataset"),
     ]
 
     def _info(self):

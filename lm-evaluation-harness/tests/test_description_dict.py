@@ -1,6 +1,7 @@
 import random
-import lm_eval.tasks
+
 import lm_eval.models
+import lm_eval.tasks
 
 
 def test_description_dict():
@@ -24,15 +25,9 @@ def test_description_dict():
         elif set == "test" and task.has_test_docs():
             docs = task.test_docs()
 
-        description = (
-            description_dict[task_name]
-            if description_dict and task_name in description_dict
-            else ""
-        )
+        description = description_dict[task_name] if description_dict and task_name in description_dict else ""
 
-        for _, doc in (
-            zip(range(num_examples), docs) if num_examples > 0 else enumerate(docs)
-        ):
+        for _, doc in zip(range(num_examples), docs) if num_examples > 0 else enumerate(docs):
             ctx = task.fewshot_context(
                 doc=doc,
                 num_fewshot=1,

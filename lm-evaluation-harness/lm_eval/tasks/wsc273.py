@@ -14,9 +14,8 @@ See: https://arxiv.org/abs/1806.0
 Homepage: https://cs.nyu.edu/~davise/papers/WinogradSchemas/WS.html
 """
 import numpy as np
-from lm_eval.base import rf, Task
+from lm_eval.base import Task, rf
 from lm_eval.metrics import mean
-
 
 _CITATION = """
 @inproceedings{ea01b9c0db064caca6986b925d75f2bb,

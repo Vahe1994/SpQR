@@ -1,8 +1,9 @@
 import argparse
-import numpy as np
 import json
 import os
 import random
+
+import numpy as np
 from lm_eval import tasks
 from lm_eval.utils import join_iters
 
@@ -55,18 +56,10 @@ def main():
 
         docs = join_iters(iters)
 
-        description = (
-            description_dict[task_name]
-            if description_dict and task_name in description_dict
-            else ""
-        )
+        description = description_dict[task_name] if description_dict and task_name in description_dict else ""
 
         with open(os.path.join(args.output_base_path, task_name), "w") as f:
-            for i, doc in (
-                zip(range(args.num_examples), docs)
-                if args.num_examples > 0
-                else enumerate(docs)
-            ):
+            for i, doc in zip(range(args.num_examples), docs) if args.num_examples > 0 else enumerate(docs):
                 f.write(EXAMPLE_DIVIDER.format(i=i))
                 ctx = task.fewshot_context(
                     doc=doc,

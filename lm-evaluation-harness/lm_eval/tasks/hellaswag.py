@@ -14,8 +14,8 @@ state-of-the-art models.
 Homepage: https://rowanzellers.com/hellaswag/
 """
 import re
-from lm_eval.base import MultipleChoiceTask
 
+from lm_eval.base import MultipleChoiceTask
 
 _CITATION = """
 @inproceedings{zellers2019hellaswag,
