@@ -1,7 +1,7 @@
 import argparse
+import fnmatch
 import json
 import logging
-import fnmatch
 import os
 import sys
 
@@ -10,8 +10,7 @@ from spqr_config import QuantizationConfig
 
 sys.path.append("./lm-evaluation-harness")
 import lm_eval.models
-from lm_eval import tasks, evaluator, utils
-
+from lm_eval import evaluator, tasks, utils
 
 try:
     import wandb

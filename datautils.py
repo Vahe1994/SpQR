@@ -1,9 +1,10 @@
+import os
+import random
+
 import numpy as np
 import torch
-import random
-from transformers import AutoTokenizer, LlamaTokenizer
 from datasets import load_dataset
-import os
+from transformers import AutoTokenizer, LlamaTokenizer
 
 
 def set_seed(seed):
