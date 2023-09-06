@@ -1,8 +1,7 @@
-from itertools import islice
-
-import lm_eval.base as base
 import lm_eval.tasks as tasks
+import lm_eval.base as base
 import pytest
+from itertools import islice
 
 
 @pytest.mark.parametrize("taskname,task_class", tasks.TASK_REGISTRY.items())

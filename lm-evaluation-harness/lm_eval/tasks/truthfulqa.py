@@ -19,12 +19,13 @@ we could try this?
 
 Homepage: https://github.com/sylinrl/TruthfulQA
 """
-import datasets
 import numpy as np
 import sacrebleu
-from lm_eval.base import Task, rf
-from lm_eval.metrics import mean
+import datasets
 from rouge_score import rouge_scorer, scoring
+from lm_eval.base import rf, Task
+from lm_eval.metrics import mean
+
 
 try:
     import bleurt
@@ -98,9 +99,15 @@ class TruthfulQAMultipleChoice(Task):
     def doc_to_target(self, doc):
         return " "
 
-    def fewshot_context(self, doc, num_fewshot, provide_description=None, rnd=None, description=None):
-        assert num_fewshot == 0, "TruthfulQA is intended only for the zero-shot setting."
-        return super().fewshot_context(doc=doc, num_fewshot=num_fewshot, rnd=rnd, description=description)
+    def fewshot_context(
+        self, doc, num_fewshot, provide_description=None, rnd=None, description=None
+    ):
+        assert (
+            num_fewshot == 0
+        ), "TruthfulQA is intended only for the zero-shot setting."
+        return super().fewshot_context(
+            doc=doc, num_fewshot=num_fewshot, rnd=rnd, description=description
+        )
 
     def construct_requests(self, doc, ctx):
         """Uses RequestFactory to construct Requests and returns an iterable of
@@ -119,7 +126,9 @@ class TruthfulQAMultipleChoice(Task):
 
         # MC1 and MC2 targets are not always the same set of strings so we collect
         # likelihoods separately for simpler processing.
-        return get_lls(doc["mc1_targets"]["choices"]) + get_lls(doc["mc2_targets"]["choices"])
+        return get_lls(doc["mc1_targets"]["choices"]) + get_lls(
+            doc["mc2_targets"]["choices"]
+        )
 
     def process_results(self, doc, results):
         """Take a single document and the LM results and evaluates, returning a
@@ -216,9 +225,15 @@ class TruthfulQAGeneration(Task):
     def doc_to_target(self, doc):
         return " "
 
-    def fewshot_context(self, doc, num_fewshot, provide_description=None, rnd=None, description=None):
-        assert num_fewshot == 0, "TruthfulQA is intended only for the zero-shot setting."
-        return super().fewshot_context(doc=doc, num_fewshot=num_fewshot, rnd=rnd, description=description)
+    def fewshot_context(
+        self, doc, num_fewshot, provide_description=None, rnd=None, description=None
+    ):
+        assert (
+            num_fewshot == 0
+        ), "TruthfulQA is intended only for the zero-shot setting."
+        return super().fewshot_context(
+            doc=doc, num_fewshot=num_fewshot, rnd=rnd, description=description
+        )
 
     def construct_requests(self, doc, ctx):
         """Uses RequestFactory to construct Requests and returns an iterable of
@@ -252,12 +267,12 @@ class TruthfulQAGeneration(Task):
         # Process the sentence-level BLEURT, BLEU, and ROUGE for similarity measures.
 
         # BLEURT
-        bleurt_scores_true = self.bleurt.compute(predictions=[completion] * len(true_refs), references=true_refs)[
-            "scores"
-        ]
-        bleurt_scores_false = self.bleurt.compute(predictions=[completion] * len(false_refs), references=false_refs)[
-            "scores"
-        ]
+        bleurt_scores_true = self.bleurt.compute(
+            predictions=[completion] * len(true_refs), references=true_refs
+        )["scores"]
+        bleurt_scores_false = self.bleurt.compute(
+            predictions=[completion] * len(false_refs), references=false_refs
+        )["scores"]
         bleurt_correct = max(bleurt_scores_true)
         bleurt_incorrect = max(bleurt_scores_false)
         bleurt_max = bleurt_correct

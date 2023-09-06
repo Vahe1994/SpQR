@@ -1,18 +1,21 @@
-import argparse
 import glob
-import logging
+import argparse
 import os
-import shutil
 import subprocess
+import shutil
 
 from tqdm import tqdm
 from tqdm_multiprocess import TqdmMultiProcessPool
+
+import logging
 from tqdm_multiprocess.logger import setup_logger_tqdm
 
 logger = logging.getLogger(__name__)
 
 
-def process_task(working_directory, output_directory, bucket_file_path, tqdm_func, global_tqdm):
+def process_task(
+    working_directory, output_directory, bucket_file_path, tqdm_func, global_tqdm
+):
     command = f"zstd {bucket_file_path}"
     logger.info(command)
     subprocess.call(command, shell=True)
@@ -31,7 +34,9 @@ def compress_and_move(working_directory, output_directory, process_count):
     assert os.path.exists(original_info_file_path)
 
     tasks = []
-    bucket_file_paths = glob.glob(os.path.join(working_directory, "output", f"*.bkt.txt.sorted"))
+    bucket_file_paths = glob.glob(
+        os.path.join(working_directory, "output", f"*.bkt.txt.sorted")
+    )
     for bucket_file_path in bucket_file_paths:
         task = (process_task, (working_directory, output_directory, bucket_file_path))
         tasks.append(task)
@@ -44,7 +49,9 @@ def compress_and_move(working_directory, output_directory, process_count):
     def on_error(_):
         return None
 
-    global_progress = tqdm(total=len(bucket_file_paths), dynamic_ncols=True, unit="file")
+    global_progress = tqdm(
+        total=len(bucket_file_paths), dynamic_ncols=True, unit="file"
+    )
     _ = pool.map(global_progress, tasks, on_error, on_done)
 
     shutil.copy(original_info_file_path, os.path.join(output_directory, "info.json"))

@@ -14,9 +14,10 @@ respect to a wide range of linguistic phenomena found in natural language.
 Homepage: https://gluebenchmark.com/
 """
 import numpy as np
-from lm_eval.base import Task, rf
-from lm_eval.metrics import f1_score, matthews_corrcoef, mean, yesno
+from lm_eval.base import rf, Task
+from lm_eval.metrics import mean, matthews_corrcoef, f1_score, yesno
 from lm_eval.utils import general_detokenize
+
 
 # TODO(jon-tow): Add citations for the individual datasets/tasks that make up GLUE.
 _CITATION = """
@@ -67,7 +68,9 @@ class CoLA(Task):
         return self.dataset["validation"]
 
     def doc_to_text(self, doc):
-        return "{}\nQuestion: Does this sentence make sense?\nAnswer:".format(doc["sentence"])
+        return "{}\nQuestion: Does this sentence make sense?\nAnswer:".format(
+            doc["sentence"]
+        )
 
     def should_decontaminate(self):
         return True
@@ -177,7 +180,8 @@ class MNLI(Task):
     def doc_to_text(self, doc):
         return "{}\nQuestion: {} True, False or Neither?\nAnswer:".format(
             doc["premise"],
-            doc["hypothesis"].strip() + ("" if doc["hypothesis"].strip().endswith(".") else "."),
+            doc["hypothesis"].strip()
+            + ("" if doc["hypothesis"].strip().endswith(".") else "."),
         )
 
     def doc_to_target(self, doc):
@@ -239,9 +243,11 @@ class QNLI(Task):
         return self.dataset["validation"]
 
     def doc_to_text(self, doc):
-        return "{}\n{}\nQuestion: Does this response answer the question?\nAnswer:".format(
-            doc["question"],
-            doc["sentence"],
+        return (
+            "{}\n{}\nQuestion: Does this response answer the question?\nAnswer:".format(
+                doc["question"],
+                doc["sentence"],
+            )
         )
 
     def doc_to_target(self, doc):

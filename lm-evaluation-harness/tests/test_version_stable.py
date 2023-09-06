@@ -1,13 +1,13 @@
-import collections
-import hashlib
-import json
-import os
-import random
-
-import lm_eval.evaluator as evaluator
-import lm_eval.models as models
 import lm_eval.tasks as tasks
+import lm_eval.models as models
+import lm_eval.evaluator as evaluator
+import random
 import pytest
+import os
+import json
+import hashlib
+import collections
+
 
 os.makedirs("tests/testdata", exist_ok=True)
 
@@ -31,10 +31,19 @@ def assert_target_hashed(name, ob):
     fname = f"tests/testdata/{name}"
     if os.path.exists(fname):
         with open(fname) as fh:
-            assert fh.read() == hashlib.sha256(json.dumps(ob, sort_keys=True).encode("utf-8")).hexdigest()
+            assert (
+                fh.read()
+                == hashlib.sha256(
+                    json.dumps(ob, sort_keys=True).encode("utf-8")
+                ).hexdigest()
+            )
     else:
         with open(fname, "w") as fh:
-            fh.write(hashlib.sha256(json.dumps(ob, sort_keys=True).encode("utf-8")).hexdigest())
+            fh.write(
+                hashlib.sha256(
+                    json.dumps(ob, sort_keys=True).encode("utf-8")
+                ).hexdigest()
+            )
 
 
 # from https://stackoverflow.com/a/6027615
@@ -78,7 +87,9 @@ def test_versions_stable(taskname, task_class):
         for (string,) in reqs:
             assert isinstance(string, str)
 
-        assert_target_hashed(f"{taskname}-v{task_class.VERSION}-loglikelihood_rolling", reqs)
+        assert_target_hashed(
+            f"{taskname}-v{task_class.VERSION}-loglikelihood_rolling", reqs
+        )
         res = []
 
         random.seed(42)

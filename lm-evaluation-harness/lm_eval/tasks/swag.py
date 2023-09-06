@@ -14,6 +14,7 @@ Homepage: https://rowanzellers.com/swag/
 """
 from lm_eval.base import MultipleChoiceTask
 
+
 _CITATION = """
 @inproceedings{zellers2018swagaf,
     title={SWAG: A Large-Scale Adversarial Dataset for Grounded Commonsense Inference},

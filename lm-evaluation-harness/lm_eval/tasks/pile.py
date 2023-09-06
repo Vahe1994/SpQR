@@ -11,9 +11,9 @@ math, computer science, and philosophy papers.
 Homepage: https://pile.eleuther.ai/
 """
 import inspect
-
 import lm_eval.datasets.pile.pile
 from lm_eval.base import PerplexityTask
+
 
 _CITATION = """
 @article{pile,

@@ -11,6 +11,7 @@ Homepage: https://yonatanbisk.com/piqa/
 """
 from lm_eval.base import MultipleChoiceTask
 
+
 _CITATION = """
 @inproceedings{Bisk2020,
     author = {Yonatan Bisk and Rowan Zellers and

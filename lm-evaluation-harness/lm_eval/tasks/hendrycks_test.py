@@ -14,6 +14,7 @@ Homepage: https://github.com/hendrycks/test
 """
 from lm_eval.base import MultipleChoiceTask
 
+
 _CITATION = """
 @article{hendryckstest2021,
     title={Measuring Massive Multitask Language Understanding},
@@ -137,7 +138,9 @@ class GeneralHendrycksTest(MultipleChoiceTask):
             Answer:
             """
             prompt = "Question: " + doc["question"] + "\nChoices:\n"
-            prompt += "".join([f"{key}. {choice}\n" for key, choice in zip(keys, doc["choices"])])
+            prompt += "".join(
+                [f"{key}. {choice}\n" for key, choice in zip(keys, doc["choices"])]
+            )
             prompt += "Answer:"
             return prompt
 
@@ -145,7 +148,9 @@ class GeneralHendrycksTest(MultipleChoiceTask):
         return {
             "query": format_example(doc, keys),
             "choices": doc["choices"],
-            "gold": keys.index(doc["answer"]) if isinstance(doc["answer"], str) else doc["answer"],
+            "gold": keys.index(doc["answer"])
+            if isinstance(doc["answer"], str)
+            else doc["answer"],
         }
 
     def fewshot_examples(self, k, rnd):

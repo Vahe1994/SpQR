@@ -1,11 +1,9 @@
-from contextlib import contextmanager
-
 import torch
 import torch.nn as nn
-from tqdm import trange
 from transformers import AutoConfig, AutoModelForCausalLM
-
 from quant_groups import dequantize
+from contextlib import contextmanager
+from tqdm import trange
 
 MODEL_ERROR_MSG = "Unsupported model type {} - only 'llama' and 'falcon' supported"
 FALCON_TYPES = ("falcon", "refinedweb", "refinedwebmodel")

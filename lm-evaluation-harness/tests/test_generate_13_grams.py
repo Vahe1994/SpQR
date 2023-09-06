@@ -1,12 +1,13 @@
-import glob
-import logging
 import os
-import shutil
 from collections import Counter
+import shutil
+import glob
 
-from lm_eval.decontamination.archiver import Archive, TextReader
 from lm_eval.decontamination.janitor import Janitor, word_ngrams
 from scripts.clean_training_data.generate_13_grams import do_ngrams_in_buckets
+from lm_eval.decontamination.archiver import Archive, TextReader
+
+import logging
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +56,9 @@ def test_generate_13_grams_1(caplog):
     # Rebuild from buckets
     print("rebuild")
     rebuilt_ngrams = []
-    bucket_file_paths = glob.glob(os.path.join(test_working_directory, "output", f"*.bkt.txt"))
+    bucket_file_paths = glob.glob(
+        os.path.join(test_working_directory, "output", f"*.bkt.txt")
+    )
     for bucket_file_path in bucket_file_paths:
         reader = TextReader(bucket_file_path)
 

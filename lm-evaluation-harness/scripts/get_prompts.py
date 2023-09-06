@@ -1,6 +1,5 @@
-from itertools import islice
-
 from lm_eval import tasks
+from itertools import islice
 
 ct = 3
 
@@ -11,7 +10,9 @@ for (
     task = Task()
 
     print("#", tname)
-    docs = islice(task.validation_docs() if task.has_validation_docs() else task.test_docs(), ct)
+    docs = islice(
+        task.validation_docs() if task.has_validation_docs() else task.test_docs(), ct
+    )
     print()
     for i in range(ct):
         print()

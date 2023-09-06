@@ -8,15 +8,16 @@ Arguments
     directory and the unsorted buckets are removed after.
 """
 
-import argparse
 import glob
-import logging
+import argparse
 import os
 import signal
-import subprocess
 from signal import SIGINT
+import subprocess
 
 from tqdm import tqdm
+
+import logging
 from tqdm_multiprocess.logger import setup_logger_tqdm
 
 logger = logging.getLogger(__name__)

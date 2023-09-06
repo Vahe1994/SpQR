@@ -6,9 +6,10 @@ Classify input text as either hateful or not hateful.
 
 Homepage: https://github.com/microsoft/TOXIGEN
 """
+from lm_eval.base import MultipleChoiceTask
 import numpy as np
 import pandas as pd
-from lm_eval.base import MultipleChoiceTask
+
 
 _CITATION = """
 @inproceedings{hartvigsen2022toxigen,
@@ -53,7 +54,9 @@ class ToxiGen(MultipleChoiceTask):
         """Preprocess the dataset into a list of (text, label) tuples."""
         d = pd.DataFrame(self.dataset[split])
         text = d["text"]
-        labels = np.round(((d["toxicity_ai"] + d["toxicity_human"]) > 5.5), 0).astype(np.int32)
+        labels = np.round(((d["toxicity_ai"] + d["toxicity_human"]) > 5.5), 0).astype(
+            np.int32
+        )
         return [[x, y] for x, y in zip(text, labels)]
 
     def _process_doc(self, doc):

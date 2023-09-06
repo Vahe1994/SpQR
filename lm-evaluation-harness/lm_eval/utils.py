@@ -1,9 +1,9 @@
-import collections
-import functools
-import inspect
 import os
 import pathlib
 import re
+import collections
+import functools
+import inspect
 import sys
 from typing import List
 
@@ -196,6 +196,4 @@ def run_task_tests(task_list: List[str]):
     sys.path.append(str(package_root))
     pytest_return_val = pytest.main(args)
     if pytest_return_val:
-        raise ValueError(
-            f"Not all tests for the specified tasks ({task_list}) ran successfully! Error code: {pytest_return_val}"
-        )
+        raise ValueError(f"Not all tests for the specified tasks ({task_list}) ran successfully! Error code: {pytest_return_val}")

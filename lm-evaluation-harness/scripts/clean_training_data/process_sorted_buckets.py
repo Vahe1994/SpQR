@@ -15,32 +15,40 @@ Arguments
 
 import argparse
 import glob
-import logging
 import os
+from pathlib import Path
 import re
 import shutil
-from pathlib import Path
 
-from scripts.clean_training_data.archiver import TextArchive, TextReader
 from tqdm import tqdm
 from tqdm_multiprocess import TqdmMultiProcessPool
+
+from scripts.clean_training_data.archiver import TextReader, TextArchive
+
+import logging
 from tqdm_multiprocess.logger import setup_logger_tqdm
 
 logger = logging.getLogger(__name__)
 
 
 # Multiprocessed
-def process_bucket(bucket_file_path, processed_directory, move_dir, tqdm_func, global_tqdm):
+def process_bucket(
+    bucket_file_path, processed_directory, move_dir, tqdm_func, global_tqdm
+):
 
     bucket_id = re.sub("\D", "", os.path.basename(bucket_file_path))  # noqa: W605
-    done_file = os.path.join(processed_directory, f"ngram_bucket_processing_{bucket_id}.done")
+    done_file = os.path.join(
+        processed_directory, f"ngram_bucket_processing_{bucket_id}.done"
+    )
     if os.path.exists(done_file):
         logger.info(f"bucket {bucket_id} already processed, skipping")
         return
 
     # For managing tqdm
     file_size = os.path.getsize(bucket_file_path)
-    bucket_progress = tqdm_func(total=file_size, dynamic_ncols=True, unit="byte", unit_scale=1)
+    bucket_progress = tqdm_func(
+        total=file_size, dynamic_ncols=True, unit="byte", unit_scale=1
+    )
     current_file_position = 0
     update_frequency = 100 * 1000000  # 100mb
     update_counter = 0
@@ -59,7 +67,9 @@ def process_bucket(bucket_file_path, processed_directory, move_dir, tqdm_func, g
         # Write ngram if more then 10 unique document occurrences
         if ngram != current_ngram:
             if len(current_ngram_document_ids) > 10:
-                output_archive.add_data(f"{current_ngram} {len(current_ngram_document_ids)}")
+                output_archive.add_data(
+                    f"{current_ngram} {len(current_ngram_document_ids)}"
+                )
             current_ngram = ngram
             current_ngram_document_ids = set()
 
@@ -91,7 +101,10 @@ def process_sorted_buckets(working_directory, move_dir, process_count):
     os.makedirs(processed_directory, exist_ok=True)
 
     pool = TqdmMultiProcessPool(process_count)
-    tasks = [(process_bucket, (bucket_file, processed_directory, move_dir)) for bucket_file in bucket_file_paths]
+    tasks = [
+        (process_bucket, (bucket_file, processed_directory, move_dir))
+        for bucket_file in bucket_file_paths
+    ]
 
     global_tqdm = tqdm(total=len(bucket_file_paths), dynamic_ncols=True, unit="bucket")
 

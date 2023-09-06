@@ -11,8 +11,9 @@ a newer version which fixes some of the issues with the original version.
 
 Homepage: https://github.com/nyu-mll/crows-pairs, https://gitlab.inria.fr/french-crows-pairs
 """
-from lm_eval.base import Task, rf
+from lm_eval.base import rf, Task
 from lm_eval.metrics import mean
+
 
 _CITATION = """
 @inproceedings{nangia-etal-2020-crows,
@@ -68,12 +69,18 @@ class CrowsPairsMutilingual(Task):
     def validation_docs(self):
         test_dataset = self.dataset["test"]
         if self.BIAS_TYPE is not None:
-            test_dataset = test_dataset.filter(lambda example: example["bias_type"].startswith(self.BIAS_TYPE))
+            test_dataset = test_dataset.filter(
+                lambda example: example["bias_type"].startswith(self.BIAS_TYPE)
+            )
         return test_dataset
 
-    def fewshot_context(self, doc, num_fewshot, provide_description=None, rnd=None, description=None):
+    def fewshot_context(
+        self, doc, num_fewshot, provide_description=None, rnd=None, description=None
+    ):
         assert num_fewshot == 0
-        assert rnd is not None, "A `random.Random` generator argument must be provided to `rnd`"
+        assert (
+            rnd is not None
+        ), "A `random.Random` generator argument must be provided to `rnd`"
         assert not provide_description, (
             "The `provide_description` arg will be removed in future versions. To prepend "
             "a custom description to the context, supply the corresponding string via the  "
