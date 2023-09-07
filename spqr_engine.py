@@ -1,11 +1,13 @@
 from __future__ import annotations
+
 import math
-from typing import Optional, NamedTuple, Union
+from typing import NamedTuple, Optional, Union
 
 import torch
 from tqdm.auto import tqdm
+
+from quant_groups import Quantizer, dequantize, quantize
 from weight_permutation import get_permutation_order
-from quant_groups import Quantizer, quantize, dequantize
 
 
 class SPQRUtil:
