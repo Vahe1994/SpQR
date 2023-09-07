@@ -44,7 +44,10 @@ def get_model(model_path, load_quantized=None, dtype="auto"):
                 trust_remote_code=True,
                 torch_dtype=dtype,
             )
-    model.seqlen = 2048
+    if 'llama-2' in model_path.lower():
+        model.seqlen = 4096
+    else:
+        model.seqlen = 2048
 
     print("Model loaded sucessfully ...")
 

@@ -36,6 +36,7 @@ was trained on. I.e. for quantization of `LLaMA` models we recommend to use the 
 of [RedPajama](https://huggingface.co/datasets/togethercomputer/RedPajama-Data-1T-Sample) and for `Falcon` quantization - [RefinedWeb](https://huggingface.co/datasets/tiiuae/falcon-refinedweb). Both subsets 
 are stored in `data` directory: 
 * `data/red_pajama_n=1024.pth`
+* `data/red_pajama_n=128_4k_context_length.pth`
 * `data/refined_web_n=128.pth`
   
 **Note** These subsets are already processed with the corresponding model tokenizer. Use for different model will lead to
