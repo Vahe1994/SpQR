@@ -1,10 +1,11 @@
 import os
 import time
+
 from tqdm import trange
 
-from spqr_engine import SPQRUtil, Quantizer, quantize
 from datautils import get_loaders
 from modelutils import *
+from spqr_engine import Quantizer, SPQRUtil, quantize
 
 try:
     import wandb
