@@ -27,19 +27,20 @@ They will be saved in default Huggingface Datasets directory unless alternative 
 See [relevant Datasets documentation section](https://huggingface.co/docs/datasets/main/en/cache#cache-directory)
 ### Models
 
-This repository is expected to work with models of `LLaMA` and `Falcon` families so far.
+This repository is expected to work with models of `LLaMA`, `Falcon` and `OPT` families so far.
 
 #### Data
 
 For quantization with SpQR its is recommended to use the subset of the data model 
 was trained on. I.e. for quantization of `LLaMA` models we recommend to use the subset
-of [RedPajama](https://huggingface.co/datasets/togethercomputer/RedPajama-Data-1T-Sample) and for `Falcon` quantization - [RefinedWeb](https://huggingface.co/datasets/tiiuae/falcon-refinedweb). Both subsets 
-are stored in `data` directory: 
+of [RedPajama](https://huggingface.co/datasets/togethercomputer/RedPajama-Data-1T-Sample) and for `Falcon` quantization - [RefinedWeb](https://huggingface.co/datasets/tiiuae/falcon-refinedweb).Both subsets  are stored in `data` directory: 
 * `data/red_pajama_n=1024.pth`
 * `data/refined_web_n=128.pth`
   
 **Note** These subsets are already processed with the corresponding model tokenizer. Use for different model will lead to
 unexpected behavior.
+
+ For `OPT` following GPTQ paper we recommend to use `c4`. 
 
 ### W&B logging
 
