@@ -43,6 +43,7 @@ def get_model(model_path, load_quantized=None, dtype="auto"):
                 pretrained_model_name_or_path=model_path,
                 trust_remote_code=True,
                 torch_dtype=dtype,
+                # local_files_only=True
             )
     model.seqlen = 2048
 
@@ -61,6 +62,12 @@ def get_model_head(model):
         if model.transformer.ln_f is not None:
             head.append(model.transformer.ln_f)
         head.append(model.lm_head)
+    elif model.config.model_type == "opt":
+        if model.model.decoder.final_layer_norm is not None:
+            head.append(model.model.decoder.final_layer_norm)
+        if model.model.decoder.project_out is not None:
+            head.append(model.model.decoder.project_out)
+        head.append(model.lm_head)
     else:
         raise ValueError(MODEL_ERROR_MSG.format(model.config.model_type))
     return head
@@ -77,6 +84,13 @@ def get_lm_logits(inps_, model):
         if model.transformer.ln_f is not None:
             hidden_states = model.transformer.ln_f(hidden_states)
         lm_logits = model.lm_head(hidden_states)
+    elif model.config.model_type == "opt":
+        hidden_states = inps_.unsqueeze(0)
+        if model.model.decoder.final_layer_norm is not None:
+            hidden_states = model.model.decoder.final_layer_norm(hidden_states)
+        if model.model.decoder.project_out is not None:
+            hidden_states = model.model.decoder.project_out(hidden_states)
+        lm_logits = model.lm_head(hidden_states)
     else:
         raise ValueError(MODEL_ERROR_MSG.format(model.config.model_type))
     return lm_logits
@@ -87,6 +101,8 @@ def get_layers(model):
         return model.model.layers
     elif model.config.model_type.lower() in FALCON_TYPES:
         return model.transformer.h
+    elif model.config.model_type == "opt":
+        return model.model.decoder.layers
     else:
         raise ValueError(MODEL_ERROR_MSG.format(model.config.model_type))
 
@@ -113,6 +129,15 @@ def get_sequential_groups(model):
             ["self_attention.dense"],
             ["mlp.dense_h_to_4h"],
             ["mlp.dense_4h_to_h"],
+        ]
+    elif model.config.model_type == "opt":
+        return [
+            ["self_attn.q_proj"],
+            ["self_attn.k_proj"],
+            ["self_attn.v_proj"],
+            ["self_attn.out_proj"],
+            ["fc1"],
+            ["fc2"],
         ]
     else:
         raise ValueError(MODEL_ERROR_MSG.format(model.config.model_type))

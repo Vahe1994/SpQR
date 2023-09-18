@@ -103,6 +103,11 @@ def get_inps(model, data_iterable, args, dev, nsamples=None):
     emb_dev = emb.weight.device
     if emb_dev.type != "cuda":
         emb = emb.to(dev)
+        # opt has other embeddings
+        if model.config.model_type == "opt":
+            model.model.decoder.embed_positions = model.model.decoder.embed_positions.to(dev)
+            if hasattr(model.model.decoder, "project_in") and model.model.decoder.project_in:
+                model.model.decoder.project_in = model.model.decoder.project_in.to(dev)
     dev = emb.weight.device  # now default device is the one where the embeddings are.
     layer_dev = next(layers[0].parameters()).device
     layers[0] = layers[0].to(dev)
@@ -146,6 +151,10 @@ def get_inps(model, data_iterable, args, dev, nsamples=None):
 
     layers[0] = layers[0].to(layer_dev)
     model.get_input_embeddings().to(emb_dev)
+    if model.config.model_type == "opt":
+        model.model.decoder.embed_positions = model.model.decoder.embed_positions.to(emb_dev)
+        if hasattr(model.model.decoder, "project_in") and model.model.decoder.project_in:
+            model.model.decoder.project_in = model.model.decoder.project_in.to(emb_dev)
     torch.cuda.empty_cache()
 
     forward_args = {k: cache[k] for k in forward_arg_names}
