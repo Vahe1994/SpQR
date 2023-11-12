@@ -115,7 +115,8 @@ def main():
 
         lm.model.seqlen = 2048
 
-        quantize_model(lm.model, quantization_config, args.device)
+        _, wbits_avg = quantize_model(lm.model, quantization_config, args.device)
+        print(f'Average number of bits {wbits_avg:.2f}')
 
     results = evaluator.simple_evaluate(
         model=lm,
@@ -133,6 +134,7 @@ def main():
     )
     if not isinstance(results["config"]["model"], str):
         results["config"]["model"] = results["config"]["model"].model.config._name_or_path
+    results["config"]["wbits_avg"] = wbits_avg
 
     dumped = json.dumps(results, indent=2)
     print(dumped)

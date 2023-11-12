@@ -29,6 +29,7 @@ class QuantizationConfig:
     simplified_outliers: bool = False
     offload_activations: bool = False
     load: bool = False
+    save: bool = False
     skip_out_loss: bool = False
     wandb: bool = False
 
