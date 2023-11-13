@@ -430,7 +430,7 @@ if __name__ == "__main__":
         help="Path to load if specified. Deprecated",
     )
     parser.add_argument("--load", type=str, default=None, help="Path to load quantized statistics.")
-    parser.add_argument("--save", type=str, default=None, help="Path to save quantized statistics.")
+    parser.add_argument("--save", type=str, default=False, help="Path to save quantized statistics.")
     parser.add_argument("--seed", type=int, default=0, help="Seed for sampling the calibration data.")
     parser.add_argument("--nsamples", type=int, default=128, help="Number of calibration data samples.")
     parser.add_argument(
