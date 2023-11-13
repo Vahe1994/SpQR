@@ -170,7 +170,7 @@ def quantize_spqr(model, dataloader, args, device):
 
     use_cache = model.config.use_cache
     model.config.use_cache = False
-    save = getattr(args, 'save', False)
+    save = getattr(args, "save", False)
 
     quantizers = {}
 
@@ -444,7 +444,6 @@ if __name__ == "__main__":
         "--wbits",
         type=int,
         default=16,
-        choices=[2, 3, 4, 8, 16],
         help="#bits to use for quantization; use 16 for evaluating base model.",
     )
     parser.add_argument(

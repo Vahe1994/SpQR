@@ -116,7 +116,7 @@ def main():
         lm.model.seqlen = 2048
 
         _, wbits_avg = quantize_model(lm.model, quantization_config, args.device)
-        print(f'Average number of bits {wbits_avg:.2f}')
+        print(f"Average number of bits {wbits_avg:.2f}")
 
     results = evaluator.simple_evaluate(
         model=lm,
