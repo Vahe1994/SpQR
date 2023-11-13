@@ -86,9 +86,13 @@ def get_c4(nsamples, seqlen, tokenizer, eval_mode=False):
                 tmp = tokenizer(valdata[i]["text"], return_tensors="pt")
                 if tmp.input_ids.shape[1] >= seqlen:
                     break
-            i = random.randint(0, tmp.input_ids.shape[1] - seqlen - 1)
-            j = i + seqlen
-            valenc.append(tmp.input_ids[:, i:j])
+            if tmp.input_ids.shape[1] == seqlen:
+                # rare case, discovered with Yi tokenizer
+                valenc.append(tmp.input_ids)
+            else:
+                i = random.randint(0, tmp.input_ids.shape[1] - seqlen - 1)
+                j = i + seqlen
+                valenc.append(tmp.input_ids[:, i:j])
         valenc = torch.hstack(valenc)
         return valenc
 
@@ -179,8 +183,8 @@ def get_loaders(name, nsamples=128, seed=0, seqlen=2048, eval_mode=False, model_
     elif os.path.isfile(name):
         try:
             data = torch.load(name)[:nsamples]
-        except:
-            raise ValueError(
+        except FileNotFoundError:
+            raise FileNotFoundError(
                 f"Failed to load custom data from {name}.",
                 "Check data path or use one of [c4, wikitext2, ptb, pajama, refinedweb, none]",
             )
@@ -199,7 +203,7 @@ def get_loaders(name, nsamples=128, seed=0, seqlen=2048, eval_mode=False, model_
                     pass
                     print(f"bos/eos tokens unchanged: {tokenizer.bos_token_id=},  {tokenizer.eos_token_id=}")
         else:
-            tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
+            tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False, trust_remote_code=True)
 
         if name.lower() == "wikitext2":
             data = get_wikitext2(nsamples, seqlen, tokenizer, eval_mode=eval_mode)

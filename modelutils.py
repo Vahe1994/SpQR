@@ -7,13 +7,16 @@ from transformers import AutoConfig, AutoModelForCausalLM
 
 from quant_groups import dequantize
 
-MODEL_ERROR_MSG = "Unsupported model type {} - only 'llama' and 'falcon' supported"
+MODEL_ERROR_MSG = "Unsupported model type {} - only 'llama', 'Yi', 'opt' and 'falcon' are supported"
 FALCON_TYPES = ("falcon", "refinedweb", "refinedwebmodel")
+LLAMA_LIKE = ("llama", "Yi")
 
 
 @contextmanager
 def suspend_nn_inits():
-    skip = lambda *args, **kwargs: None
+    def skip(*args, **kwargs):
+        pass
+
     saved_inits = torch.nn.init.kaiming_uniform_, torch.nn.init.uniform_, torch.nn.init.normal_  # saving
     torch.nn.init.kaiming_uniform_ = torch.nn.init.uniform_ = torch.nn.init.normal_ = skip  # replacing
     try:
@@ -54,7 +57,7 @@ def get_model(model_path, load_quantized=None, dtype="auto"):
 
 def get_model_head(model):
     head = torch.nn.ModuleList()
-    if model.config.model_type == "llama":
+    if model.config.model_type in LLAMA_LIKE:
         if model.model.norm is not None:
             head.append(model.model.norm)
         head.append(model.lm_head)
@@ -74,7 +77,7 @@ def get_model_head(model):
 
 
 def get_lm_logits(inps_, model):
-    if model.config.model_type == "llama":
+    if model.config.model_type in LLAMA_LIKE:
         hidden_states = inps_.unsqueeze(0)
         if model.model.norm is not None:
             hidden_states = model.model.norm(hidden_states)
@@ -97,7 +100,7 @@ def get_lm_logits(inps_, model):
 
 
 def get_layers(model):
-    if model.config.model_type == "llama":
+    if model.config.model_type in LLAMA_LIKE:
         return model.model.layers
     elif model.config.model_type.lower() in FALCON_TYPES:
         return model.transformer.h
@@ -116,7 +119,7 @@ def find_sublayers(module, layers=(nn.Conv2d, nn.Linear)):
 
 
 def get_sequential_groups(model):
-    if model.config.model_type == "llama":
+    if model.config.model_type in LLAMA_LIKE:
         return [
             ["self_attn.k_proj", "self_attn.v_proj", "self_attn.q_proj"],
             ["self_attn.o_proj"],

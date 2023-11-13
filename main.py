@@ -1,10 +1,20 @@
 import os
 import time
 
+import torch
+import torch.nn as nn
 from tqdm import trange
 
 from datautils import get_loaders
-from modelutils import *
+from modelutils import (
+    FALCON_TYPES,
+    find_sublayers,
+    get_layers,
+    get_lm_logits,
+    get_model,
+    get_model_head,
+    get_sequential_groups,
+)
 from spqr_engine import Quantizer, SPQRUtil, quantize
 
 try:
@@ -15,7 +25,7 @@ except ModuleNotFoundError:
     has_wandb = False
 
 try:
-    import safetensors
+    import safetensors  # noqa: F401
 
     has_safetensors = True
 except ModuleNotFoundError:
@@ -209,7 +219,7 @@ def quantize_spqr(model, dataloader, args, device):
 
             def add_batch(name):
                 def tmp(_, inp, out):
-                    spqr_handlers[name].add_batch(inp[0].data)
+                    spqr_handlers[name].add_batch(inp[0].data)  # noqa: F821
 
                 return tmp
 
