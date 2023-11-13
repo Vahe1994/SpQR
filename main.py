@@ -170,6 +170,7 @@ def quantize_spqr(model, dataloader, args, device):
 
     use_cache = model.config.use_cache
     model.config.use_cache = False
+    save = getattr(args, "save", False)
 
     quantizers = {}
 
@@ -240,12 +241,12 @@ def quantize_spqr(model, dataloader, args, device):
                     outlier_relative_threshold=args.outlier_threshold,
                     permutation_order=args.permutation_order,
                     simplified_outliers=args.simplified_outliers,
-                    save_quantization=args.save,
+                    save_quantization=save,
                 )
 
-                if args.save:
+                if save:
                     quantized.save_quant_dict["sublayer_name"] = sublayer_name
-                    full_path = args.save + "/" + str(i) + "/"
+                    full_path = save + "/" + str(i) + "/"
                     os.makedirs(full_path, exist_ok=True)
                     torch.save(quantized.save_quant_dict, full_path + sublayer_name)
 
@@ -311,8 +312,8 @@ def quantize_spqr(model, dataloader, args, device):
         round_zero=args.round_zero,
         global_ol_n_share=normal_outlier_count_global / w_count_global,
     )
-    if args.save:
-        torch.save(vars(args), args.save + "/args.pt")
+    if save:
+        torch.save(vars(args), save + "/args.pt")
         already_saved_weights = set()
         for name, layer in nn.ModuleList(get_layers(model)).named_modules():
             if isinstance(layer, (nn.Conv2d, nn.Linear)):
@@ -320,7 +321,7 @@ def quantize_spqr(model, dataloader, args, device):
         not_quantized_weights = {
             name: param for name, param in model.named_parameters() if param not in already_saved_weights
         }
-        torch.save(not_quantized_weights, args.save + "/not_quantized_weights.pt")
+        torch.save(not_quantized_weights, save + "/not_quantized_weights.pt")
 
     if args.wandb:
         wandb.log({"outlier_share": normal_outlier_count_global / w_count_global})
@@ -429,7 +430,7 @@ if __name__ == "__main__":
         help="Path to load if specified. Deprecated",
     )
     parser.add_argument("--load", type=str, default=None, help="Path to load quantized statistics.")
-    parser.add_argument("--save", type=str, default=None, help="Path to save quantized statistics.")
+    parser.add_argument("--save", type=str, default=False, help="Path to save quantized statistics.")
     parser.add_argument("--seed", type=int, default=0, help="Seed for sampling the calibration data.")
     parser.add_argument("--nsamples", type=int, default=128, help="Number of calibration data samples.")
     parser.add_argument(
@@ -443,7 +444,6 @@ if __name__ == "__main__":
         "--wbits",
         type=int,
         default=16,
-        choices=[2, 3, 4, 8, 16],
         help="#bits to use for quantization; use 16 for evaluating base model.",
     )
     parser.add_argument(
