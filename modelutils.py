@@ -22,7 +22,7 @@ def suspend_nn_inits():
         torch.nn.init.kaiming_uniform_, torch.nn.init.uniform_, torch.nn.init.normal_ = saved_inits  # restoring
 
 
-def get_model(model_path, load_quantized=None, dtype="auto"):
+def get_model(model_path, load_quantized=None, dtype="auto", device_map=None):
     if dtype == "auto":
         dtype = (
             AutoConfig.from_pretrained(model_path, trust_remote_code=True).torch_dtype or "auto"
@@ -43,10 +43,10 @@ def get_model(model_path, load_quantized=None, dtype="auto"):
                 pretrained_model_name_or_path=model_path,
                 trust_remote_code=True,
                 torch_dtype=dtype,
-                # local_files_only=True
+                device_map=device_map
             )
-    model.seqlen = 2048
 
+    model.seqlen = 2048
     print("Model loaded sucessfully ...")
 
     return model

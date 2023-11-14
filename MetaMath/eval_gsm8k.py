@@ -86,16 +86,6 @@ def batch_data(data_list, batch_size=1):
     batch_data.append(data_list[last_start:last_end])
     return batch_data
 
-def auto_map_model(model, args):
-    if args.dtype == 'auto':
-        args.dtype = model.config.torch_dtype
-    device_map = accelerate.infer_auto_device_map(model, dtype=args.dtype)
-    for module_name, module in model.named_modules():
-        device = device_map.get(module_name)
-        if device is not None:
-            module = module.to(device)
-    return model
-
 def gsm8k_test(
     model, 
     args, 
@@ -132,24 +122,20 @@ def gsm8k_test(
     # get tokenizer
     tokenizer = AutoTokenizer.from_pretrained(args.model)
     # set [PAD] to [EOS] in case of absence if pad_token is not defined
-    tokenizer.pad_token = getattr(tokenizer, 'pad_token', tokenizer.eos_token)
+    # tokenizer.pad_token = getattr(tokenizer, 'pad_token', tokenizer.eos_token)
+    tokenizer.pad_token = tokenizer.eos_token
     # list of stop tokens
     stop_tokens = ["Question:", "Question", "USER:", "USER", "ASSISTANT:", "ASSISTANT", "Instruction:", "Instruction", "Response:", "Response"]
     generation_config = GenerationConfig(temperature=0.0, top_p=1, max_new_tokens=512)
     stopping_criterion = StopStringCriterion(tokenizer, stop_tokens)
     print('Sampling =====', generation_config)
     # init model
-    llm = get_model(args.model, dtype=args.dtype)
+    llm = get_model(args.model, dtype=args.dtype, device_map=args.device_map)
     # update args
     args.dataset = args.calibration_dataset
     args.model_path = args.model
     _, wbits_avg = quantize_model(llm, args, device)
     print(f'Average number of bits {wbits_avg:.2f}')
-    # distribute model among workers
-    if args.auto_device_map:
-        llm = auto_map_model(model, args)
-    else:
-        llm = llm.to(device)
 
     result = []
     res_completions = []
@@ -198,7 +184,7 @@ def parse_args():
     parser.add_argument("--start", type=int, default=0) #start index
     parser.add_argument("--end", type=int, default=MAX_INT)  # end index
     parser.add_argument("--batch_size", type=int, default=400)  # batch_size
-    parser.add_argument("--auto_device_map", action='store_true', help='Whether to place parts of model onto devices')
+    parser.add_argument("--device_map", type=str, default=None)
     # Quantization params
     parser.add_argument(
         "--calibration_dataset",
