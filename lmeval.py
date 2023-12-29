@@ -12,6 +12,8 @@ sys.path.append("./lm-evaluation-harness")
 import lm_eval.models
 from lm_eval import evaluator, tasks, utils
 
+from modelutils import load_quantized_model
+
 try:
     import wandb
 
@@ -55,6 +57,7 @@ def parse_args():
     parser.add_argument("--description_dict_path", default=None)
     parser.add_argument("--check_integrity", action="store_true")
     parser.add_argument("--log_wandb", action="store_true")
+    parser.add_argument("--load", type=str, default=None, help="Path to load quantized model.")
 
     return parser.parse_args()
 
@@ -100,6 +103,9 @@ def main():
     else:
         quantization_args = utils.simple_parse_args_string(args.quantization_args)
         quantization_config = QuantizationConfig.from_dict(quantization_args)
+        print("perchannel", quantization_config.perchannel)
+        if args.log_wandb:
+            wandb.wandb.config.update(quantization_config)
 
     lm = lm_eval.models.get_model(args.model).create_from_arg_string(
         args.model_args, dict(batch_size=args.batch_size, device=args.device)
@@ -107,14 +113,19 @@ def main():
     if hasattr(lm.model, "hf_device_map"):
         print("Model device map:\n", lm.model.hf_device_map)
 
-    if quantization_config is not None:
+    if args.load:
+        print("Loading quantized model ...")
+        lm.model = load_quantized_model(lm.model, args.load)
+        lm.model.seqlen = args.model_seqlen
+
+    if quantization_config is not None and args.load is None:
         assert lm.model.config.model_type in (
             "llama",
             "RefinedWebModel",
         ), "Quantization is implemented only for llama and falcon families"
-
-        lm.model.seqlen = 2048
-
+        assert args.load is None
+        lm.model.seqlen = quantization_config.seqlen
+        print(lm.model.seqlen)
         _, wbits_avg = quantize_model(lm.model, quantization_config, args.device)
         print(f"Average number of bits {wbits_avg:.2f}")
 

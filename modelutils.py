@@ -25,7 +25,7 @@ def suspend_nn_inits():
         torch.nn.init.kaiming_uniform_, torch.nn.init.uniform_, torch.nn.init.normal_ = saved_inits  # restoring
 
 
-def get_model(model_path, load_quantized=None, dtype="auto"):
+def get_model(model_path, load_quantized=None, dtype="auto", model_seqlen=4096):
     if dtype == "auto":
         dtype = (
             AutoConfig.from_pretrained(model_path, trust_remote_code=True).torch_dtype or "auto"
@@ -46,9 +46,12 @@ def get_model(model_path, load_quantized=None, dtype="auto"):
                 pretrained_model_name_or_path=model_path,
                 trust_remote_code=True,
                 torch_dtype=dtype,
-                # local_files_only=True
+                low_cpu_mem_usage=True,
+                local_files_only=True,
             )
-    model.seqlen = 2048
+    # Please verify correcttess #TODO
+    model.seqlen = model_seqlen
+    print("model_seqlen", model.seqlen)
 
     print("Model loaded sucessfully ...")
 
@@ -157,9 +160,9 @@ def load_quantized_model(model, load_path):
         sub_layers = find_sublayers(layer)
         for name in sub_layers:
             quantized_params_dict = read_quant_weight_from_file(load_path, i, name)
-            sub_layers[name].weight = nn.Parameter(
+            sub_layers[name].weight.data = nn.Parameter(
                 layer_weight_dequantization(quantized_params_dict).to(sub_layers[name].weight.data.dtype)
-            )
+            ).to(sub_layers[name].weight.device)
         layers[i] = layer
     model.load_state_dict(torch.load(load_path + "/not_quantized_weights.pt"), strict=False)
     return model

@@ -536,6 +536,13 @@ if __name__ == "__main__":
         help="Offload activations to RAM to save GPU memory.",
     )
     parser.add_argument(
+        "--model_seqlen",
+        type=int,
+        default=4096,
+        choices=[2048, 4096],
+        help="Model seqlen and calibration data context length.",
+    )
+    parser.add_argument(
         "--dtype",
         type=str,
         default="auto",
@@ -574,7 +581,7 @@ if __name__ == "__main__":
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     print("============  Loading model... ============")
-    model = get_model(args.model_path, args.load, args.dtype).train(False)
+    model = get_model(args.model_path, args.load, args.dtype, args.model_seqlen).train(False)
 
     print("\n============ Quantizing model... ============")
     if args.wbits < 16 and args.load:

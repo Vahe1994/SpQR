@@ -34,7 +34,8 @@ This repository is expected to work with models of `LLaMA`, `Falcon` and `OPT` f
 For quantization with SpQR its is recommended to use the subset of the data model 
 was trained on. I.e. for quantization of `LLaMA` models we recommend to use the subset
 of [RedPajama](https://huggingface.co/datasets/togethercomputer/RedPajama-Data-1T-Sample) and for `Falcon` quantization - [RefinedWeb](https://huggingface.co/datasets/tiiuae/falcon-refinedweb).Both subsets  are stored in `data` directory: 
-* `data/red_pajama_n=1024.pth`
+* `red_pajama_n=1024_2048_context_length.pth`
+* `red_pajama_n=1024_4096_context_length.pth`
 * `data/refined_web_n=128.pth`
   
 **Note** These subsets are already processed with the corresponding model tokenizer. Use for different model will lead to

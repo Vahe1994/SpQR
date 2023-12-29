@@ -9,15 +9,15 @@ class QuantizationConfig:
     dataset: str = "c4"
     custom_data_path: str = ""
     seed: int = 0
-    nsamples: int = 128
-    percdamp: float = 0.01
+    nsamples: int = 1024
+    percdamp: float = 1.0
     nearest: bool = False
     wbits: int = 3
     groupsize: int = None
     permutation_order: str = "act_order"
     true_sequential: bool = False
     sym: bool = False
-    perchannel: bool = False
+    perchannel: bool = True
     mse: bool = False
     qq_scale_bits: int = None
     round_zero: bool = False
@@ -32,6 +32,7 @@ class QuantizationConfig:
     save: bool = False
     skip_out_loss: bool = False
     wandb: bool = False
+    seqlen: int = 4096
 
     @classmethod
     def from_dict(cls, d):
