@@ -105,7 +105,7 @@ def main():
         quantization_config = QuantizationConfig.from_dict(quantization_args)
         print("perchannel", quantization_config.perchannel)
         if args.log_wandb:
-            wandb.wandb.config.update(quantization_config)
+            wandb.wandb.config.update(quantization_config,allow_val_change=True)
 
     lm = lm_eval.models.get_model(args.model).create_from_arg_string(
         args.model_args, dict(batch_size=args.batch_size, device=args.device)
