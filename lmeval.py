@@ -103,7 +103,7 @@ def main():
     else:
         quantization_args = utils.simple_parse_args_string(args.quantization_args)
         quantization_config = QuantizationConfig.from_dict(quantization_args)
-        print("perchannel", quantization_config.perchannel)
+        print("quantization_config", quantization_config)
         if args.log_wandb:
             wandb.wandb.config.update(quantization_config,allow_val_change=True)
 
