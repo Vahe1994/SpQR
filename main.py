@@ -174,7 +174,7 @@ def get_inps(model, data_iterable, args, dev, nsamples=None):
 @torch.no_grad()
 def quantize_spqr(model, dataloader, args, device):
     print("\nStarting SPQR quantization ...")
-
+    print("offload_activations in quantize_spqr", args.offload_activations)
     inps, forward_args = get_inps(model, dataloader, args, dev="cpu" if args.offload_activations else device)
     outs = torch.zeros_like(inps)
 
