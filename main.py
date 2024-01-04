@@ -123,7 +123,7 @@ def get_inps(model, data_iterable, args, dev, nsamples=None):
     layers[0] = layers[0].to(dev)
 
     dtype = next(iter(model.parameters())).dtype
-    inps = torch.zeros((nsamples, model.seqlen, model.config.hidden_size), dtype=dtype, device=dev)
+    inps = torch.zeros((nsamples, model.seqlen, model.config.hidden_size), dtype=dtype, device="cpu" if args.offload_activations else dev)
 
     forward_arg_names = [
         "attention_mask",
