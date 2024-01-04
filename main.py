@@ -176,6 +176,7 @@ def quantize_spqr(model, dataloader, args, device):
     print("\nStarting SPQR quantization ...")
     print("offload_activations in quantize_spqr", args.offload_activations)
     inps, forward_args = get_inps(model, dataloader, args, dev="cpu" if args.offload_activations else device)
+    print("inps device", inps.device)
     outs = torch.zeros_like(inps)
 
     use_cache = model.config.use_cache
@@ -227,9 +228,13 @@ def quantize_spqr(model, dataloader, args, device):
             for sublayer_name in subset:
                 handles.append(subset[sublayer_name].register_forward_hook(add_batch(sublayer_name)))
             for j in trange(args.nsamples, desc="calc outs before quantization", leave=False):
+                print("iteration",j)
+                print("input_device", inps[j].device)
                 outs[j] = layer(inps[j].to(layer_dev).unsqueeze(0), **forward_args)[0]
                 if args.offload_activations:
                     outs[j] = outs[j].cpu()
+                print("outs device", outs[j].device)
+
             for h in handles:
                 h.remove()
 
