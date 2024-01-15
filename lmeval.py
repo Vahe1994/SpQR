@@ -122,7 +122,7 @@ def main():
         lm.model.seqlen = args.model_seqlen
     wbits_avg = None
     if quantization_config is not None and args.load is None:
-
+        print("Quantizing model")
         assert lm.model.config.model_type in (
             "llama",
             "RefinedWebModel",
