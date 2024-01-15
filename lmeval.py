@@ -121,6 +121,7 @@ def main():
         lm.model.seqlen = args.model_seqlen
 
     # if quantization_config is not None and args.load is None:
+
     #     assert lm.model.config.model_type in (
     #         "llama",
     #         "RefinedWebModel",
@@ -128,6 +129,7 @@ def main():
     #     assert args.load is None
     #     lm.model.seqlen = quantization_config.seqlen
     #     print(lm.model.seqlen)
+    #
     #     _, wbits_avg = quantize_model(lm.model, quantization_config, args.device)
     #     print(f"Average number of bits {wbits_avg:.2f}")
 
@@ -140,7 +142,7 @@ def main():
             testloader = get_loaders(
                 dataset,
                 seed=quantization_config.seed,
-                model_path=quantization_config.model_path,
+                model_path=lm.model.config.model_type,
                 seqlen=lm.model.seqlen,
                 eval_mode=True,
             )
