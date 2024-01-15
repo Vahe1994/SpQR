@@ -119,7 +119,7 @@ def main():
         print("Loading quantized model ...")
         lm.model = load_quantized_model(lm.model, args.load)
         lm.model.seqlen = args.model_seqlen
-
+    wbits_avg = None
     # if quantization_config is not None and args.load is None:
 
     #     assert lm.model.config.model_type in (
@@ -142,7 +142,7 @@ def main():
             testloader = get_loaders(
                 dataset,
                 seed=quantization_config.seed,
-                model_path=lm.model.config.model_type,
+                model_path=utils.simple_parse_args_string(args.model_args).pretrained,
                 seqlen=lm.model.seqlen,
                 eval_mode=True,
             )
