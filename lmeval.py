@@ -120,6 +120,7 @@ def main():
         print("Loading quantized model ...")
         lm.model = load_quantized_model(lm.model, args.load)
         lm.model.seqlen = args.model_seqlen
+
     wbits_avg = None
     if quantization_config is not None and args.load is None:
         print("Quantizing model")
@@ -146,7 +147,7 @@ def main():
                 seqlen=lm.model.seqlen,
                 eval_mode=True,
             )
-            quantization_config.dataset_name=dataset
+            quantization_config.dataset_name = dataset
             perplexity_eval(lm.model, testloader, quantization_config, args.device)
 
     results = evaluator.simple_evaluate(
