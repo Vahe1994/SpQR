@@ -120,21 +120,23 @@ def main():
         lm.model = load_quantized_model(lm.model, args.load)
         lm.model.seqlen = args.model_seqlen
 
-    if quantization_config is not None and args.load is None:
-        assert lm.model.config.model_type in (
-            "llama",
-            "RefinedWebModel",
-        ), "Quantization is implemented only for llama and falcon families"
-        assert args.load is None
-        lm.model.seqlen = quantization_config.seqlen
-        print(lm.model.seqlen)
-        _, wbits_avg = quantize_model(lm.model, quantization_config, args.device)
-        print(f"Average number of bits {wbits_avg:.2f}")
+    # if quantization_config is not None and args.load is None:
+    #     assert lm.model.config.model_type in (
+    #         "llama",
+    #         "RefinedWebModel",
+    #     ), "Quantization is implemented only for llama and falcon families"
+    #     assert args.load is None
+    #     lm.model.seqlen = quantization_config.seqlen
+    #     print(lm.model.seqlen)
+    #     _, wbits_avg = quantize_model(lm.model, quantization_config, args.device)
+    #     print(f"Average number of bits {wbits_avg:.2f}")
 
     if args.calculate_ppl:
         datasets = ["wikitext2", "ptb", "c4"]
+        lm.model.seqlen = 4096
+        print("Calculating ppl")
         for dataset in datasets:
-            print("lm_model.seqlen before ppl calc",lm.model.seqlen)
+            print("lm_model.seqlen before ppl calc", lm.model.seqlen)
             testloader = get_loaders(
                 dataset,
                 seed=quantization_config.seed,

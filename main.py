@@ -123,7 +123,11 @@ def get_inps(model, data_iterable, args, dev, nsamples=None):
     layers[0] = layers[0].to(dev)
 
     dtype = next(iter(model.parameters())).dtype
-    inps = torch.zeros((nsamples, model.seqlen, model.config.hidden_size), dtype=dtype, device="cpu" if args.offload_activations else dev)
+    inps = torch.zeros(
+        (nsamples, model.seqlen, model.config.hidden_size),
+        dtype=dtype,
+        device="cpu" if args.offload_activations else dev,
+    )
 
     forward_arg_names = [
         "attention_mask",
@@ -380,28 +384,41 @@ def perplexity_eval(model, testenc, args, dev):
         model, testenc, args, dev="cpu" if args.offload_activations else dev, nsamples=nsamples
     )
     outs = torch.zeros_like(inps)
-    for k, v in forward_args.items():
-        forward_args[k] = v.to(dev) if isinstance(v, torch.Tensor) else v
-
     layers = get_layers(model)
     for i in trange(len(layers), desc="processing eval data by layer"):
-        layer = layers[i].to(dev)
+        layer_dev_original = next(layers[i].parameters()).device
+        print(f"{layer_dev_original=}")
+        if layer_dev_original.type != "cuda":
+            layer = layers[i].to(dev)
+        else:
+            layer = layers[i]
+        layer_dev = next(layers[i].parameters()).device
+        print("layer_dev", layer_dev)
+        for k, v in forward_args.items():
+            forward_args[k] = v.to(layer_dev) if isinstance(v, torch.Tensor) else v
 
         for j in range(nsamples):
-            outs[j] = layer(inps[j].to(dev).unsqueeze(0), **forward_args)[0]
+            outs[j] = layer(inps[j].to(layer_dev).unsqueeze(0), **forward_args)[0]
             if args.offload_activations:
                 outs[j] = outs[j].cpu()
-        layers[i] = layer.cpu()
+        layers[i] = layer.to(layer_dev_original)
         del layer
         torch.cuda.empty_cache()
         inps, outs = outs, inps
 
-    get_model_head(model).to(dev)
-    testenc = testenc.to(dev)
+    model_head_original_device = get_model_head(model).device
+    print(f"{model_head_original_device=}")
 
+    if model_head_original_device == "cpu":
+        get_model_head(model).to(dev)
+        testenc = testenc.to(dev)
+    else:
+        testenc = testenc.to(model_head_original_device)
+    model_head_device = get_model_head(model).device
+    print(f"{model_head_device=}")
     nlls = []
     for i in range(nsamples):
-        lm_logits = get_lm_logits(inps[i].to(dev), model)
+        lm_logits = get_lm_logits(inps[i].to(model_head_device), model)
         shift_logits = lm_logits[:, :-1, :].contiguous()
         shift_labels = testenc[:, (i * model.seqlen) : ((i + 1) * model.seqlen)][:, 1:]
         loss_fct = nn.CrossEntropyLoss()
@@ -411,7 +428,7 @@ def perplexity_eval(model, testenc, args, dev):
     ppl = torch.exp(torch.stack(nlls).sum() / (nsamples * model.seqlen))
     print(f"\n{args.dataset_name} perplexity = {ppl.item():.4f}\n")
 
-    get_model_head(model).to(torch.device("cpu"))
+    get_model_head(model).to(model_head_original_device)
 
     if args.wandb:
         wandb.log({args.dataset_name: ppl.item()})
