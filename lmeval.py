@@ -147,7 +147,7 @@ def main():
                 seqlen=lm.model.seqlen,
                 eval_mode=True,
             )
-            args.dataset_name = dataset
+            quantization_config.dataset_name=dataset
             perplexity_eval(lm.model, testloader, quantization_config, args.device)
 
     results = evaluator.simple_evaluate(
