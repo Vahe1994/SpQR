@@ -2,9 +2,11 @@ import os
 import random
 from typing import Optional
 
+import datasets
 import numpy as np
 import torch
 from datasets import load_dataset
+from packaging import version
 from transformers import AutoTokenizer, LlamaTokenizer
 
 
@@ -55,7 +57,11 @@ def get_ptb(nsamples, seqlen, tokenizer, eval_mode=False):
 def get_c4(nsamples, seqlen, tokenizer, eval_mode=False):
     if not eval_mode:
         traindata = load_dataset(
-            "allenai/c4", "allenai--c4", data_files={"train": "en/c4-train.00000-of-01024.json.gz"}, split="train"
+            "allenai/c4",
+            "default",
+            data_files={"train": "en/c4-train.00000-of-01024.json.gz"},
+            split="train",
+            revision="607bd4c8450a42878aa9ddc051a65a055450ef87",
         )
         trainloader = []
         for _ in range(nsamples):
@@ -75,9 +81,10 @@ def get_c4(nsamples, seqlen, tokenizer, eval_mode=False):
     else:
         valdata = load_dataset(
             "allenai/c4",
-            "allenai--c4",
+            "default",
             data_files={"validation": "en/c4-validation.00000-of-00008.json.gz"},
             split="validation",
+            revision="607bd4c8450a42878aa9ddc051a65a055450ef87",
         )
         random.seed(0)
         valenc = []
@@ -120,7 +127,11 @@ def get_ptb_new(nsamples, seqlen, tokenizer, eval_mode=False):
 def get_c4_new(nsamples, seqlen, tokenizer, eval_mode=False):
     if not eval_mode:
         traindata = load_dataset(
-            "allenai/c4", "allenai--c4", data_files={"train": "en/c4-train.00000-of-01024.json.gz"}, split="train"
+            "allenai/c4",
+            "default",
+            data_files={"train": "en/c4-train.00000-of-01024.json.gz"},
+            split="train",
+            revision="607bd4c8450a42878aa9ddc051a65a055450ef87",
         )
         trainloader = []
         for _ in range(nsamples):
@@ -139,9 +150,10 @@ def get_c4_new(nsamples, seqlen, tokenizer, eval_mode=False):
     else:
         valdata = load_dataset(
             "allenai/c4",
-            "allenai--c4",
+            "default",
             data_files={"validation": "en/c4-validation.00000-of-00008.json.gz"},
             split="validation",
+            revision="607bd4c8450a42878aa9ddc051a65a055450ef87",
         )
         valenc = tokenizer(" ".join(valdata[:1100]["text"]), return_tensors="pt")
         valenc = valenc.input_ids[:, : (256 * seqlen)]
@@ -175,7 +187,6 @@ def get_loaders(name, nsamples=128, seed=0, seqlen=2048, eval_mode=False, model_
 
     # for pre-tokenized datasets
     if name.lower() == "pajama":
-        print("using", f"./data/red_pajama_n=1024_{seqlen}_context_length.pth")
         data = torch.load(f"./data/red_pajama_n=1024_{seqlen}_context_length.pth")[:nsamples]
     elif name.lower() == "refinedweb":
         data = torch.load("./data/refined_web_n=128.pth")[:nsamples]
