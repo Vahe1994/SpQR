@@ -13,6 +13,8 @@ import lm_eval.models
 from lm_eval import evaluator, tasks, utils
 
 from modelutils import load_quantized_model
+from main import perplexity_eval
+from datautils import get_loaders
 
 try:
     import wandb
@@ -48,6 +50,7 @@ def parse_args():
     parser.add_argument("--quantization_args", default=None)
     parser.add_argument("--tasks", default=None, choices=MultiChoice(tasks.ALL_TASKS))
     parser.add_argument("--provide_description", action="store_true")
+    parser.add_argument("--calculate_ppl", action="store_true")
     parser.add_argument("--num_fewshot", type=int, default=0)
     parser.add_argument("--batch_size", type=int, default=None)
     parser.add_argument("--device", type=str, default="cuda:0")
@@ -58,7 +61,6 @@ def parse_args():
     parser.add_argument("--check_integrity", action="store_true")
     parser.add_argument("--log_wandb", action="store_true")
     parser.add_argument("--load", type=str, default=None, help="Path to load quantized model.")
-
     return parser.parse_args()
 
 
@@ -105,7 +107,7 @@ def main():
         quantization_config = QuantizationConfig.from_dict(quantization_args)
         print("quantization_config", quantization_config)
         if args.log_wandb:
-            wandb.wandb.config.update(quantization_config,allow_val_change=True)
+            wandb.wandb.config.update(quantization_config, allow_val_change=True)
 
     lm = lm_eval.models.get_model(args.model).create_from_arg_string(
         args.model_args, dict(batch_size=args.batch_size, device=args.device)
@@ -128,6 +130,20 @@ def main():
         print(lm.model.seqlen)
         _, wbits_avg = quantize_model(lm.model, quantization_config, args.device)
         print(f"Average number of bits {wbits_avg:.2f}")
+
+    if args.calculate_ppl:
+        datasets = ["wikitext2", "ptb", "c4"]
+        for dataset in datasets:
+            print("lm_model.seqlen before ppl calc",lm.model.seqlen)
+            testloader = get_loaders(
+                dataset,
+                seed=quantization_config.seed,
+                model_path=quantization_config.model_path,
+                seqlen=lm.model.seqlen,
+                eval_mode=True,
+            )
+            args.dataset_name = dataset
+            perplexity_eval(lm.model, testloader, quantization_config, args.device)
 
     results = evaluator.simple_evaluate(
         model=lm,
