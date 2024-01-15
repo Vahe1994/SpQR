@@ -136,7 +136,6 @@ def main():
 
     if args.calculate_ppl:
         datasets = ["wikitext2", "ptb", "c4"]
-        lm.model.seqlen = 4096
         print("Calculating ppl")
         for dataset in datasets:
             print("lm_model.seqlen before ppl calc", lm.model.seqlen)
