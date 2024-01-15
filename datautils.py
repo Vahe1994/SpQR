@@ -207,7 +207,8 @@ def get_loaders(name, nsamples=128, seed=0, seqlen=2048, eval_mode=False, model_
     set_seed(seed)
 
     # for pre-tokenized datasets
-
+    print("name",name)
+    print("isfile",os.path.isfile(name))
     if name.lower() == "none":
         print("Not loading any dataset. (OK if you use no compression or methods like RTN.)")
         return None
