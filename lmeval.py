@@ -61,6 +61,7 @@ def parse_args():
     parser.add_argument("--check_integrity", action="store_true")
     parser.add_argument("--log_wandb", action="store_true")
     parser.add_argument("--load", type=str, default=None, help="Path to load quantized model.")
+    parser.add_argument("--model_path", default="")
     return parser.parse_args()
 
 
@@ -142,7 +143,7 @@ def main():
             testloader = get_loaders(
                 dataset,
                 seed=quantization_config.seed,
-                model_path=utils.simple_parse_args_string(args.model_args).pretrained,
+                model_path=args.model_path,
                 seqlen=lm.model.seqlen,
                 eval_mode=True,
             )
