@@ -406,7 +406,7 @@ def perplexity_eval(model, testenc, args, dev):
         torch.cuda.empty_cache()
         inps, outs = outs, inps
 
-    model_head_original_device = get_model_head(model).device
+    model_head_original_device = get_model_head(model)[-1].weight.device
     print(f"{model_head_original_device=}")
 
     if model_head_original_device == "cpu":
@@ -414,7 +414,7 @@ def perplexity_eval(model, testenc, args, dev):
         testenc = testenc.to(dev)
     else:
         testenc = testenc.to(model_head_original_device)
-    model_head_device = get_model_head(model).device
+    model_head_device = get_model_head(model)[-1].weight.device
     print(f"{model_head_device=}")
     nlls = []
     for i in range(nsamples):
