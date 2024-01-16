@@ -181,39 +181,39 @@ def main():
         f"num_fewshot: {args.num_fewshot}, batch_size: {args.batch_size}"
     )
     print(evaluator.make_table(results))
-    # if args.both_shots:
-    #     print(f"{args.num_fewshot=}")
-    #     results = evaluator.simple_evaluate(
-    #         model=lm,
-    #         model_args=args.model_args,
-    #         tasks=[name for name in tasks.ALL_TASKS if 'hendrycks' in name.lower()] ,
-    #         num_fewshot=5,
-    #         batch_size=args.batch_size,
-    #         device=args.device,
-    #         no_cache=True,
-    #         limit=args.limit,
-    #         description_dict=description_dict,
-    #         decontamination_ngrams_path=args.decontamination_ngrams_path,
-    #         check_integrity=args.check_integrity,
-    #         log_wandb=args.log_wandb,
-    #     )
-    #
-    #     if not isinstance(results["config"]["model"], str):
-    #         results["config"]["model"] = results["config"]["model"].model.config._name_or_path
-    #     results["config"]["wbits_avg"] = wbits_avg
-    #
-    #     dumped = json.dumps(results, indent=2)
-    #     print(dumped)
-    #
-    #     if args.output_path:
-    #         with open(args.output_path, "w") as f:
-    #             f.write(dumped)
-    #
-    #     print(
-    #         f"{args.model} ({args.model_args}), limit: {args.limit}, provide_description: {args.provide_description}, "
-    #         f"num_fewshot: {args.num_fewshot}, batch_size: {args.batch_size}"
-    #     )
-    #     print(evaluator.make_table(results))
+    if args.both_shots:
+        print(f"{args.num_fewshot=}")
+        results = evaluator.simple_evaluate(
+            model=lm,
+            model_args=args.model_args,
+            tasks=[name for name in tasks.ALL_TASKS if 'hendrycks' in name.lower()] ,
+            num_fewshot=5,
+            batch_size=args.batch_size,
+            device=args.device,
+            no_cache=True,
+            limit=args.limit,
+            description_dict=description_dict,
+            decontamination_ngrams_path=args.decontamination_ngrams_path,
+            check_integrity=args.check_integrity,
+            log_wandb=args.log_wandb,
+        )
+
+        if not isinstance(results["config"]["model"], str):
+            results["config"]["model"] = results["config"]["model"].model.config._name_or_path
+        results["config"]["wbits_avg"] = wbits_avg
+
+        dumped = json.dumps(results, indent=2)
+        print(dumped)
+
+        if args.output_path:
+            with open(args.output_path, "w") as f:
+                f.write(dumped)
+
+        print(
+            f"{args.model} ({args.model_args}), limit: {args.limit}, provide_description: {args.provide_description}, "
+            f"num_fewshot: {args.num_fewshot}, batch_size: {args.batch_size}"
+        )
+        print(evaluator.make_table(results))
 
 
 if __name__ == "__main__":
