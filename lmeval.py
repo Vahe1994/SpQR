@@ -52,6 +52,7 @@ def parse_args():
     parser.add_argument("--provide_description", action="store_true")
     parser.add_argument("--calculate_ppl", action="store_true")
     parser.add_argument("--num_fewshot", type=int, default=0)
+    parser.add_argument("--both_shots", action="store_true")
     parser.add_argument("--batch_size", type=int, default=None)
     parser.add_argument("--device", type=str, default="cuda:0")
     parser.add_argument("--output_path", default=None)
@@ -79,7 +80,7 @@ def main():
     args = parse_args()
 
     assert not args.provide_description  # not implemented
-
+    print(f"{args.both_shots=}")
     if args.log_wandb:
         wandb.init(config=args)
 
@@ -149,7 +150,6 @@ def main():
             )
             quantization_config.dataset_name = dataset
             perplexity_eval(lm.model, testloader, quantization_config, args.device)
-
     results = evaluator.simple_evaluate(
         model=lm,
         model_args=args.model_args,
@@ -164,6 +164,7 @@ def main():
         check_integrity=args.check_integrity,
         log_wandb=args.log_wandb,
     )
+
     if not isinstance(results["config"]["model"], str):
         results["config"]["model"] = results["config"]["model"].model.config._name_or_path
     results["config"]["wbits_avg"] = wbits_avg
@@ -180,6 +181,40 @@ def main():
         f"num_fewshot: {args.num_fewshot}, batch_size: {args.batch_size}"
     )
     print(evaluator.make_table(results))
+    if args.both_shots:
+        args.num_fewshot = 5 if args.num_fewshot==0 else 0
+        print(f"{args.num_fewshot=}")
+        results = evaluator.simple_evaluate(
+            model=lm,
+            model_args=args.model_args,
+            tasks=task_names,
+            num_fewshot=args.num_fewshot,
+            batch_size=args.batch_size,
+            device=args.device,
+            no_cache=True,
+            limit=args.limit,
+            description_dict=description_dict,
+            decontamination_ngrams_path=args.decontamination_ngrams_path,
+            check_integrity=args.check_integrity,
+            log_wandb=args.log_wandb,
+        )
+
+        if not isinstance(results["config"]["model"], str):
+            results["config"]["model"] = results["config"]["model"].model.config._name_or_path
+        results["config"]["wbits_avg"] = wbits_avg
+
+        dumped = json.dumps(results, indent=2)
+        print(dumped)
+
+        if args.output_path:
+            with open(args.output_path, "w") as f:
+                f.write(dumped)
+
+        print(
+            f"{args.model} ({args.model_args}), limit: {args.limit}, provide_description: {args.provide_description}, "
+            f"num_fewshot: {args.num_fewshot}, batch_size: {args.batch_size}"
+        )
+        print(evaluator.make_table(results))
 
 
 if __name__ == "__main__":

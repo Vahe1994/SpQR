@@ -112,7 +112,7 @@ def simple_evaluate(
         wandb_dict = {}
         for k1, v1 in results["results"].items():
             for k2, v2 in v1.items():
-                wandb_dict[f"{k1}/{k2}"] = v2
+                wandb_dict[f"{num_fewshot=}, {k1}/{k2}"] = v2
         wandb.log(wandb_dict)
 
     # add info about the model and few shot config
