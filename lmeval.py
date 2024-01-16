@@ -182,13 +182,12 @@ def main():
     )
     print(evaluator.make_table(results))
     if args.both_shots:
-        args.num_fewshot = 5 if args.num_fewshot==0 else 0
         print(f"{args.num_fewshot=}")
         results = evaluator.simple_evaluate(
             model=lm,
             model_args=args.model_args,
-            tasks=task_names,
-            num_fewshot=args.num_fewshot,
+            tasks=[name for name in tasks.ALL_TASKS if 'hendrycks' in name.lower()] ,
+            num_fewshot=5,
             batch_size=args.batch_size,
             device=args.device,
             no_cache=True,
