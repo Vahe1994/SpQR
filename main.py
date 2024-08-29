@@ -5,7 +5,9 @@ import torch
 import torch.nn as nn
 from tqdm import trange
 
-from datautils import get_loaders
+from transformers import LlamaTokenizer, DynamicCache
+
+from datautils import get_loaders, tokenize
 from modelutils import (
     FALCON_TYPES,
     find_sublayers,
@@ -13,9 +15,10 @@ from modelutils import (
     get_lm_logits,
     get_model,
     get_model_head,
-    get_sequential_groups,
+    get_sequential_groups, load_quantized_model,
 )
 from spqr_engine import Quantizer, SPQRUtil, quantize
+from transformers import AutoTokenizer, LlamaTokenizer
 
 try:
     import wandb
@@ -33,15 +36,15 @@ except ModuleNotFoundError:
 
 
 def get_average_number_of_bits(
-    wbits: int = 3,
-    qq_scale_bits: int = 3,
-    qq_zero_bits: int = 3,
-    qqq_scale_bits: int = 16,
-    qqq_zero_bits: int = 16,
-    groupsize: int = 16,
-    qq_groupsize: int = 16,
-    round_zero: bool = False,
-    global_ol_n_share: float = 0.00,
+        wbits: int = 3,
+        qq_scale_bits: int = 3,
+        qq_zero_bits: int = 3,
+        qqq_scale_bits: int = 16,
+        qqq_zero_bits: int = 16,
+        groupsize: int = 16,
+        qq_groupsize: int = 16,
+        round_zero: bool = False,
+        global_ol_n_share: float = 0.00,
 ):
     # if not quantized stats are in full precision
     qq_scale_bits = qq_scale_bits or 16
@@ -53,13 +56,14 @@ def get_average_number_of_bits(
         wbits_avg = wbits
     elif round_zero:
         wbits_avg = (
-            wbits + (qq_scale_bits + wbits) / groupsize + (qqq_scale_bits + qqq_zero_bits) / (groupsize * qq_groupsize)
+                wbits + (qq_scale_bits + wbits) / groupsize + (qqq_scale_bits + qqq_zero_bits) / (
+                groupsize * qq_groupsize)
         )
     else:
         wbits_avg = (
-            wbits
-            + (qq_scale_bits + qq_zero_bits) / groupsize
-            + 2 * (qqq_scale_bits + qqq_zero_bits) / (groupsize * qq_groupsize)
+                wbits
+                + (qq_scale_bits + qq_zero_bits) / groupsize
+                + 2 * (qqq_scale_bits + qqq_zero_bits) / (groupsize * qq_groupsize)
         )
 
     # correct accounting for outliers
@@ -101,10 +105,9 @@ def get_inps(model, data_iterable, args, dev, nsamples=None):
     nsamples = nsamples or args.nsamples
 
     if isinstance(data_iterable, torch.Tensor):
-
         def batch_generator(testenc, seqlen, nsamples):
             for i in range(nsamples):
-                batch = testenc[:, (i * seqlen) : ((i + 1) * seqlen)].to(dev)
+                batch = testenc[:, (i * seqlen): ((i + 1) * seqlen)].to(dev)
                 yield batch
 
         data_iterable = batch_generator(data_iterable, model.seqlen, nsamples)
@@ -127,6 +130,7 @@ def get_inps(model, data_iterable, args, dev, nsamples=None):
 
     forward_arg_names = [
         "attention_mask",
+        "position_ids",  # TODO: Remove
     ]
     if model.config.model_type.lower() in FALCON_TYPES:
         forward_arg_names.append("alibi")
@@ -161,6 +165,7 @@ def get_inps(model, data_iterable, args, dev, nsamples=None):
 
     layers[0] = layers[0].to(layer_dev)
     model.get_input_embeddings().to(emb_dev)
+    print(f'config_type = {model.config.model_type}')
     if model.config.model_type == "opt":
         model.model.decoder.embed_positions = model.model.decoder.embed_positions.to(emb_dev)
         if hasattr(model.model.decoder, "project_in") and model.model.decoder.project_in:
@@ -179,7 +184,7 @@ def quantize_spqr(model, dataloader, args, device):
     outs = torch.zeros_like(inps)
 
     use_cache = model.config.use_cache
-    model.config.use_cache = False
+    model.config.use_cache = True
     save = getattr(args, "save", False)
 
     quantizers = {}
@@ -195,7 +200,7 @@ def quantize_spqr(model, dataloader, args, device):
 
         layer_dev_original = next(layers[i].parameters()).device  # quantized layer will return there
         print(f"{layer_dev_original=}")
-        if layer_dev_original.type != "cuda":
+        if layer_dev_original.device != "cuda":
             layer = layers[i].to(device)
         else:
             layer = layers[i]
@@ -203,6 +208,7 @@ def quantize_spqr(model, dataloader, args, device):
         all_sublayers = find_sublayers(layer)
 
         for k, v in forward_args.items():
+            print(f'forward key = {k}')
             forward_args[k] = v.to(layer_dev) if isinstance(v, torch.Tensor) else v
 
         if args.true_sequential:
@@ -374,6 +380,7 @@ def perplexity_eval(model, testenc, args, dev):
     use_cache = model.config.use_cache
     model.config.use_cache = False
 
+    # get_inps(model, testenc, args, dev="cpu", nsamples=nsamples)
     inps, forward_args = get_inps(
         model, testenc, args, dev="cpu" if args.offload_activations else dev, nsamples=nsamples
     )
@@ -385,7 +392,7 @@ def perplexity_eval(model, testenc, args, dev):
     for i in trange(len(layers), desc="processing eval data by layer"):
         layer = layers[i].to(dev)
 
-        for j in range(nsamples):
+        for j in trange(nsamples, desc="processing samples"):
             outs[j] = layer(inps[j].to(dev).unsqueeze(0), **forward_args)[0]
             if args.offload_activations:
                 outs[j] = outs[j].cpu()
@@ -398,10 +405,10 @@ def perplexity_eval(model, testenc, args, dev):
     testenc = testenc.to(dev)
 
     nlls = []
-    for i in range(nsamples):
+    for i in trange(nsamples):
         lm_logits = get_lm_logits(inps[i].to(dev), model)
         shift_logits = lm_logits[:, :-1, :].contiguous()
-        shift_labels = testenc[:, (i * model.seqlen) : ((i + 1) * model.seqlen)][:, 1:]
+        shift_labels = testenc[:, (i * model.seqlen): ((i + 1) * model.seqlen)][:, 1:]
         loss_fct = nn.CrossEntropyLoss()
         loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
         neg_log_likelihood = loss.float() * model.seqlen
@@ -415,6 +422,89 @@ def perplexity_eval(model, testenc, args, dev):
         wandb.log({args.dataset_name: ppl.item()})
 
     model.config.use_cache = use_cache
+
+
+def generate(model, dev, model_path):
+    with torch.no_grad():
+        print("\n============ Running hello... ============")
+        torch.cuda.reset_peak_memory_stats()
+        tokenizer = LlamaTokenizer.from_pretrained(model_path, use_fast=False)
+
+        kvcache = DynamicCache()
+
+        input_str = 'hello'
+        encoded_input = tokenizer(input_str, return_tensors="pt")
+
+        initial_input = encoded_input['input_ids'].to(device=dev)
+        attention_mask = encoded_input['attention_mask'].to(device=dev)
+        position_ids = torch.arange(0, initial_input.size(1), dtype=torch.long,
+                                    device=initial_input.device).unsqueeze(0)
+
+        # Move model to device
+        model = model.to(dev)
+
+        # Initial forward pass without past_key_values
+        output = model(input_ids=initial_input, attention_mask=attention_mask, position_ids=position_ids,
+                       use_cache=True, past_key_values=kvcache)
+
+        # Extract logits and past_key_values from the output
+        logits = output.logits
+        print(logits)
+        past_key_values = output.past_key_values
+
+        # Generate the first token using greedy decoding (argmax)
+        next_token_id = logits[:, -1:].argmax(-1)
+
+        # Prepare the input for the next step by appending the generated token
+        generated_ids = torch.cat([initial_input, next_token_id], dim=-1)
+        print(tokenizer.decode(generated_ids.squeeze(), skip_special_tokens=True))
+
+        # Continue generating tokens using the KV cache
+        for _ in range(50):  # Adjust the number of tokens to generate as needed
+            output = model(generated_ids, past_key_values=past_key_values, use_cache=True)
+
+            # Extract logits and updated past_key_values
+            logits = output.logits
+            past_key_values = output.past_key_values
+
+            # Generate the next token
+            next_token_id = logits[:, -1:].argmax(-1)
+
+            # Append the generated token to the sequence
+            generated_ids = torch.cat([generated_ids, next_token_id], dim=-1)
+            print(tokenizer.decode(generated_ids.squeeze(), skip_special_tokens=True))
+
+
+def generate_better(model, dev, model_path):
+    input_str = ''
+    tokenizer = LlamaTokenizer.from_pretrained(model_path, use_fast=False)
+
+    past_key_values = DynamicCache()
+    inputs = tokenizer(input_str, return_tensors="pt").to(device=dev)
+
+    generated_ids = inputs.input_ids
+    cache_position = torch.arange(inputs.input_ids.shape[1], dtype=torch.int64, device="cuda:0")
+    max_new_tokens = 10
+
+    for _ in range(max_new_tokens):
+        input_ids = torch.zeros_like(inputs['input_ids'])
+        attention_mask = inputs['attention_mask']
+
+        outputs = model(input_ids=input_ids, attention_mask=attention_mask, cache_position=cache_position,
+                        past_key_values=past_key_values, use_cache=True)
+        # Greedily sample one next token
+        print(f'indices = {outputs.logits[:, -1:].sort().indices}')
+        next_token_ids = outputs.logits[:, -1:].argmax(-1)
+        generated_ids = torch.cat([generated_ids, next_token_ids], dim=-1)
+        print(f'generated_ids = {generated_ids}')
+        print(f'logits = {outputs.logits}')
+        # Prepare inputs for the next generation step by leaving unprocessed tokens, in our case we have only one new token
+        # and expanding attn mask for the new token, as explained above
+        attention_mask = torch.cat([attention_mask, attention_mask.new_ones((attention_mask.shape[0], 1))], dim=-1)
+        inputs = {"input_ids": next_token_ids, "attention_mask": attention_mask}
+        cache_position = cache_position[-1:] + 1  # add one more position for the next token
+
+        print(tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0])
 
 
 if __name__ == "__main__":

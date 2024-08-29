@@ -48,7 +48,8 @@ def get_model(model_path, load_quantized=None, dtype="auto"):
                 torch_dtype=dtype,
                 # local_files_only=True
             )
-    model.seqlen = 2048
+    # model.seqlen = 2048
+    model.seqlen = 4096
 
     print("Model loaded sucessfully ...")
 
@@ -174,6 +175,7 @@ def layer_weight_dequantization(quantized_params_dict):
     block_start_iter = block_start_iter
     current_ind = 0
 
+    first = True
     for block_start in block_start_iter:
         block_end = min(block_start + blocksize, in_dim)
         for column_index in range(block_start, block_end):
@@ -193,6 +195,11 @@ def layer_weight_dequantization(quantized_params_dict):
                     dequantize_zeros = quantized_params_dict["quant_layer_zeros"][current_ind]
                     dequantize_scale = quantized_params_dict["quant_layer_scale"][current_ind]
                 current_ind += 1
+
+            if first:
+                _w = quantized_params_dict["quant_weights"][:16, column_index]
+                first = False
+                print(quantized_params_dict["quant_weights"][:16, :16])
 
             reconstructed_weight[:, column_index] = dequantize(
                 quantized_params_dict["quant_weights"][:, column_index].unsqueeze(1),
