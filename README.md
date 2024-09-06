@@ -133,6 +133,16 @@ Performance and runtime notes:
 * With enough spare GPU memory, one can raise batch size to accelerate evaluation process.
 
 
+## Inference
+
+This repository also contains an efficient CUDA kernel implementation of the 
+SpQR matvec. The file `inference_demo.py` 
+
+In order to run the inference 
+
+The file `inference_demo.py`
+
+
 ## Citation
 ```
 @misc{dettmers2023spqr,

@@ -29,9 +29,8 @@ class Load(Enum):
     CPU_DEQUANTIZE = 1
     CUDA = 2
     CPU = 3
-    MIXED = 4
-    QUANTIZE_NEAREST = 5
-    CPU_DEQUANTIZE_ORIGINAL = 6
+    QUANTIZE_NEAREST = 4
+    CPU_DEQUANTIZE_ORIGINAL = 5
 
 
 @torch.no_grad()
@@ -200,24 +199,6 @@ class LLama:
             elif flag == Load.CUDA:
                 spqr_module.name = p
                 setattr(mod, name, spqr_module)
-            elif flag == Load.MIXED:
-                spqr_module.name = p
-                if '00' not in p:  # \
-                    # '01' not in p and \
-                    # '04' not in p and \
-                    # '07' not in p and \
-                    # '08' not in p and \
-                    # '18' not in p and \
-                    # '29' not in p and \
-                    # '30' not in p and \
-                    # '31' not in p:
-                    setattr(mod, name, spqr_module)
-                else:
-                    ln = nn.Linear(in_features=spqr_module.n, out_features=spqr_module.m, dtype=torch.half)
-                    deq_w = spqr.spqr_dequantize_compressed(spqr_module).half()
-                    deq_w = torch.randn_like(deq_w)
-                    ln.weight = torch.nn.Parameter(deq_w, requires_grad=False)
-                    setattr(mod, name, ln)
 
     def linear_to_spqr(self, model, quantized_model_path, device):
         weights_to_quantize = []
