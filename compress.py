@@ -10,19 +10,12 @@ import modelutils
 from torchvision.transforms import functional as F
 
 
-def sanity_check(compressed_path: str, uncompressed_path: str):
-    """
-    Check if the original matrix matches
-    :param compressed_path:
-    :param uncompressed_path:
-    :return:
-    """
-    return True
-
 
 if __name__ == '__main__':
     uncompressed_model_path = sys.argv[1]
     compressed_model_path = sys.argv[2]
+
+    visualize_errors = False
 
     os.makedirs(uncompressed_model_path, exist_ok=True)
 
@@ -45,6 +38,7 @@ if __name__ == '__main__':
         layers = os.listdir(folder)
         for tensor_name in layers:
             tensor_path = os.path.join(folder, tensor_name)
+            print(f'INFO: Converting layer {layer_id}  tensor name = {tensor_name}')
 
             # Load the original SPQR format.
             spqr_host = inference.load_original_tensor(tensor_path, model_args)
@@ -56,7 +50,12 @@ if __name__ == '__main__':
             deq_w_c = inference.spqr_dequantize_compressed(spqr_module).half()
             deq_w_o = modelutils.layer_weight_dequantization(m).half()
 
-            if not torch.allclose(deq_w_c, deq_w_o, atol=2e-1, rtol=1e-1):
+            max_abs_error = (deq_w_c - deq_w_o).abs()
+            cnt = (max_abs_error != 0).sum()
+
+            print(f'INFO: Maximum absolute conversion error: {max_abs_error} cnt {cnt} nnz {spqr_module.nnz}')
+
+            if visualize_errors:
                 d = (deq_w_c - deq_w_o).abs()
                 import matplotlib.pyplot as plt;
 
@@ -64,7 +63,6 @@ if __name__ == '__main__':
                 vis = torch.nn.functional.max_pool2d(vis, kernel_size=4, stride=4)
                 vis = vis.squeeze()
                 plt.imshow(vis.cpu().numpy()); plt.axis('off'); plt.show()
-                print(f'WARNING: Missmatch between compressed and uncompressed version of tensors at layer = {layer_id}  tensor name = {tensor_name}')
 
             tensor_path = f'{os.path.join(output_folder, tensor_name)}.pth'
 
