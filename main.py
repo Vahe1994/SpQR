@@ -84,7 +84,7 @@ def quantize_model(model, args, device):
     else:
         print("Loading data ...")
         dataloader = get_loaders(
-            args.dataset,
+            args.dataset_name,
             nsamples=args.nsamples,
             seed=args.seed,
             model_path=args.model_path,
@@ -417,9 +417,6 @@ def perplexity_eval(model, testenc, args, dev):
     print(f"\n{args.dataset_name} perplexity = {ppl.item():.4f}\n")
 
     get_model_head(model).to(torch.device("cpu"))
-
-    if args.wandb:
-        wandb.log({args.dataset_name: ppl.item()})
 
     model.config.use_cache = use_cache
 

@@ -1,10 +1,11 @@
 import os
 import sys
-from enum import Enum
 
 import torch
 import torch.nn as nn
+from tqdm import trange
 
+from datautils import get_loaders
 from inference.module import LLama, Mode
 from modelutils import get_lm_logits
 
@@ -97,23 +98,17 @@ def get_inps(model, data_iterable, nsamples, seqlen=4096):
 
 
 @torch.no_grad()
-def perplexity_eval(model, testenc, randomize, tokenizer):
-    seqlen = testenc.shape[0]
+def perplexity_eval(model, testenc, randomize, tokenizer, dataset_name, nsamples):
+    seqlen = 4096
     dev = model.device
-    nsamples = 1
 
-    # use_cache = True
-    # model.config.use_cache = False
-
-    # get_inps(model, testenc, args, dev="cpu", nsamples=nsamples)
     inps, forward_args = get_inps(
-        model, testenc, 1, seqlen
+        model, testenc, nsamples, seqlen
     )
 
     if randomize:
         inps = torch.randn_like(inps)
 
-    print(f'inps = {inps}')
 
     outs = torch.zeros_like(inps)
     for k, v in forward_args.items():
@@ -128,46 +123,41 @@ def perplexity_eval(model, testenc, randomize, tokenizer):
         inps, outs = outs, inps
 
     for i in range(nsamples):
-        print(f'final layer = {inps[i].to(dev)}')
         lm_logits = get_lm_logits(inps[i].to(dev), model)
-        if lm_logits.isneginf().any() or lm_logits.isinf().any() or lm_logits.isnan().any():
-            print('\n====================== HUGE ERROR =====================\n')
-        print(f'logits={lm_logits.argmax(-1)}')
         print(tokenizer.batch_decode(lm_logits.argmax(-1), skip_special_tokens=True)[0])
+
+    testenc = testenc.to(dev)
+
+    nlls = []
+    for i in trange(nsamples):
+        lm_logits = get_lm_logits(inps[i].to(dev), model)
+        shift_logits = lm_logits[:, :-1, :].contiguous()
+        shift_labels = testenc[:, (i * seqlen): ((i + 1) * seqlen)][:, 1:]
+        loss_fct = nn.CrossEntropyLoss()
+        loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+        neg_log_likelihood = loss.float() * seqlen
+        nlls.append(neg_log_likelihood)
+    ppl = torch.exp(torch.stack(nlls).sum() / (nsamples * seqlen))
+    print(f"\n{dataset_name} perplexity = {ppl.item():.4f}\n")
+
 
 
 if __name__ == "__main__":
     pretrained_model_path = sys.argv[1]
     uncompressed_model_path = sys.argv[2]
-    compressed_model_path = sys.argv[3] # '/home/elvircrn/CLionProjects/spqr_kernel/data/output_float16' # sys.argv[2]
+    compressed_model_path = sys.argv[3]
     calibration_dataset = sys.argv[4]
     dev = sys.argv[5]
+
+
+    configs = [Mode.CUDA]
+
     with torch.no_grad():
-        p = Mode.CPU if dev == 'cpu' else Mode.CUDA
-        model = LLama(pretrained_model_path, compressed_model_path, p)
-
-        encoded_hello = model.tokenizer('Hello', return_tensors="pt").to(device=model.device).input_ids
-
-        encoded_goodbye = model.tokenizer('Goodbye', return_tensors="pt").to(device=model.device).input_ids
-
-        os.system('clear')
-        text = input()
-        model.generate(text)
-
-        # perplexity_eval(model.model, encoded_hello, False, model.tokenizer)
-
-        # perplexity_eval(model.model, encoded_goodbye, False)
-
-        # perplexity_eval(model.model, encoded_hello, True)
-        # perplexity_eval(model.model, encoded_goodbye, True)
-
-# if __name__ == "__main__":
-#     pretrained_model_path = sys.argv[1]
-#     compressed_model_path = sys.argv[2]
-#     calibration_dataset = sys.argv[3]
-#
-#     with torch.no_grad():
-#         model = LLama(pretrained_model_path, compressed_model_path, Load.CUDA)
-#         model.generate('Hello')
-#
-#     plt.show()
+        for p in configs:
+            model = LLama(pretrained_model_path, compressed_model_path, p)
+            # text = 'The ingredients needed for banana bread are as follows: '
+            os.system('clear')
+            while True:
+                text = input()
+                generated_text = model.generate(text)
+                print(f'{generated_text}')

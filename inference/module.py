@@ -160,7 +160,7 @@ class LLama:
         # generated_ids = torch.flip(generated_ids, [0, 1])
 
         cache_position = torch.arange(inputs.input_ids.shape[1], dtype=torch.int64, device=self.device)
-        max_new_tokens = 100
+        max_new_tokens = 15
 
         for _ in range(max_new_tokens):
             input_ids = inputs['input_ids']
@@ -179,5 +179,4 @@ class LLama:
             inputs = {"input_ids": next_token_ids, "attention_mask": attention_mask}
 
             cache_position = cache_position[-1:] + 1  # add one more position for the next token
-            os.system('clear')
-            print(self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0])
+        return self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
