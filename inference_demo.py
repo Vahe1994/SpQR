@@ -155,7 +155,6 @@ if __name__ == "__main__":
     with torch.no_grad():
         for p in configs:
             model = LLama(pretrained_model_path, compressed_model_path, p)
-            # text = 'The ingredients needed for banana bread are as follows: '
             os.system('clear')
             while True:
                 text = input()
