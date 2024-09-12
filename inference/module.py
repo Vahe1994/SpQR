@@ -72,7 +72,8 @@ class LLama:
             spqr_module: inference.SPQRModule = inference.load_compressed_tensor(p)
             if self.flag == Mode.CPU_DEQUANTIZE:
                 ln = nn.Linear(in_features=spqr_module.n, out_features=spqr_module.m, dtype=torch.float32)
-                ln.weight = torch.nn.Parameter(inference.spqr_dequantize_compressed(spqr_module).float(), requires_grad=False)
+                ln.weight = torch.nn.Parameter(inference.spqr_dequantize_compressed(spqr_module).float(),
+                                               requires_grad=False)
                 setattr(mod, name, ln)
             elif self.flag == Mode.CUDA:
                 spqr_module.name = p
@@ -151,16 +152,13 @@ class LLama:
         self.tokenizer = LlamaTokenizer.from_pretrained(pretrained_model_path, use_fast=False)
         self.tokenizer.pad_token = self.tokenizer.eos_token
 
-    def generate(self, input_str):
+    def generate(self, input_str, max_new_tokens):
         past_key_values = DynamicCache()
         inputs = self.tokenizer(input_str, return_tensors="pt").to(device=self.device)
 
-        # generated_ids = inputs.input_ids
         generated_ids = inputs.input_ids
-        # generated_ids = torch.flip(generated_ids, [0, 1])
 
         cache_position = torch.arange(inputs.input_ids.shape[1], dtype=torch.int64, device=self.device)
-        max_new_tokens = 15
 
         for _ in range(max_new_tokens):
             input_ids = inputs['input_ids']
@@ -169,11 +167,8 @@ class LLama:
             outputs = self.model(input_ids=input_ids, attention_mask=attention_mask, cache_position=cache_position,
                                  past_key_values=past_key_values, use_cache=True)
 
-            # Greedily sample one next token
             next_token_ids = outputs.logits[:, -1:].argmax(-1)
             generated_ids = torch.cat([generated_ids, next_token_ids], dim=-1)
-
-            # generated_ids = torch.flip(generated_ids, [0, 1])
 
             attention_mask = torch.cat([attention_mask, attention_mask.new_ones((attention_mask.shape[0], 1))], dim=-1)
             inputs = {"input_ids": next_token_ids, "attention_mask": attention_mask}

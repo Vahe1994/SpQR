@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 from tqdm import trange
 
+from datautils import get_loaders
 from inference.module import LLama, Mode
 from modelutils import get_lm_logits
 
@@ -148,13 +149,7 @@ if __name__ == "__main__":
     calibration_dataset = sys.argv[4]
     dev = sys.argv[5]
 
-    configs = [Mode.CUDA]
+    m = Mode.CUDA
 
     with torch.no_grad():
-        for p in configs:
-            model = LLama(pretrained_model_path, compressed_model_path, p)
-            os.system('clear')
-            while True:
-                text = input()
-                generated_text = model.generate(text, max_new_tokens=15)
-                print(f'{generated_text}')
+        model = LLama(pretrained_model_path, compressed_model_path, m)
