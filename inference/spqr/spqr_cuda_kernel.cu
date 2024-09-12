@@ -428,18 +428,6 @@ __device__ __forceinline__ half add_and_accum(const half2 &a, const half2 &b) {
   return __hadd(r.x, r.y);
 }
 
-#define DBG 0
-
-#if DBG
-#define DEBUG_PARAMS_FP32 , nullptr, nullptr, nullptr
-#define DEBUG_PARAMS_FP16 , dbg_deq_w.get(), dbg_first.get(), dbg_second.get()
-#define DEBUG_PARAMS_DECL , half *dbg_deq_w, half *dbg_first, half *dbg_second
-#else
-#define DEBUG_PARAMS_FP32
-#define DEBUG_PARAMS_FP16
-#define DEBUG_PARAMS_DECL
-#endif
-
 //
 template <int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH,
           int A, class Acc_t, class W_t /* = uint64_t */>
@@ -455,9 +443,7 @@ __global__ void spqr_quantized_matvec_fused(
     const u32 *col_vals,
     // extra global storage for barrier synchronization
     // Output
-    half *__restrict__ y
-        // Debug
-        DEBUG_PARAMS_DECL) {
+    half *__restrict__ y) {
 #if 0
   extern __shared__ half _s_x[];
 
@@ -549,16 +535,6 @@ __global__ void spqr_quantized_matvec_fused(
   }
 
   const int addr_per_row = MAX_ADDR_PER_ROW;
-#if 0
-     UPDIV(
-     // Weight storage
-     // min(BETA2, prob_n - subtile_id * BETA2) * BITS +
-     BETA2, * BITS +
-         // Weight + Scale
-         2 * BITS,
-     // u32 storage
-     32);
-#endif
 
   __syncthreads();
   for (int i = subtile_id;; i += num_spqr_tiles_per_iteration) {
@@ -589,12 +565,6 @@ __global__ void spqr_quantized_matvec_fused(
       _weight_bits[0] =
           raw_data[MAX_ADDR_PER_TILE * tile_id + row_pos * addr_per_row];
 
-#if 0
-     printf("threadIdx.x = %d reading addr = %d got = %lu\n", threadIdx.x,
-            MAX_ADDR_PER_TILE * tile_id + row_pos * addr_per_row,
-            _weight_bits[0]);
-#endif
-
       __syncthreads();
 
       if (!finished) {
@@ -613,32 +583,6 @@ __global__ void spqr_quantized_matvec_fused(
 
         half2 ws2 = __half2half2(first_order_dequantized.x);
         half2 wz2 = __half2half2(first_order_dequantized.y);
-
-#if 0
-       if (threadIdx.x == 16)
-                 printf("GPU threadidx.x = %d s = %d z = %d dequantized s z = %f %f "
-                        "given row_bit = %lu\n",
-                        threadIdx.x, s, z, __half2float(first_order_dequantized.x),
-                        __half2float(first_order_dequantized.y), row_bits);
-       printf("threadId.x = %d GPU second order = %f %f %f %f\n", threadIdx.x,
-              __half2float(iter_second_order.get_sws2().x),
-              __half2float(iter_second_order.get_swz2().x),
-              __half2float(iter_second_order.get_sws2().y),
-              __half2float(iter_second_order.get_swz2().y));
-#endif
-
-#if DBG
-        if constexpr (!std::is_same<Acc_t, float>::value) {
-          u32 idx = global_tile_id * BETA1 * 2 + 2 * row_pos;
-          dbg_first[idx] = first_order_quantized.x;
-          dbg_first[idx + 1] = first_order_quantized.y;
-
-          dbg_second[4 * global_tile_id + 0] = iter_second_order.get_sws2().x;
-          dbg_second[4 * global_tile_id + 1] = iter_second_order.get_sws2().y;
-          dbg_second[4 * global_tile_id + 2] = iter_second_order.get_swz2().x;
-          dbg_second[4 * global_tile_id + 3] = iter_second_order.get_swz2().y;
-        }
-#endif
 
         // Assumes that the number of columns is disible by 2.
         unsigned int iterations_to_make =
@@ -782,6 +726,7 @@ __global__ void spqr_quantized_matvec_fused(
 
     __syncthreads();
 #endif
+
     if (threadIdx.x < BETA1 / 2) {
       Vector_t res = s_y_vectorized[threadIdx.x];
 
@@ -813,9 +758,7 @@ __global__ void spqr_quantized_matvec(
     const half *__restrict__ X,
     // Output
     float *__restrict__ y, half *__restrict__ y_fp16,
-    bool dense_only
-        // Debug
-        DEBUG_PARAMS_DECL) {
+    bool dense_only) {
   /*
            ┌─────────────┐ ┌─┐   ┌─┐
    beta1   │   block 0   │ │ │   │ │
@@ -915,20 +858,8 @@ __global__ void spqr_quantized_matvec(
       .num_participating_threads = _num_participating_threads};
 
   const int addr_per_row = MAX_ADDR_PER_ROW;
-#if 0
-     UPDIV(
-     // Weight storage
-     // min(BETA2, prob_n - subtile_id * BETA2) * BITS +
-     BETA2, * BITS +
-         // Weight + Scale
-         2 * BITS,
-     // u32 storage
-     32);
-#endif
 
   for (int i = subtile_id;; i += num_spqr_tiles_per_iteration) {
-    u32 global_tile_id = blockId * num_spqr_tiles_per_cuda_block + i;
-
     // TODO: It seems that it's important that this remans a syncthread instead
     // of a syncwarp for some reason...
     __syncthreads();
@@ -1035,11 +966,6 @@ __global__ void spqr_quantized_matvec(
     }
   }
   __syncthreads();
-
-  //  int _lock;
-  //  do {
-  //    asm volatile("ld.global.nc.s32 %0, [%1];" : "=r"(_lock) : "l"(lock));
-  //  } while (_lock != prob_m);
 
   // At this point, the result is in s_y.
   if (threadIdx.x < BETA1) {
@@ -1502,40 +1428,6 @@ const int ERR_KERN_SHAPE = 2;
     }                                                                          \
   }
 
-int preprocess_sparse(int m, int n,
-                      // Outliers
-                      void *values,
-                      // 16-bit
-                      void *row_offsets, void *col_ptr,
-                      // 16-bit
-                      void *X, void *Y, int nnz, void *cusparse_buffer) {
-  half alpha = __float2half(1.f);
-  half beta = __float2half(1.f);
-
-  cusparseHandle_t handle = nullptr;
-  cusparseSpMatDescr_t matA;
-  cusparseDnVecDescr_t vecX, vecY;
-  void *dBuffer = nullptr;
-  size_t bufferSize = 0;
-  CHECK_CUSPARSE(cusparseCreate(&handle));
-  // Create dense vector X
-  CHECK_CUSPARSE(cusparseCreateDnVec(&vecX, n, X, CUDA_R_32F))
-  // Create dense vector y
-  CHECK_CUSPARSE(cusparseCreateDnVec(&vecY, m, Y, CUDA_R_32F))
-
-  CHECK_CUSPARSE(cusparseCreateCsr(
-      &matA, m, n, nnz, row_offsets, col_ptr, values, CUSPARSE_INDEX_32I,
-      CUSPARSE_INDEX_32I, CUSPARSE_INDEX_BASE_ZERO, CUDA_R_32F))
-
-  // Create sparse matrix A in CSR format
-  // allocate an external buffer if needed
-  CHECK_CUSPARSE(cusparseSpMV_bufferSize(
-      handle, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, matA, vecX, &beta, vecY,
-      CUDA_R_32F, CUSPARSE_SPMV_ALG_DEFAULT, &bufferSize));
-  CHECK_CUDA(cudaMalloc(&dBuffer, bufferSize));
-  return 0;
-}
-
 static constexpr int DENSE_ONLY = 0;
 static constexpr int NAIVE_SPARSE = 1;
 static constexpr int DENSE_NAIVE_SPARSE = 2;
@@ -1561,193 +1453,6 @@ union Features {
 };
 
 #include <iostream>
-namespace gpu {
-// assert macro
-#ifndef NDEBUG
-#define gpu__assert(condition, message)                                        \
-  do {                                                                         \
-    if (!(condition)) {                                                        \
-      std::cerr << "Assertion `" #condition "` failed in " << __FILE__         \
-                << " line " << __LINE__ << ": " << message << std::endl;       \
-      /*std::exit(EXIT_FAILURE); */ throw "Assertion error!";                  \
-    }                                                                          \
-  } while (false)
-#else
-#define gpu__assert(condition, message)                                        \
-  do {                                                                         \
-  } while (false)
-#endif
-
-// general types
-typedef unsigned int ref_index;
-typedef unsigned int memcount_t;
-typedef unsigned int index_t;
-typedef long count_t;
-
-namespace internal {
-static std::vector<count_t> refCounts;
-static std::vector<index_t> freeIndexes;
-
-index_t newReference() {
-  if (!freeIndexes.empty()) {
-    index_t r = freeIndexes[freeIndexes.size() - 1];
-    freeIndexes.pop_back();
-    refCounts[r] = 1; // init the new reference
-    return r;
-  }
-  index_t ref_id = refCounts.size();
-  refCounts.push_back(1); // init the new reference
-  return ref_id;
-}
-
-void freeReference(index_t ref_id, void *ptr, void *h_ptr) {
-  count_t newCount = --refCounts[ref_id];
-  gpu__assert(newCount >= 0, "Count is negative!");
-  if (newCount == 0) {
-    // we should free it now
-    cudaFree(ptr);
-    // and make the reference index available
-    freeIndexes.push_back(ref_id);
-    // std::cout << "Free indexes: " << freeIndexes.size() << std::endl;
-    delete[] h_ptr;
-  }
-}
-
-// return the number of references which are still alive (entries, not their
-// count)
-count_t countReferences() {
-  return count_t(refCounts.size()) - freeIndexes.size();
-}
-} // namespace internal
-
-template <class S> class CudaMemory {
-public:
-  // template types
-  typedef CudaMemory<S> this_type;
-  typedef S scalar_type;
-  S *h_ptr;
-
-  // constructors
-
-  CudaMemory() : count(0), d_ptr(0), ref_id(0), h_ptr(nullptr) {
-    // std::cout << "CudaMemory()" << std::endl;
-  }
-
-  CudaMemory(memcount_t c) : count(0), d_ptr(0), ref_id(0) {
-    //     std::cout << "CudaMemory(" << c << ") - ";
-    // trying to allocate the data
-    if (cudaMalloc((void **)&d_ptr, sizeof(scalar_type) * c) == cudaSuccess) {
-      // now we can do something
-      count = c;
-      ref_id = internal::newReference();
-      // std::cout << "worked!" << std::endl;
-    } else {
-      printf("cuMalloc error!");
-      exit(1);
-    }
-  }
-  // copy
-
-  CudaMemory(const CudaMemory::this_type &orig)
-      : count(orig.count), d_ptr(orig.d_ptr), ref_id(orig.ref_id) {
-    // std::cout << "Copying (size=" << count << ", ref=" << orig.ref_count() <<
-    // ")" << std::endl;
-    //     update reference count
-    if (count > 0) {
-      // let's increment the count
-      ++internal::refCounts[ref_id];
-    }
-    // std::cout << "... now ref=" << ref_count() << std::endl;
-  }
-
-  this_type &operator=(const this_type &other) {
-    // std::cout << "Assigning: size=" << other.count << std::endl;
-    // free current content
-    if (count > 0) {
-      internal::freeReference(ref_id, (void *)d_ptr, (void *)h_ptr);
-      count = 0;
-    }
-    // copy new content
-    count = other.count;
-    d_ptr = other.d_ptr;
-    ref_id = other.ref_id;
-    // update reference count
-    if (count > 0) {
-      ++internal::refCounts[ref_id];
-    }
-    // std::cout << "... now ref=" << ref_count() << std::endl;
-  }
-
-  // free
-
-  ~CudaMemory() {
-    return;
-    // std::cout << "Deleting for count=" << count << std::endl;
-    // free content
-    if (count > 0) {
-      internal::freeReference(ref_id, (void *)d_ptr, (void *)h_ptr);
-    }
-  }
-
-  // transfers
-
-  void copyFrom(S *h_ptr) {
-    gpu__assert(count > 0, "Nothing to copy!");
-    cudaMemcpy(d_ptr, h_ptr, sizeof(scalar_type) * count,
-               cudaMemcpyHostToDevice);
-  }
-
-  void copyTo(S *h_ptr) {
-    gpu__assert(count > 0, "Nothing to copy!");
-    cudaMemcpy(h_ptr, d_ptr, sizeof(scalar_type) * count,
-               cudaMemcpyDeviceToHost);
-  }
-
-  void to_host() {
-    h_ptr = new S[count];
-    copyTo(h_ptr);
-  }
-
-  // overloading i/o operators
-  template <typename T> friend this_type &operator<<(this_type &mem, const T &);
-  template <typename T> friend this_type &operator>>(this_type &mem, T &);
-
-  // getters
-
-  bool empty() const { return count == 0; }
-
-  scalar_type *get() { return d_ptr; }
-  scalar_type *get_host() { return h_ptr; }
-
-  count_t ref_count() const {
-    if (count > 0)
-      return internal::refCounts[ref_id];
-    else
-      return 0;
-  }
-
-  memcount_t size() const { return count; }
-
-  // implicit conversion
-
-  /* operator scalar_type*() {
-      return d_ptr;
-  } */
-private:
-  memcount_t count;
-  scalar_type *d_ptr;
-  ref_index ref_id;
-};
-
-// names
-typedef CudaMemory<half> CudaHalfMemory;
-typedef CudaMemory<char> CudaCharMemory;
-typedef CudaMemory<int> CudaIntMemory;
-typedef CudaMemory<long> CudaLongMemory;
-typedef CudaMemory<float> CudaFloatMemory;
-typedef CudaMemory<double> CudaDoubleMemory;
-
-} // namespace gpu
 
 int spqr_matvec(
     // W and meta
@@ -1780,17 +1485,13 @@ int spqr_matvec(
     cudaStreamCreate(&stream_sparse0);
   }
 
-  int tot_m = prob_m;
-  int tot_m_blocks = UPDIV(tot_m, 16);
-  int pad = 16 * tot_m_blocks - tot_m;
-
   const uint64_t *raw_data = (const uint64_t *)_raw_data;
   const half *X_ptr = (const half *)X;
   const int *row_offsets_ptr = (const int *)row_offsets;
   const short *row_ids_ptr = (short *)row_ids;
   half *y_ptr = (half *)y;
-  const SecondOrder *second_order_data_ptr =
-      (const SecondOrder *)second_order_data;
+  const auto *second_order_data_ptr =
+      static_cast<const SecondOrder *>(second_order_data);
   const u32 *col_vals_ptr = (const u32 *)col_vals;
 
   float *d_yfp32;
@@ -1798,47 +1499,14 @@ int spqr_matvec(
   cudaMemset(d_yfp32, 0, sizeof(float) * prob_m);
   cudaDeviceSynchronize();
 
-#if 0
- auto tile_row_offsets_ptr = (const int *)tile_row_offsets;
- auto tile_col_ids_ptr = (const short *)tile_col_ids;
- auto tile_nnzs_ptr = (const int *)tile_nnzs;
- auto tile_data_ptr = (unsigned int *)tile_data;
-#endif
-
-  cusparseHandle_t handle = nullptr;
-  cusparseSpMatDescr_t matA;
-  cusparseDnVecDescr_t vecX, vecY;
-  void *dBuffer = nullptr;
-  size_t bufferSize = 0;
-  half alpha = __float2half(1.f);
-  half beta = __float2half(1.f);
-
   int ret = 0;
 
-#if DBG
-  gpu::CudaHalfMemory dbg_deq_w(buffer_size);
-  gpu::CudaHalfMemory dbg_first(buffer_size);
-  gpu::CudaHalfMemory dbg_second(buffer_size);
-#endif
-
-  Timer *timer;
+  Timer *timer{};
   if (measurements) {
     timer = new Timer(stream);
     timer->start();
   }
 
-  int pad_m = updiv(prob_m, beta1) * beta1;
-  int pad_n = updiv(prob_n, beta2) * beta2;
-
-  int tile_m = updiv(prob_m, beta1);
-  int tile_n = updiv(prob_n, beta2);
-
-  int buffer_size = pad_m * pad_n;
-
-  constexpr int BYTE = 8;
-  constexpr int VALS_PER_ADDR = (sizeof(int) * BYTE) / 3;
-  constexpr int WEIGHT_COUNT = UPDIV((16 * 16), VALS_PER_ADDR);
-  constexpr int SHARED_MEM_SIZE = (16 + 16 + 16 + WEIGHT_COUNT) * sizeof(int);
   constexpr int BLOCK_HEIGHT = 1;
   constexpr int BLOCK_WIDTH = 8;
   spqr_quantized_matvec<3, 16, 16, BLOCK_HEIGHT, BLOCK_WIDTH, 32, float,
@@ -1846,14 +1514,7 @@ int spqr_matvec(
       <<<dim3(updiv(prob_m, 16 * BLOCK_HEIGHT), 1, 1),
          dim3(__min(updiv(prob_n, 16), BLOCK_WIDTH) * 16, 1, 1), 0, stream>>>(
           prob_m, prob_n, raw_data, second_order_data_ptr, X_ptr, d_yfp32,
-          y_ptr, dense_only DEBUG_PARAMS_FP32);
-
-  if (ret) {
-    cudaFree(d_yfp32);
-    cudaStreamDestroy(stream_sparse0);
-    cudaStreamDestroy(stream_sparse);
-    return ret;
-  }
+          y_ptr, dense_only);
 
   if (!dense_only) {
     CHECK_CUDA(cudaDeviceSynchronize());
@@ -1891,7 +1552,7 @@ int spqr_matvec(
   }
 
   if (measurements) {
-    ((float *)measurements)[0] = timer->end();
+    static_cast<float *>(measurements)[0] = timer->end();
     delete timer;
   }
 

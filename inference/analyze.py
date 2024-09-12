@@ -27,7 +27,6 @@ def densities():
     base_path = sys.argv[1]
     folders = os.listdir(base_path)
     args_path = os.path.join(base_path, 'args.pt')
-    args = ProblemArgs().load_args(args_path)
 
     fig.update_yaxes(type='log')
     fig.update_layout(
@@ -42,8 +41,8 @@ def densities():
         if not os.path.isdir(folder):
             continue
         for p in os.listdir(folder):
-            tensor_name = f'L{layer_id} {p}'
-            prob = Problem(os.path.join(folder, p), args, f'{layer_id}_{p}', device=device)
+            tensor_name = f'L{layer_id}_{p}'
+            prob = Problem(os.path.join(folder, p), device=device, randomize_sparse=False, sort_nnz=True, generate_tiles=False)
 
             r = 1
             spqr_host, spqr_device = (
