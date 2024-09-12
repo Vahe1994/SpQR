@@ -108,9 +108,11 @@ __forceinline__ __device__ Scalar_t dequantize(Bit_t q, Scalar_t s,
 
 #define CUINLINE __forceinline__
 
-#define UPDIV(X, Y) (((X) + (Y) - 1) / (Y))
+#define UPDIV(X, Y) (((X) + (Y)-1) / (Y))
 
-[[nodiscard]] __device__ __host__ CUINLINE int updiv(int x, int y) { return (x + y - 1) / y; }
+[[nodiscard]] __device__ __host__ CUINLINE int updiv(int x, int y) {
+  return (x + y - 1) / y;
+}
 
 enum class ThreadDim { X, Y, Z, XY, YX, YZ, XYZ, YZX };
 
@@ -149,7 +151,8 @@ CUINLINE __device__ __host__ unsigned int get_thread_id() {
   } else if constexpr (t == ThreadDim::YZ) {
     return threadIdx.y * blockDim.z + threadIdx.z;
   } else if constexpr (t == ThreadDim::XYZ) {
-    return threadIdx.x * blockDim.x * blockDim.y + (threadIdx.y * blockDim.z + threadIdx.z);
+    return threadIdx.x * blockDim.x * blockDim.y +
+           (threadIdx.y * blockDim.z + threadIdx.z);
   } else if constexpr (t == ThreadDim::YZX) {
     return (threadIdx.y * blockDim.z + threadIdx.z) * blockDim.x + threadIdx.x;
   } else {
@@ -809,8 +812,7 @@ __global__ void spqr_quantized_matvec(
     const SecondOrder *__restrict__ second_order_data,
     const half *__restrict__ X,
     // Output
-    float *__restrict__ y,
-    half *__restrict__ y_fp16,
+    float *__restrict__ y, half *__restrict__ y_fp16,
     bool dense_only
         // Debug
         DEBUG_PARAMS_DECL) {
@@ -1042,7 +1044,8 @@ __global__ void spqr_quantized_matvec(
   // At this point, the result is in s_y.
   if (threadIdx.x < BETA1) {
     if (dense_only) {
-      y_fp16[blockIdx.x * BETA1 + threadIdx.x] = __float2half(s_y_scalar[threadIdx.x]);
+      y_fp16[blockIdx.x * BETA1 + threadIdx.x] =
+          __float2half(s_y_scalar[threadIdx.x]);
     } else {
       y[blockIdx.x * BETA1 + threadIdx.x] = s_y_scalar[threadIdx.x];
     }
@@ -1128,24 +1131,21 @@ __global__ void spmv_naive_mixed(uint32_t m, uint32_t n,
   y[row_id] = __hadd(sum, y[row_id]);
 }
 
-DEVICE_INLINE u16 get_col(u32 m) {
-  return m & ((1u << 16u) - 1u);
-}
+DEVICE_INLINE u16 get_col(u32 m) { return m & ((1u << 16u) - 1u); }
 
 DEVICE_INLINE half get_val(u32 m) {
   u16 _v = m >> 16u;
-  half v = *reinterpret_cast<half*>(&_v);
+  half v = *reinterpret_cast<half *>(&_v);
   return v;
 }
 
 template <class Acc_t>
-__global__ void spmv_naive_shared_sorted(uint32_t m, uint32_t n,
-                                         const short *__restrict__ row_ids,
-                                         const int *__restrict__ row_offsets,
-                                         const u32 *col_vals,
-                                         const half *__restrict__ x,
-                                         half *__restrict__ y,
-                                         float *__restrict__ y_fp32) {
+__global__ void
+spmv_naive_shared_sorted(uint32_t m, uint32_t n,
+                         const short *__restrict__ row_ids,
+                         const int *__restrict__ row_offsets,
+                         const u32 *col_vals, const half *__restrict__ x,
+                         half *__restrict__ y, float *__restrict__ y_fp32) {
   extern __shared__ half s_x[];
   __shared__ u32 s_row_offsets[9];
   const half2 *x2 = reinterpret_cast<const half2 *>(x);
@@ -1189,7 +1189,6 @@ __global__ void spmv_naive_shared_sorted(uint32_t m, uint32_t n,
     u16 c = get_col(colval);
     half v_fp16 = get_val(colval);
 
-
     auto x_fp16 = s_x[c];
 #define h2f __half2float
     if constexpr (is_fp32<Acc_t>()) {
@@ -1208,7 +1207,7 @@ __global__ void spmv_naive_shared_sorted(uint32_t m, uint32_t n,
 
   if (threadIdx.x == 0) {
     if constexpr (is_fp32<Acc_t>()) {
-      y[row_id] =__float2half(sum + y_fp32[row_id]);
+      y[row_id] = __float2half(sum + y_fp32[row_id]);
     }
   }
 }
@@ -1250,7 +1249,6 @@ __global__ void spmv_naive_sparse_sorted(int offset, uint32_t m, uint32_t n,
       sum = __hfma(x_fp16, v_fp16, sum);
     }
   }
-
 
   y[row_id] = __float2half(sum + y_fp32[row_id]);
 }
@@ -1771,7 +1769,6 @@ int spqr_matvec(
     return 0;
   }
 
-
   cudaStream_t stream_sparse;
   cudaStream_t stream_sparse0;
   Features features{._ = feature_flag};
@@ -1844,8 +1841,12 @@ int spqr_matvec(
   constexpr int SHARED_MEM_SIZE = (16 + 16 + 16 + WEIGHT_COUNT) * sizeof(int);
   constexpr int BLOCK_HEIGHT = 1;
   constexpr int BLOCK_WIDTH = 8;
-  spqr_quantized_matvec<3, 16, 16, BLOCK_HEIGHT, BLOCK_WIDTH, 32, float, uint64_t> <<<dim3(updiv(prob_m, 16 * BLOCK_HEIGHT), 1, 1), dim3(__min(updiv(prob_n, 16), BLOCK_WIDTH) * 16, 1, 1), 0, stream>>>( prob_m, prob_n, raw_data, second_order_data_ptr, X_ptr, d_yfp32, y_ptr, dense_only DEBUG_PARAMS_FP32);
-
+  spqr_quantized_matvec<3, 16, 16, BLOCK_HEIGHT, BLOCK_WIDTH, 32, float,
+                        uint64_t>
+      <<<dim3(updiv(prob_m, 16 * BLOCK_HEIGHT), 1, 1),
+         dim3(__min(updiv(prob_n, 16), BLOCK_WIDTH) * 16, 1, 1), 0, stream>>>(
+          prob_m, prob_n, raw_data, second_order_data_ptr, X_ptr, d_yfp32,
+          y_ptr, dense_only DEBUG_PARAMS_FP32);
 
   if (ret) {
     cudaFree(d_yfp32);
@@ -1866,7 +1867,8 @@ int spqr_matvec(
         spmv_naive_sparse_sorted<float>
             <<<UPDIV(prob_m - dense_row_count, WARP_SIZE), WARP_SIZE, 0,
                stream_sparse>>>(dense_row_count, prob_m, prob_n, row_ids_ptr,
-                                row_offsets_ptr, col_vals_ptr, X_ptr, y_ptr, d_yfp32);
+                                row_offsets_ptr, col_vals_ptr, X_ptr, y_ptr,
+                                d_yfp32);
       }
 
       if (dense_row_count) {

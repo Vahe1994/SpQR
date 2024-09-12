@@ -38,7 +38,6 @@ class TestSparseFp16(unittest.TestCase):
         device = torch.device('cuda:0')
         for m in [16, 32, 64, 128, 256, 4096, 11008]:
             for n in [16, 32, 64, 128, 256, 4096, 11008]:
-
                 for density in [0, 0.01, 0.05, 0.5, 0.9]:
                     for flag in [
                         # inference.FeatureFlag.SPARSE_NAIVE_FP16,

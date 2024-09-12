@@ -6,8 +6,8 @@ import sys
 
 from scipy.sparse import csr_matrix, coo_matrix
 
-import spqr
-from problem import ProblemArgs, Problem
+import inference
+from problem import Problem
 
 import plotly.graph_objects as go
 import plotly.express as px
@@ -47,7 +47,7 @@ def densities():
 
             r = 1
             spqr_host, spqr_device = (
-                spqr.create_random_from_sparse_repeat(prob.m, prob.n, prob.row_offsets.cpu(), prob.col_ptr.cpu(),
+                inference.create_random_from_sparse_repeat(prob.m, prob.n, prob.row_offsets.cpu(), prob.col_ptr.cpu(),
                                                       prob.values.cpu(), r, device=device))
 
             nnzs_sorted = spqr_device.row_offsets.diff().sort().values
@@ -61,7 +61,7 @@ def densities():
 
 
 class Tiles:
-    def __init__(self, p, args: ProblemArgs, device: torch.device):
+    def __init__(self, p):
         t = torch.load(p, map_location='cpu')
         self.m = t['weight_shape'][0]
         self.n = t['weight_shape'][1]
@@ -103,7 +103,7 @@ def densities_tile():
     base_path = sys.argv[1]
     folders = os.listdir(base_path)
     args_path = os.path.join(base_path, 'args.pt')
-    args = ProblemArgs().load_args(args_path)
+    args = torch.load(args_path)
     # fig.update_xaxes(type='log')
 
     fig.update_xaxes(type='log')
@@ -137,7 +137,7 @@ def densities_tile():
             per_layer_figure.update_layout(margin=dict(l=0, r=0, t=30, b=0))
             per_layer_figure.update_xaxes(type='log')
 
-            tiles = Tiles(os.path.join(folder, p), args, device=device)
+            tiles = Tiles(os.path.join(folder, p))
             print(f'{tensor_name} perc rows empty = {tiles.perc_row_empty * 100}%')
             total_nnz_blocks = float(tiles.tile_nnzs.shape[0])
             y, _ = np.histogram(tiles.tile_nnzs, bins=range(258))
@@ -164,18 +164,12 @@ def densities_tile():
 
 
 def densities_rows():
-    device = torch.device('cuda:0')
     base_path = sys.argv[1]
     folders = os.listdir(base_path)
-    args_path = os.path.join(base_path, 'args.pt')
-    args = ProblemArgs().load_args(args_path)
 
     folders.sort()
 
-    x = np.arange(257)
-
     for l_id, layer_id in enumerate(folders):
-        tile_nnzs = np.zeros(257)
         folder = os.path.join(base_path, layer_id)
         if not os.path.isdir(folder):
             continue
@@ -191,7 +185,7 @@ def densities_rows():
             per_layer_figure.update_xaxes(type='log')
             per_layer_figure.update_yaxes(type='log')
 
-            tiles = Tiles(os.path.join(folder, p), args, device=device)
+            tiles = Tiles(os.path.join(folder, p))
             print(f'{tensor_name} perc rows empty = {tiles.perc_row_empty * 100}%')
             y = tiles.row_nnzs.sort().values.numpy()
             y = y / tiles.n

@@ -8,7 +8,7 @@ import torch.nn.functional as F
 from matplotlib import pyplot as plt
 from scipy.sparse import csr_matrix, coo_matrix
 
-from spqr import SPQRHost, updiv, compress, list_flatten, random_like
+from inference import SPQRHost, updiv, compress, list_flatten, random_like
 
 
 def max_pool2d(input_tensor, kernel_size):

@@ -3,7 +3,7 @@ from enum import IntEnum
 
 
 import torch
-import spqr
+import inference
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
@@ -26,18 +26,16 @@ if __name__ == '__main__':
 
     group_labels = [
         # FeatureFlag.SPARSE_SHARED_BASELINE_FP16.pretty() + ' (ms)',
-        spqr.FeatureFlag.TORCH_FP16.pretty() + ' (ms)',
-        spqr.FeatureFlag.SPARSE_MIXTURE_FP32.pretty() + ' (ms)',
-        spqr.FeatureFlag.DENSE_ONLY_FP32.pretty() + ' (ms)',
+        inference.FeatureFlag.TORCH_FP16.pretty() + ' (ms)',
+        inference.FeatureFlag.SPARSE_MIXTURE_FP32.pretty() + ' (ms)'
     ]
     torch_key = group_labels[0]
 
     speedup = (results[torch_key] / results[group_labels[1]]).to_numpy()
     print(f'Geomean speed-up = {gmean(speedup)}X')
-    speedup = (results[torch_key] / results[group_labels[2]]).to_numpy()
-    print(f'Geomean speed-up (dense only) = {gmean(speedup)}X')
 
-
+    # speedup = (results[torch_key] / results[group_labels[2]]).to_numpy()
+    # print(f'Geomean speed-up (dense only) = {gmean(speedup)}X')
 
     labels = results['Layer'] + ' ' + results['Tensor Name'].map(prettify_tensor_name)
 
@@ -81,5 +79,5 @@ if __name__ == '__main__':
             xanchor="right",
             x=1
         ))
-    fig.write_image('report/bench_rtx4060.svg')
+    fig.write_image('report/bench_rtx4060_baseline.svg')
     fig.show()
