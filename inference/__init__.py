@@ -134,6 +134,20 @@ class SPQRModule(nn.Module):
         self.col_vals = self.col_vals.to(device=device)
         self.dense_row_count = self.dense_row_count
 
+        self.row_col_vals = self.col_vals.to(dtype=torch.int64)
+        self.tile_row_offsets = torch.zeros(updiv(self.m + self.beta1 - 1, self.beta1), dtype=torch.int32)
+
+        for i in range(self.m):
+            for j in range(self.row_offsets[i], self.row_offsets[i + 1]):
+                self.row_col_vals[j] |= (i << 32)
+            if i % self.beta1 == 0:
+                self.tile_row_offsets[i // self.beta1] = self.row_offsets[i]
+        self.tile_row_offsets[self.m // self.beta1] = self.row_offsets[self.m]
+
+        self.row_col_vals = self.row_col_vals.to(device=device)
+        self.tile_row_offsets = self.tile_row_offsets.to(device=device)
+
+
     @property
     def nnz(self):
         return self.col_vals.shape[0]
@@ -432,6 +446,8 @@ def spqr_mul(spqr_device: SPQRModule, x, y, feature_flag: FeatureFlag):
         spqr_device.col_vals,
         spqr_device.nnz,
         spqr_device.dense_row_count,
+        spqr_device.tile_row_offsets,
+        spqr_device.row_col_vals,
         x,
         y,
         int(feature_flag)
@@ -493,6 +509,8 @@ def spqr_mul_timer(spqr_device: SPQRModule, x, feature_flag: FeatureFlag, num_ru
             spqr_device.col_vals,
             spqr_device.nnz,
             spqr_device.dense_row_count,
+            spqr_device.tile_row_offsets,
+            spqr_device.row_col_vals,
             x,
             y,
             runs[i],

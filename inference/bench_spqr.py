@@ -33,6 +33,7 @@ if __name__ == '__main__':
             # inference.FeatureFlag.DENSE_ONLY_FP16,
             inference.FeatureFlag.TORCH_FP16,
             inference.FeatureFlag.SPARSE_MIXTURE_FP32,
+            inference.FeatureFlag.SPARSE_FUSED_FP32,
             # inference.FeatureFlag.DENSE_ONLY_FP32,
         ]
 

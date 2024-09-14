@@ -103,7 +103,8 @@ int spqr_matvec(
     void *y,
     // GPU meta
     cudaStream_t stream = nullptr, void *measurements = nullptr,
-    uint32_t feature_flag = 0);
+    uint32_t feature_flag = 0, void *tile_row_offsets = nullptr,
+    void *row_col_vals = nullptr);
 
 const int ERR_PROB_SHAPE = 1;
 const int ERR_KERN_SHAPE = 2;
@@ -265,19 +266,24 @@ void spqr_mul_timer(int m, int n,
                     // 16-bit
                     const torch::Tensor &row_offsets,
                     // 32-bit
-                    const torch::Tensor &col_val, int nnz, int dense_row_count,
+                    const torch::Tensor &col_val, int nnz,
+                    int dense_row_count,
+                    const torch::Tensor &tile_row_offsets,
+                    const torch::Tensor &row_col_vals,
                     // 16-bit
-                    const torch::Tensor &X, torch::Tensor &Y,
+                    const torch::Tensor &X,
+                    torch::Tensor &Y,
                     torch::Tensor &measurements, uint32_t feature_flag) {
   int dev = raw_data.get_device();
   int err = spqr_matvec(bits, m, n, beta1, beta2, raw_data.data_ptr(),
                         second_order_data.data_ptr(),
-
                         // CSR Outliers
                         row_ids.data_ptr(), row_offsets.data_ptr(),
                         col_val.data_ptr(), nnz, dense_row_count, X.data_ptr(),
                         Y.data_ptr(), at::cuda::getCurrentCUDAStream(dev),
-                        measurements.data_ptr(), feature_flag);
+                        measurements.data_ptr(), feature_flag,
+                        tile_row_offsets.data_ptr(),
+                        row_col_vals.data_ptr());
 }
 
 void spqr_mul(int m, int n,
@@ -292,7 +298,11 @@ void spqr_mul(int m, int n,
               // 32-bit
               const torch::Tensor &row_ids, const torch::Tensor &row_offsets,
               // 16-bit
-              const torch::Tensor &col_val_ptr, int nnz, int dense_row_count,
+              const torch::Tensor &col_val_ptr,
+              int nnz,
+              int dense_row_count,
+              const torch::Tensor &tile_row_offsets,
+              const torch::Tensor &row_col_vals,
               // 16-bit
               const torch::Tensor &X, torch::Tensor &Y,
               uint32_t feature_flag = 0) {
@@ -301,7 +311,9 @@ void spqr_mul(int m, int n,
       bits, m, n, beta1, beta2, buff0.data_ptr(), buff1.data_ptr(),
       row_ids.data_ptr(), row_offsets.data_ptr(), col_val_ptr.data_ptr(), nnz,
       dense_row_count, X.data_ptr(), Y.data_ptr(),
-      at::cuda::getCurrentCUDAStream(dev), nullptr, feature_flag);
+      at::cuda::getCurrentCUDAStream(dev), nullptr, feature_flag,
+      tile_row_offsets.data_ptr(),
+      row_col_vals.data_ptr());
 }
 
 void tensor_compress_interleaved(

@@ -1,17 +1,13 @@
 import os
-import subprocess
-import sys
 from enum import Enum
 
-import inference
 import torch
 import torch.nn as nn
-from matplotlib import pyplot as plt
 from tqdm import tqdm, trange
 from transformers import AutoModelForCausalLM, DynamicCache, LlamaTokenizer, AutoConfig
 
-from datautils import get_loaders
-from modelutils import suspend_nn_inits, get_layers, get_model_head, get_lm_logits, find_sublayers, \
+import inference
+from modelutils import suspend_nn_inits, get_layers, find_sublayers, \
     layer_weight_dequantization
 from quant_groups import Quantizer, quantize
 
