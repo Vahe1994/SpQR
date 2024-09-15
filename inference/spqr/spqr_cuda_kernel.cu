@@ -508,7 +508,7 @@ template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH,
   // W 1st order stats
   const W_t *__restrict__ raw_data,
   const SecondOrder *__restrict__ second_order_data,
-  const half *__restrict__ X,
+  const half *__restrict__ x,
   // Outliers
   const int *row_offsets,
   const u32 *col_vals,
@@ -530,11 +530,11 @@ template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH,
   extern __shared__ half s_x[];
   __shared__ Acc_t s_y[BETA1];
   half2 *s_x2 = reinterpret_cast<half2 *>(s_x);
-  const half2 *x2 = reinterpret_cast<const half2 *>(X);
+  const half2 *x2 = reinterpret_cast<const half2 *>(x);
 
   u32 t_id = blockDim.x * threadIdx.y + threadIdx.x;
   const u32 TOTAL_THREADS = blockDim.x * blockDim.y;
-  const u32 MAX_PIPELINE_DEPTH = 2;
+  const u32 MAX_PIPELINE_DEPTH = 4;
   u32 pipeline_depth{};
 
   const auto total_threads = blockDim.x;
@@ -685,14 +685,14 @@ template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH,
         if constexpr (std::is_same<Acc_t, float>::value) {
           half2 q = make_half2(__int2half_rd(q_x), __int2half_rd(q_y));
           half2 w = dequantize2(q, ws2, wz2);
-          float2 x_fp32 = __half22float2(x2[subtile_id * (BETA2 / 2) + j]);
+          float2 x_fp32 = __half22float2(s_x2[i * (BETA2 / 2) + j]);
           float2 w_fp32 = __half22float2(w);
           acc = fmaf(x_fp32.x, w_fp32.x, acc);
           acc = fmaf(x_fp32.y, w_fp32.y, acc);
         } else {
           half2 q = make_half2(__int2half_rd(q_x), __int2half_rd(q_y));
           half2 w = dequantize2(q, ws2, wz2);
-          acc = __hfma2(x2[subtile_id * BETA2 / 2 + j], w, acc);
+          acc = __hfma2(s_x2[i * BETA2 / 2 + j], w, acc);
         }
       }
 
@@ -751,7 +751,9 @@ template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH,
 
   __syncthreads();
 
-#if 0
+  Acc_t _y[BETA1]{};
+
+#if 1
   // At this point, the result is in s_y.
   // printf("bdimx bdimxy = %d %d\n", blockDim.x, blockDim.y);
   for (int i = tile_row_offsets[blockIdx.x] + threadIdx.x; i < tile_row_offsets[blockIdx.x + 1]; i += blockDim.x) {
@@ -761,7 +763,8 @@ template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH,
     u16 c = get_col(rcl);
     half v = get_val(rcl);
     auto local_row = r % BETA1;
-    atomicAdd(s_y_scalar + local_row, __half2float(s_x[c]) * __half2float(v));
+    // atomicAdd(s_y_scalar + local_row, __half2float(s_x[c]) * __half2float(v));
+    _y[local_row] += __half2float(s_x[c]) * __half2float(v);
     // s_y_scalar[local_row] += __half2float(s_x[c]) * __half2float(v);
   }
   __syncthreads();
@@ -769,7 +772,7 @@ template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH,
 
   // At this point, the result is in s_y.
   if (threadIdx.x < BETA1) {
-    y_fp16[blockIdx.x * BETA1 + threadIdx.x] = __float2half(s_y_scalar[threadIdx.x]);
+    y_fp16[blockIdx.x * BETA1 + threadIdx.x] = __float2half(s_y_scalar[threadIdx.x] + _y[threadIdx.x]);
   }
 }
 
