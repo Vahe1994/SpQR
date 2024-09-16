@@ -32,8 +32,8 @@ if __name__ == '__main__':
             # inference.FeatureFlag.SPARSE_CUSPARSE_FP16,
             # inference.FeatureFlag.DENSE_ONLY_FP16,
             inference.FeatureFlag.TORCH_FP16,
-            # inference.FeatureFlag.DENSE_ONLY_FP32,
-            inference.FeatureFlag.SPARSE_MIXTURE_FP32,
+            inference.FeatureFlag.DENSE_ONLY_FP32,
+            # inference.FeatureFlag.SPARSE_MIXTURE_FP32,
             inference.FeatureFlag.SPARSE_FUSED_FP32,
         ]
 
@@ -52,6 +52,7 @@ if __name__ == '__main__':
             if not os.path.isdir(folder):
                 continue
             for p in os.listdir(folder):
+                torch.cuda.empty_cache()
                 time.sleep(1)
 
                 tensor_path = os.path.join(folder, p)
@@ -87,6 +88,8 @@ if __name__ == '__main__':
 
                 f.write(f'Layer {layer_id};{p};{m};{n};{sparsity_perc:.2f}')
                 for flag in methods:
+                    torch.cuda.empty_cache()
+                    time.sleep(1)
                     print(f'Running {repr(flag)} on {layer_id}.{p}')
 
                     if flag == inference.FeatureFlag.TORCH_FP16:
@@ -108,7 +111,8 @@ if __name__ == '__main__':
 
                     if flag == inference.FeatureFlag.DENSE_ONLY_FP16:
                         dense_speed_up = speed_up
-                    elif flag == inference.FeatureFlag.SPARSE_MIXTURE_FP32:
+                    elif flag == inference.FeatureFlag.SPARSE_MIXTURE_FP32 or \
+                         flag == inference.FeatureFlag.SPARSE_FUSED_FP32:
                         baseline_speed_up = speed_up
                         benchmark_results_ms.append(this_algorithm)
                         benchmark_speed_up.append(baseline_speed_up)

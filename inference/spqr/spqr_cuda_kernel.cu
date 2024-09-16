@@ -529,7 +529,10 @@ template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH,
            └─────────────┘ └─┘   └─┘
   */
   extern __shared__ half s_x[];
+
   __shared__ Acc_t s_y[BETA1];
+  __shared__ u32 s_row_offsets[BETA1 + 1];
+
   half2 *s_x2 = reinterpret_cast<half2 *>(s_x);
   const half2 *x2 = reinterpret_cast<const half2 *>(x);
 
@@ -557,6 +560,17 @@ template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH,
         : "r"(__nvvm_get_smem_pointer(s_y + threadIdx.x))
       );
     }
+  }
+
+  // Here we load the row offsets into smem.
+  if (threadIdx.x < BETA1) {
+      __pipeline_memcpy_async(s_row_offsets + threadIdx.x, row_offsets + blockDim.x * BETA1 + threadIdx.x, sizeof(u32));
+
+    // The first thread will read the last sparse row offset since we cannot be sure that
+    // we have enough threads to load all the sparse row offsets that we need.
+    if (!threadIdx.x) {
+      __pipeline_memcpy_async(s_row_offsets + BETA1, row_offsets + blockDim.x * BETA1 + BETA1, sizeof(u32));
+     }
   }
 
 
@@ -732,19 +746,12 @@ template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH,
   using Vector_ptr_t = decltype(s_y_vectorized);
   using Vector_t = std::remove_pointer_t<Vector_ptr_t>;
 
-#if 1
-  // TODO: Make this async
-  __shared__ u32 s_row_offsets[BETA1 + 1];
-  if (threadIdx.x <= BETA1) {
-    s_row_offsets[threadIdx.x] = row_offsets[blockDim.x * BETA1 + threadIdx.x];
-  }
-
-  __syncthreads();
-
+  #if 1
   if (threadIdx.x < WARP_SIZE) {
-    auto tid = threadIdx.x % BETA1;
-    auto wid = threadIdx.x / BETA1;
+    int tid = threadIdx.x % BETA1;
+    int wid = threadIdx.x / BETA1;
 
+    __syncwarp();
     int s = s_row_offsets[tid];
     int e = s_row_offsets[tid + 1];
 
@@ -792,8 +799,59 @@ template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH,
     }
   }
   __syncthreads();
+#elif 1
+  if (threadIdx.x < WARP_SIZE) {
+    auto tid = threadIdx.x % BETA1;
+    auto wid = threadIdx.x / BETA1;
 
+    __syncwarp();
+    int s = s_row_offsets[tid];
+    int e = s_row_offsets[tid + 1];
 
+    for (int i = s + wid; i < e; i += 2) {
+      auto colval = col_vals[i];
+      auto c = get_col(colval);
+      auto v = get_val(colval);
+      acc += __half2float(v) * __half2float(s_x[c]);
+    }
+
+    auto result_scalar = acc;
+    auto other = __shfl_down_sync(HALF_MASK, result_scalar, BETA1);
+    auto result = add_and_accum(other, result_scalar);
+    const unsigned int lane_id = threadIdx.x & 0x1F;
+    if constexpr (std::is_same_v<Acc_t, float>) {
+      __syncwarp();
+      if (lane_id < BETA1) {
+        atomicAdd(s_y_scalar + lane_id, result);
+      }
+    } else {
+      auto result0 = __shfl_down_sync(0, result, threadIdx.x);
+      auto result1 = __shfl_down_sync(0, result, threadIdx.x + 1);
+      __syncwarp();
+      if (lane_id < BETA1 / 2) {
+        atomicAdd(s_y_vectorized + lane_id, make_half2(result0, result1));
+      }
+    }
+  } else {
+    auto result_scalar = acc;
+    auto other = __shfl_down_sync(HALF_MASK, result_scalar, BETA1);
+    auto result = add_and_accum(other, result_scalar);
+    const unsigned int lane_id = threadIdx.x & 0x1F;
+    if constexpr (std::is_same_v<Acc_t, float>) {
+      __syncwarp();
+      if (lane_id < BETA1) {
+        atomicAdd(s_y_scalar + lane_id, result);
+      }
+    } else {
+      auto result0 = __shfl_down_sync(0, result, threadIdx.x);
+      auto result1 = __shfl_down_sync(0, result, threadIdx.x + 1);
+      __syncwarp();
+      if (lane_id < BETA1 / 2) {
+        atomicAdd(s_y_vectorized + lane_id, make_half2(result0, result1));
+      }
+    }
+  }
+  __syncthreads();
 #else
   // At this point, the result is in s_y.
   // printf("bdimx bdimxy = %d %d\n", blockDim.x, blockDim.y);
