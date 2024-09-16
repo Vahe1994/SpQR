@@ -502,6 +502,447 @@ DEVICE_INLINE u16 get_row(u64 m) { return m >> 32u; }
 
 //
 template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH,
+  int A, class Acc_t, class W_t /* = uint64_t */> __global__ void spqr_quantized_matvec_fused_v2(
+  // W and meta
+  unsigned int prob_m,
+  unsigned int prob_n,
+  // W 1st order stats
+  const W_t *__restrict__ raw_data,
+  const SecondOrder *__restrict__ second_order_data,
+  const half *__restrict__ x,
+  // Outliers
+  const int *row_offsets,
+  const u32 *col_vals,
+  // Output
+  half *__restrict__ y_fp16,
+  const s32 *__restrict__ tile_row_offsets,
+  const u64 *__restrict__ row_col_vals) {
+  /*
+           ┌─────────────┐ ┌─┐   ┌─┐
+   beta1   │   block 0   │ │ │   │ │
+           ├─────────────┤ │ │   │ │
+   beta1   │   block 1   │ │ │   │ │
+           └─────────────┘ │x│ = │Y│
+           │    ...      │ │ │   │ │
+           ┌─────────────┐ │ │   │ │
+   beta1   │  block m-1  │ │ │   │ │
+           └─────────────┘ └─┘   └─┘
+  */
+  extern __shared__ half s_x[];
+
+  __shared__ Acc_t s_y[BETA1];
+  __shared__ u32 s_row_offsets[BETA1 + 1];
+
+  half2 *s_x2 = reinterpret_cast<half2 *>(s_x);
+  const half2 *x2 = reinterpret_cast<const half2 *>(x);
+
+  u32 t_id = blockDim.x * threadIdx.y + threadIdx.x;
+  const u32 TOTAL_THREADS = blockDim.x * blockDim.y;
+  const u32 MAX_PIPELINE_DEPTH = 4;
+  u32 pipeline_depth{};
+
+  const auto total_threads = blockDim.x;
+  const auto count = prob_n / 2;
+  const auto tid = threadIdx.x;
+  u32 pipeline_id{};
+
+
+  if constexpr (std::is_same<Acc_t, float>::value) {
+    if (threadIdx.x < BETA1) {
+      // TOD: Check if this really sets s_y to zero.
+      asm volatile ("cp.async.ca.shared.global [%0], [%0], 4, 0 ;\n" :
+        : "r"(__nvvm_get_smem_pointer(s_y + threadIdx.x))
+      );
+    }
+  } else {
+    if (threadIdx.x < BETA1 / 2) {
+      asm volatile ("cp.async.ca.shared.global [%0], [%0], 4, 0 ;\n" :
+        : "r"(__nvvm_get_smem_pointer(s_y + threadIdx.x))
+      );
+    }
+  }
+
+  // Here we load the row offsets into smem.
+  if (threadIdx.x < BETA1) {
+      __pipeline_memcpy_async(s_row_offsets + threadIdx.x, row_offsets + blockIdx.x * BETA1 + threadIdx.x, sizeof(u32));
+
+    // The first thread will read the last sparse row offset since we cannot be sure that
+    // we have enough threads to load all the sparse row offsets that we need.
+    if (!threadIdx.x) {
+      __pipeline_memcpy_async(s_row_offsets + BETA1, row_offsets + blockIdx.x * BETA1 + BETA1, sizeof(u32));
+     }
+  }
+
+
+  for (int i = 0; i < MAX_PIPELINE_DEPTH && (i * total_threads + tid) < prob_n; i++) {
+    unsigned idx = i * total_threads + tid;
+    if (idx < count) {
+      __pipeline_memcpy_async(s_x2 + idx, x2 + idx, sizeof(half2));
+      pipeline_depth++;
+      pipeline_id++;
+      __pipeline_commit();
+    }
+  }
+
+  int pipeline_stack_ptr = pipeline_depth;
+
+  constexpr u32 WARP_SIZE = 32;
+  const u32 THREAD_COUNT = blockDim.x; // = 128 (example)
+
+  const u32 blockId = blockIdx.x;
+
+  // Number of SPQR tiles that this CUDA block will process.
+  u32 num_spqr_tiles_per_cuda_block = UPDIV(prob_n, BETA2);
+
+  u32 total_tiles = UPDIV(prob_m, BETA1) * UPDIV(prob_n, BETA2);
+
+  // Here is how we organize things here. We have THREAD_COUNT threads in a
+  // block in x-dimension. We distribute 1 thread per tile row. Therefore, we
+  // have BETA1 threads per tile. For now, a block only spans across 1 dimension
+  // of SPQR tiles.
+  const u32 num_spqr_tiles_per_iteration = THREAD_COUNT / BETA1;
+
+  const u32 subtile_id = threadIdx.x / BETA1;
+
+  if (subtile_id >= UPDIV(prob_n, BETA2)) {
+    return;
+  }
+
+  // Now we set up the X loads. We have BLOCK_WIDTH * BETA2 x halfs.
+  __shared__ SecondOrder s_second_order[BLOCK_HEIGHT * BLOCK_WIDTH];
+
+  int tile_id = blockIdx.x * num_spqr_tiles_per_cuda_block + subtile_id;
+
+  IterSecondOrder<BETA1> iter_second_order{
+    .base_ptr = second_order_data + tile_id,
+    .s_base = s_second_order + subtile_id,
+    .advance = BLOCK_WIDTH,
+    .n = total_tiles,
+    .id = tile_id
+  };
+
+  constexpr int bits = get_bits<W_t>();
+
+  constexpr int MAX_ADDR_PER_ROW = UPDIV(
+    // Weight storage
+    (BETA2 * BITS) +
+    // Weight + Scale
+    2 * BITS,
+    // u32/u64 storage
+    bits);
+
+  const int MAX_ADDR_PER_TILE = BETA1;
+
+  RowBits row_bits;
+  u32 row_pos = threadIdx.x & 0xF; // threadIdx.x % BETA1;
+
+  Acc_t acc{};
+
+  constexpr u32 FULL_MASK = 0xffffffff;
+  constexpr u32 HALF_MASK = FULL_MASK >> 16u;
+  constexpr u32 HALF_WARP = WARP_SIZE / 2u;
+
+  const int other_lane_idx = (threadIdx.x + HALF_WARP) % WARP_SIZE;
+
+  if ((row_pos + blockId * BETA1) >= prob_m) {
+    // TODO: Maybe don't do this, since we need these threads to load x
+    // together? [1]
+    return;
+  } // || (threadIdx.x % BETA1)
+
+
+  u32 _num_participating_threads = {};
+
+  if (prob_n <= 128 || prob_m <= 128) {
+    u32 activemask = __activemask();
+    while (activemask & 1u) {
+      _num_participating_threads++;
+      activemask >>= 1u;
+    }
+  } else {
+    _num_participating_threads = blockDim.x;
+  }
+
+  const int addr_per_row = MAX_ADDR_PER_ROW;
+
+  for (int i = subtile_id, group_id = 0;; i += num_spqr_tiles_per_iteration, group_id++) {
+    // TODO: It seems that it's important that this remans a syncthread instead
+    // of a syncwarp for some reason...
+    __syncthreads();
+
+    bool finished = (i >= num_spqr_tiles_per_cuda_block) |
+                    (i * BETA2 >= prob_n) |
+                    ((row_pos + blockId * BETA1) >= prob_m);
+
+    bool other_finished =
+        __shfl_sync(FULL_MASK, finished, other_lane_idx, WARP_SIZE) |
+        // We also have the case where the matrix dimension is smaller than
+        // the warp size. Maybe use __activemask() here?
+        !(__activemask() & (1u << other_lane_idx)) |
+        ((other_lane_idx + blockId * BETA1) >= prob_m);
+
+    if (finished & other_finished) {
+      break;
+    }
+
+    if (!finished) {
+      iter_second_order.load_async();
+      row_bits.mask =
+          raw_data[MAX_ADDR_PER_TILE * tile_id + row_pos * addr_per_row];
+    }
+
+    __syncthreads();
+
+    if (pipeline_stack_ptr > 0) {
+      __pipeline_wait_prior(pipeline_stack_ptr - 1);
+      pipeline_stack_ptr--;
+    }
+
+    if (!finished) {
+      int s = row_bits.s;
+      int z = row_bits.z;
+      half2 first_order_quantized = make_half2(__int2half_rd(s), __int2half_rd(z));
+
+      half2 first_order_dequantized = dequantize2(first_order_quantized,
+                                                  iter_second_order.get_sws2(),
+                                                  iter_second_order.get_swz2());
+
+      half2 ws2 = __half2half2(first_order_dequantized.x);
+      half2 wz2 = __half2half2(first_order_dequantized.y);
+
+#pragma unroll
+      for (int j = 0; j < BETA2 / 2; j++) {
+        int q_x = row_bits.get_w(2 * j);
+        int q_y = row_bits.get_w(2 * j + 1);
+        if constexpr (std::is_same<Acc_t, float>::value) {
+          half2 q = make_half2(__int2half_rd(q_x), __int2half_rd(q_y));
+          half2 w = dequantize2(q, ws2, wz2);
+          float2 x_fp32 = __half22float2(s_x2[i * (BETA2 / 2) + j]);
+          float2 w_fp32 = __half22float2(w);
+          acc = fmaf(x_fp32.x, w_fp32.x, acc);
+          acc = fmaf(x_fp32.y, w_fp32.y, acc);
+        } else {
+          half2 q = make_half2(__int2half_rd(q_x), __int2half_rd(q_y));
+          half2 w = dequantize2(q, ws2, wz2);
+          acc = __hfma2(s_x2[i * BETA2 / 2 + j], w, acc);
+        }
+      }
+
+      iter_second_order.next();
+      tile_id += num_spqr_tiles_per_iteration;
+    }
+
+    unsigned idx = pipeline_id * total_threads + tid;
+    if (idx < prob_n / 2) {
+      __pipeline_memcpy_async(s_x2 + idx, x2 + idx, sizeof(half2));
+      pipeline_id++;
+      pipeline_stack_ptr++;
+      __pipeline_commit();
+    }
+  }
+
+  auto s_y_scalar = scalarize<Acc_t>(s_y);
+  auto s_y_vectorized = vectorize(s_y_scalar);
+  using Vector_ptr_t = decltype(s_y_vectorized);
+  using Vector_t = std::remove_pointer_t<Vector_ptr_t>;
+
+  #if 0
+  if (threadIdx.x < WARP_SIZE) {
+    int tid = threadIdx.x % BETA1;
+    int wid = threadIdx.x / BETA1;
+
+    __syncwarp();
+    int s = s_row_offsets[tid];
+    int e = s_row_offsets[tid + 1];
+
+    for (int i = s + wid; i < e; i += 2) {
+      auto colval = col_vals[i];
+      auto c = get_col(colval);
+      auto v = get_val(colval);
+      acc += __half2float(v) * __half2float(s_x[c]);
+    }
+
+    auto result_scalar = acc;
+    auto other = __shfl_down_sync(HALF_MASK, result_scalar, BETA1);
+    auto result = add_and_accum(other, result_scalar);
+    const unsigned int lane_id = threadIdx.x & 0x1F;
+    if constexpr (std::is_same_v<Acc_t, float>) {
+      __syncwarp();
+      if (lane_id < BETA1) {
+        atomicAdd(s_y_scalar + lane_id, result);
+      }
+    } else {
+      auto result0 = __shfl_down_sync(0, result, threadIdx.x);
+      auto result1 = __shfl_down_sync(0, result, threadIdx.x + 1);
+      __syncwarp();
+      if (lane_id < BETA1 / 2) {
+        atomicAdd(s_y_vectorized + lane_id, make_half2(result0, result1));
+      }
+    }
+  } else {
+    auto result_scalar = acc;
+    auto other = __shfl_down_sync(HALF_MASK, result_scalar, BETA1);
+    auto result = add_and_accum(other, result_scalar);
+    const unsigned int lane_id = threadIdx.x & 0x1F;
+    if constexpr (std::is_same_v<Acc_t, float>) {
+      __syncwarp();
+      if (lane_id < BETA1) {
+        atomicAdd(s_y_scalar + lane_id, result);
+      }
+    } else {
+      auto result0 = __shfl_down_sync(0, result, threadIdx.x);
+      auto result1 = __shfl_down_sync(0, result, threadIdx.x + 1);
+      __syncwarp();
+      if (lane_id < BETA1 / 2) {
+        atomicAdd(s_y_vectorized + lane_id, make_half2(result0, result1));
+      }
+    }
+  }
+  __syncthreads();
+#elif 1
+  if (threadIdx.x < WARP_SIZE) {
+    if (s_row_offsets[BETA1] - s_row_offsets[0] > 64 * 32) {
+      for (int i = 0; i < BETA1; i++) {
+        int s = s_row_offsets[i];
+        int e = s_row_offsets[i + 1];
+        float acc_fp32{};
+
+        __syncwarp();
+        for (int j = s + 2 * threadIdx.x; j < e; j += 2 * WARP_SIZE) {
+          auto colval = col_vals[j];
+          auto c = get_col(colval);
+          auto v = get_val(colval);
+          acc_fp32 += __half2float(v) * __half2float(s_x[c]);
+        }
+        __syncwarp();
+
+        acc_fp32 = shfl_reduce_float(acc_fp32);
+
+        if (i == threadIdx.x) {
+          acc += acc_fp32;
+        }
+      }
+
+    } else {
+      int s = s_row_offsets[tid];
+      int e = s_row_offsets[tid + 1];
+      int tid = threadIdx.x % BETA1;
+      int wid = threadIdx.x / BETA1;
+
+      __syncwarp();
+
+      for (int i = s + wid; i < e; i += 2) {
+        auto colval = col_vals[i];
+        auto c = get_col(colval);
+        auto v = get_val(colval);
+        acc += __half2float(v) * __half2float(s_x[c]);
+      }
+    }
+
+    auto result_scalar = acc;
+    auto other = __shfl_down_sync(HALF_MASK, result_scalar, BETA1);
+    auto result = add_and_accum(other, result_scalar);
+    const unsigned int lane_id = threadIdx.x & 0x1F;
+    if constexpr (std::is_same_v<Acc_t, float>) {
+      __syncwarp();
+      if (lane_id < BETA1) {
+        atomicAdd(s_y_scalar + lane_id, result);
+      }
+    } else {
+      auto result0 = __shfl_down_sync(0, result, threadIdx.x);
+      auto result1 = __shfl_down_sync(0, result, threadIdx.x + 1);
+      __syncwarp();
+      if (lane_id < BETA1 / 2) {
+        atomicAdd(s_y_vectorized + lane_id, make_half2(result0, result1));
+      }
+    }
+  } else {
+    auto result_scalar = acc;
+    auto other = __shfl_down_sync(HALF_MASK, result_scalar, BETA1);
+    auto result = add_and_accum(other, result_scalar);
+    const unsigned int lane_id = threadIdx.x & 0x1F;
+    if constexpr (std::is_same_v<Acc_t, float>) {
+      __syncwarp();
+      if (lane_id < BETA1) {
+        atomicAdd(s_y_scalar + lane_id, result);
+      }
+    } else {
+      auto result0 = __shfl_down_sync(0, result, threadIdx.x);
+      auto result1 = __shfl_down_sync(0, result, threadIdx.x + 1);
+      __syncwarp();
+      if (lane_id < BETA1 / 2) {
+        atomicAdd(s_y_vectorized + lane_id, make_half2(result0, result1));
+      }
+    }
+  }
+  __syncthreads();
+#else
+  // At this point, the result is in s_y.
+  // printf("bdimx bdimxy = %d %d\n", blockDim.x, blockDim.y);
+  u64 rcl;
+
+  union Payload {
+    uint64_t m;
+
+    struct {
+      int addr;
+      float res;
+    } members;
+  };
+
+  u16 r, c;
+  half v;
+  int local_row;
+
+  __shared__ u32 s_bounds[2];
+
+  if (threadIdx.x < 2) {
+    s_bounds[threadIdx.x] = tile_row_offsets[blockIdx.x + threadIdx.x];
+  }
+
+  __syncthreads();
+
+  for (int i = s_bounds[0] + threadIdx.x; ; i += blockDim.x) {
+    bool addr_check = i < s_bounds[1];
+    Payload p{};
+    p.members.addr = -1;
+    if (addr_check) {
+      rcl = row_col_vals[i];
+      r = get_row(rcl);
+      c = get_col(rcl);
+      v = get_val(rcl);
+      local_row = r % BETA1;
+      p.members.addr = local_row;
+      p.members.res = __half2float(s_x[c]) * __half2float(v);
+    }
+
+    __syncwarp(__activemask());
+
+    for (int j = 0; j < 1; j++) {
+      uint64_t other_p = __shfl_down_sync(__activemask(), p.m, j);
+      Payload other{.m = other_p};
+      auto valid = static_cast<float>(local_row == other.members.addr && addr_check && (threadIdx.x % WARP_SIZE) < threadIdx.x);
+      acc += other.members.res * valid;
+    }
+
+    if (!addr_check) {
+      break;
+    }
+  }
+  __syncthreads();
+#endif
+
+
+  // At this point, the result is in s_y.
+
+  if (threadIdx.x < BETA1) {
+    y_fp16[blockIdx.x * BETA1 + threadIdx.x] = __float2half(s_y_scalar[threadIdx.x]);
+  }
+}
+
+
+//
+template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH,
   int A, class Acc_t, class W_t /* = uint64_t */> __global__ void spqr_quantized_matvec_fused(
   // W and meta
   unsigned int prob_m,
@@ -799,7 +1240,7 @@ template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH,
     }
   }
   __syncthreads();
-#elif 1
+#elif 0
   if (threadIdx.x < WARP_SIZE) {
     auto tid = threadIdx.x % BETA1;
     auto wid = threadIdx.x / BETA1;
@@ -1673,8 +2114,7 @@ int spqr_matvec(
 
   if (features.flags.fused_sparse) {
     size_t smem_size = sizeof(half) * prob_n;
-    spqr_quantized_matvec_fused<3, 16, 16, BLOCK_HEIGHT, BLOCK_WIDTH, 32, float,
-                                uint64_t>
+    spqr_quantized_matvec_fused_v2<3, 16, 16, BLOCK_HEIGHT, BLOCK_WIDTH, 32, float, uint64_t>
         <<<dim3(updiv(prob_m, 16 * BLOCK_HEIGHT), 1, 1),
         dim3(__min(updiv(prob_n, 16), BLOCK_WIDTH) * 16, 1, 1), smem_size,
         stream>>>(prob_m,
@@ -1688,64 +2128,28 @@ int spqr_matvec(
                   tile_row_offsets_ptr,
                   row_col_vals_ptr);
   } else {
-    spqr_quantized_matvec<3, 16, 16, BLOCK_HEIGHT, BLOCK_WIDTH, 32, float,
-                          uint64_t>
+    size_t smem_size = sizeof(half) * prob_n;
+    spqr_quantized_matvec_fused<3, 16, 16, BLOCK_HEIGHT, BLOCK_WIDTH, 32, float, uint64_t>
         <<<dim3(updiv(prob_m, 16 * BLOCK_HEIGHT), 1, 1),
-        dim3(__min(updiv(prob_n, 16), BLOCK_WIDTH) * 16, 1, 1), 0, stream>>>(
-          prob_m,
-          prob_n,
-          raw_data,
-          second_order_data_ptr,
-          X_ptr,
-          d_yfp32,
-          y_ptr,
-          dense_only);
-
-    if (!dense_only) {
-      CHECK_CUDA(cudaDeviceSynchronize());
-
-      if (features.flags.shared_mixture && nnz) {
-        constexpr int WARP_SIZE = 32;
-        constexpr int BLOCK_HEIGHT = 4;
-        int sparse_row_count = prob_m - dense_row_count;
-        if (sparse_row_count) {
-          spmv_naive_sparse_sorted<float>
-              <<<UPDIV(prob_m - dense_row_count, WARP_SIZE), WARP_SIZE, 0,
-              stream_sparse>>>(dense_row_count,
-                               prob_m,
-                               prob_n,
-                               row_ids_ptr,
-                               row_offsets_ptr,
-                               col_vals_ptr,
-                               X_ptr,
-                               y_ptr,
-                               d_yfp32);
-        }
-
-        if (dense_row_count) {
-          size_t smem_size = sizeof(half) * prob_n;
-          spmv_naive_shared_sorted<float>
-              <<<UPDIV(dense_row_count, BLOCK_HEIGHT),
-              dim3(WARP_SIZE, BLOCK_HEIGHT, 1), smem_size, stream_sparse0>>>(
-                dense_row_count,
-                prob_n,
-                row_ids_ptr,
-                row_offsets_ptr,
-                col_vals_ptr,
-                X_ptr,
-                y_ptr,
-                d_yfp32);
-        }
-      }
-    }
+        dim3(__min(updiv(prob_n, 16), BLOCK_WIDTH) * 16, 1, 1), smem_size,
+        stream>>>(prob_m,
+                  prob_n,
+                  raw_data,
+                  second_order_data_ptr,
+                  X_ptr,
+                  row_offsets_ptr,
+                  col_vals_ptr,
+                  y_ptr,
+                  tile_row_offsets_ptr,
+                  row_col_vals_ptr);
   }
 
   if (!features.flags.is_async) {
     CHECK_CUDA(cudaDeviceSynchronize());
-    if (features.flags.shared_mixture && nnz) {
-      cudaStreamDestroy(stream_sparse);
-      cudaStreamDestroy(stream_sparse0);
-    }
+    // if (features.flags.shared_mixture && nnz) {
+      // cudaStreamDestroy(stream_sparse);
+      // cudaStreamDestroy(stream_sparse0);
+    // }
   }
 
   if (measurements) {

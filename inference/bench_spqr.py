@@ -17,7 +17,7 @@ if __name__ == '__main__':
         torch.random.manual_seed(seed)
 
         NUM_RUNS = 25
-        WARMUP = 20
+        WARMUP = 10
 
         device = torch.device(f'cuda:{sys.argv[2]}')
 
@@ -32,8 +32,8 @@ if __name__ == '__main__':
             # inference.FeatureFlag.SPARSE_CUSPARSE_FP16,
             # inference.FeatureFlag.DENSE_ONLY_FP16,
             inference.FeatureFlag.TORCH_FP16,
-            inference.FeatureFlag.DENSE_ONLY_FP32,
-            # inference.FeatureFlag.SPARSE_MIXTURE_FP32,
+            # inference.FeatureFlag.DENSE_ONLY_FP32,
+            inference.FeatureFlag.SPARSE_MIXTURE_FP32,
             inference.FeatureFlag.SPARSE_FUSED_FP32,
         ]
 
@@ -86,7 +86,9 @@ if __name__ == '__main__':
 
                 torch_run = 0
 
+
                 f.write(f'Layer {layer_id};{p};{m};{n};{sparsity_perc:.2f}')
+
                 for flag in methods:
                     torch.cuda.empty_cache()
                     time.sleep(1)
@@ -98,7 +100,7 @@ if __name__ == '__main__':
                         y, spqr_runs = inference.spqr_mul_timer(spqr_module_device, x_fp16_device, flag, NUM_RUNS)
 
                     spqr_runs = spqr_runs[WARMUP:]
-                    this_algorithm = spqr_runs.min()
+                    this_algorithm = spqr_runs.median()
 
                     if flag == inference.FeatureFlag.TORCH_FP16:
                         torch_run = this_algorithm
