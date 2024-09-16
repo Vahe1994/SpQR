@@ -25,6 +25,7 @@
 #include <vector>
 #include <cuda_pipeline.h>
 
+extern "C" __device__ uint32_t __nvvm_get_smem_pointer(void *);
 
 // TODO: Why isn't this already available?
 __device__ __forceinline__ __half operator+(const __half &lh,
@@ -542,6 +543,23 @@ template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH,
   const auto tid = threadIdx.x;
   u32 pipeline_id{};
 
+
+  if constexpr (std::is_same<Acc_t, float>::value) {
+    if (threadIdx.x < BETA1) {
+      // TOD: Check if this really sets s_y to zero.
+      asm volatile ("cp.async.ca.shared.global [%0], [%0], 4, 0 ;\n" :
+        : "r"(__nvvm_get_smem_pointer(s_y + threadIdx.x))
+      );
+    }
+  } else {
+    if (threadIdx.x < BETA1 / 2) {
+      asm volatile ("cp.async.ca.shared.global [%0], [%0], 4, 0 ;\n" :
+        : "r"(__nvvm_get_smem_pointer(s_y + threadIdx.x))
+      );
+    }
+  }
+
+
   for (int i = 0; i < MAX_PIPELINE_DEPTH && (i * total_threads + tid) < prob_n; i++) {
     unsigned idx = i * total_threads + tid;
     if (idx < count) {
@@ -714,65 +732,129 @@ template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH,
   using Vector_ptr_t = decltype(s_y_vectorized);
   using Vector_t = std::remove_pointer_t<Vector_ptr_t>;
 
-  if constexpr (!std::is_same<Acc_t, float>::value) {
-    if (threadIdx.x < BETA1 / 2) {
-      clr_bless_async<Vector_t, ThreadDim::X>(s_y_vectorized,
-                                              BETA1 / 2,
-                                              BETA1 / 2,
-                                              Vector_t());
-    }
-  } else {
-    if (threadIdx.x < BETA1) {
-      s_y_scalar[threadIdx.x] = 0.f;
-    }
-  }
-
-  auto result_scalar = acc;
-
-  auto other = __shfl_down_sync(HALF_MASK, result_scalar, BETA1);
-
-  auto result = add_and_accum(other, result_scalar);
-
-  const unsigned int lane_id = threadIdx.x & 0x1F;
-
-  if constexpr (std::is_same_v<Acc_t, float>) {
-    __syncthreads();
-    if (lane_id < BETA1) {
-      atomicAdd(s_y_scalar + lane_id, result);
-    }
-  } else {
-    auto result0 = __shfl_down_sync(0, result, threadIdx.x);
-    auto result1 = __shfl_down_sync(0, result, threadIdx.x + 1);
-    __syncthreads();
-    if (lane_id < BETA1 / 2) {
-      atomicAdd(s_y_vectorized + lane_id, make_half2(result0, result1));
-    }
+#if 1
+  // TODO: Make this async
+  __shared__ u32 s_row_offsets[BETA1 + 1];
+  if (threadIdx.x <= BETA1) {
+    s_row_offsets[threadIdx.x] = row_offsets[blockDim.x * BETA1 + threadIdx.x];
   }
 
   __syncthreads();
 
-  Acc_t _y[BETA1]{};
+  if (threadIdx.x < WARP_SIZE) {
+    auto tid = threadIdx.x % BETA1;
+    auto wid = threadIdx.x / BETA1;
 
-#if 1
+    int s = s_row_offsets[tid];
+    int e = s_row_offsets[tid + 1];
+
+    for (int i = s + wid; i < e; i += 2) {
+      auto colval = col_vals[i];
+      auto c = get_col(colval);
+      auto v = get_val(colval);
+      acc += __half2float(v) * __half2float(s_x[c]);
+    }
+
+    auto result_scalar = acc;
+    auto other = __shfl_down_sync(HALF_MASK, result_scalar, BETA1);
+    auto result = add_and_accum(other, result_scalar);
+    const unsigned int lane_id = threadIdx.x & 0x1F;
+    if constexpr (std::is_same_v<Acc_t, float>) {
+      __syncwarp();
+      if (lane_id < BETA1) {
+        atomicAdd(s_y_scalar + lane_id, result);
+      }
+    } else {
+      auto result0 = __shfl_down_sync(0, result, threadIdx.x);
+      auto result1 = __shfl_down_sync(0, result, threadIdx.x + 1);
+      __syncwarp();
+      if (lane_id < BETA1 / 2) {
+        atomicAdd(s_y_vectorized + lane_id, make_half2(result0, result1));
+      }
+    }
+  } else {
+    auto result_scalar = acc;
+    auto other = __shfl_down_sync(HALF_MASK, result_scalar, BETA1);
+    auto result = add_and_accum(other, result_scalar);
+    const unsigned int lane_id = threadIdx.x & 0x1F;
+    if constexpr (std::is_same_v<Acc_t, float>) {
+      __syncwarp();
+      if (lane_id < BETA1) {
+        atomicAdd(s_y_scalar + lane_id, result);
+      }
+    } else {
+      auto result0 = __shfl_down_sync(0, result, threadIdx.x);
+      auto result1 = __shfl_down_sync(0, result, threadIdx.x + 1);
+      __syncwarp();
+      if (lane_id < BETA1 / 2) {
+        atomicAdd(s_y_vectorized + lane_id, make_half2(result0, result1));
+      }
+    }
+  }
+  __syncthreads();
+
+
+#else
   // At this point, the result is in s_y.
   // printf("bdimx bdimxy = %d %d\n", blockDim.x, blockDim.y);
-  for (int i = tile_row_offsets[blockIdx.x] + threadIdx.x; i < tile_row_offsets[blockIdx.x + 1]; i += blockDim.x) {
-    // printf("blockIdx.x = %d i = %d\n", blockIdx.x, i);
-    u64 rcl = row_col_vals[i];
-    u16 r = get_row(rcl);
-    u16 c = get_col(rcl);
-    half v = get_val(rcl);
-    auto local_row = r % BETA1;
-    // atomicAdd(s_y_scalar + local_row, __half2float(s_x[c]) * __half2float(v));
-    _y[local_row] += __half2float(s_x[c]) * __half2float(v);
-    // s_y_scalar[local_row] += __half2float(s_x[c]) * __half2float(v);
+  u64 rcl;
+
+  union Payload {
+    uint64_t m;
+
+    struct {
+      int addr;
+      float res;
+    } members;
+  };
+
+  u16 r, c;
+  half v;
+  int local_row;
+
+  __shared__ u32 s_bounds[2];
+
+  if (threadIdx.x < 2) {
+    s_bounds[threadIdx.x] = tile_row_offsets[blockIdx.x + threadIdx.x];
+  }
+
+  __syncthreads();
+
+  for (int i = s_bounds[0] + threadIdx.x; ; i += blockDim.x) {
+    bool addr_check = i < s_bounds[1];
+    Payload p{};
+    p.members.addr = -1;
+    if (addr_check) {
+      rcl = row_col_vals[i];
+      r = get_row(rcl);
+      c = get_col(rcl);
+      v = get_val(rcl);
+      local_row = r % BETA1;
+      p.members.addr = local_row;
+      p.members.res = __half2float(s_x[c]) * __half2float(v);
+    }
+
+    __syncwarp(__activemask());
+
+    for (int j = 0; j < 1; j++) {
+      uint64_t other_p = __shfl_down_sync(__activemask(), p.m, j);
+      Payload other{.m = other_p};
+      auto valid = static_cast<float>(local_row == other.members.addr && addr_check && (threadIdx.x % WARP_SIZE) < threadIdx.x);
+      acc += other.members.res * valid;
+    }
+
+    if (!addr_check) {
+      break;
+    }
   }
   __syncthreads();
 #endif
 
+
   // At this point, the result is in s_y.
+
   if (threadIdx.x < BETA1) {
-    y_fp16[blockIdx.x * BETA1 + threadIdx.x] = __float2half(s_y_scalar[threadIdx.x] + _y[threadIdx.x]);
+    y_fp16[blockIdx.x * BETA1 + threadIdx.x] = __float2half(s_y_scalar[threadIdx.x]);
   }
 }
 
