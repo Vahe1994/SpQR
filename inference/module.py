@@ -30,7 +30,9 @@ class Mode(Enum):
 
 
 class LLama:
-    def _linear_to_spqr(self, mod, compressed_path, weights_to_quantize, layer_id=-1, parent_name=''):
+    def find_layers_to_quantize(self, mod, compressed_path, weights_to_quantize=None, layer_id=-1, parent_name=''):
+        if weights_to_quantize is None:
+            weights_to_quantize = []
         for name, m in mod.named_children():
             if name.isnumeric():
                 layer_id = int(name)
@@ -50,9 +52,9 @@ class LLama:
                 elif os.path.exists(p_pth):
                     weights_to_quantize.append((mod, name, p_pth))
             elif m is not mod:
-                self._linear_to_spqr(m, compressed_path, weights_to_quantize, layer_id, name)
+                self.find_layers_to_quantize(m, compressed_path, weights_to_quantize, layer_id, name)
 
-        return mod
+        return weights_to_quantize
 
     def change_tensor(self, w):
         mod, name, p = w
@@ -76,8 +78,7 @@ class LLama:
                 setattr(mod, name, spqr_module)
 
     def linear_to_spqr(self, model, quantized_model_path, device):
-        weights_to_quantize = []
-        model = self._linear_to_spqr(model, quantized_model_path, weights_to_quantize, layer_id=-1, parent_name='')
+        weights_to_quantize = self.find_layers_to_quantize(model, quantized_model_path, layer_id=-1, parent_name='')
 
         for w in tqdm(weights_to_quantize, "Loading quantized model"):
             self.change_tensor(w)
@@ -98,10 +99,6 @@ class LLama:
             for name in subset:
                 quantizer = Quantizer()
 
-                # m, n = subset[name].weight
-                # tile_m =
-
-                # quantizer.configure(wbits, perchannel=True, sym=False,qq_scale_bits=)
                 W = subset[name].weight.data
                 quantizer.find_params(W, weight=True)
                 subset[name].weight.data = quantize(W, quantizer.scale, quantizer.zero, quantizer.maxq).to(

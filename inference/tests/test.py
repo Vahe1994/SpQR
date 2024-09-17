@@ -97,7 +97,7 @@ class TestSparseFp16(unittest.TestCase):
                         y_true_dense, _ = inference.torch_mul_timer(deq_w, x_fp16_device, 1)
                         y = torch.zeros(m, dtype=torch.half, device=device)
 
-                        inference.spqr_mul(spqr_module_device, x_fp16_device, y, inference.FeatureFlag.SPARSE_MIXTURE_FP32)
+                        inference.spqr_mul(spqr_module_device, x_fp16_device, y, flag)
 
                         passed = torch.equal(y, y_true)
 

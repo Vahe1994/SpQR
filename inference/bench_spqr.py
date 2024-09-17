@@ -9,7 +9,7 @@ import inference
 from scipy.stats import gmean
 
 if __name__ == '__main__':
-    with open('__results.csv', 'w') as f:
+    with open('report/results_rtx_4060.csv', 'w') as f:
         base_path = sys.argv[1]
 
         seed = 1
@@ -33,7 +33,7 @@ if __name__ == '__main__':
             # inference.FeatureFlag.DENSE_ONLY_FP16,
             inference.FeatureFlag.TORCH_FP16,
             # inference.FeatureFlag.DENSE_ONLY_FP32,
-            inference.FeatureFlag.SPARSE_MIXTURE_FP32,
+            # inference.FeatureFlag.SPARSE_MIXTURE_FP32,
             inference.FeatureFlag.SPARSE_FUSED_FP32,
         ]
 
@@ -89,38 +89,39 @@ if __name__ == '__main__':
 
                 f.write(f'Layer {layer_id};{p};{m};{n};{sparsity_perc:.2f}')
 
-                for flag in methods:
-                    torch.cuda.empty_cache()
-                    time.sleep(1)
-                    print(f'Running {repr(flag)} on {layer_id}.{p}')
+                with torch.no_grad():
+                    for flag in methods:
+                        torch.cuda.empty_cache()
+                        time.sleep(1)
+                        print(f'Running {repr(flag)} on {layer_id}.{p}')
 
-                    if flag == inference.FeatureFlag.TORCH_FP16:
-                        y, spqr_runs = inference.torch_mul_timer(deq_w_device, x_fp16_device, NUM_RUNS)
-                    else:
-                        y, spqr_runs = inference.spqr_mul_timer(spqr_module_device, x_fp16_device, flag, NUM_RUNS)
+                        if flag == inference.FeatureFlag.TORCH_FP16:
+                            y, spqr_runs = inference.torch_mul_timer(deq_w_device, x_fp16_device, NUM_RUNS)
+                        else:
+                            y, spqr_runs = inference.spqr_mul_timer(spqr_module_device, x_fp16_device, flag, NUM_RUNS)
 
-                    spqr_runs = spqr_runs[WARMUP:]
-                    this_algorithm = spqr_runs.median()
+                        spqr_runs = spqr_runs[WARMUP:]
+                        this_algorithm = spqr_runs.median()
 
-                    if flag == inference.FeatureFlag.TORCH_FP16:
-                        torch_run = this_algorithm
+                        if flag == inference.FeatureFlag.TORCH_FP16:
+                            torch_run = this_algorithm
 
-                    speed_up = torch_run / this_algorithm
-                    print(
-                        f'\t{repr(flag)} running {this_algorithm} ms {speed_up :.2f}X speed-up')
+                        speed_up = torch_run / this_algorithm
+                        print(
+                            f'\t{repr(flag)} running {this_algorithm} ms {speed_up :.2f}X speed-up')
 
-                    f.write(f';{this_algorithm:.2f}')
+                        f.write(f';{this_algorithm:.2f}')
 
-                    if flag == inference.FeatureFlag.DENSE_ONLY_FP16:
-                        dense_speed_up = speed_up
-                    elif flag == inference.FeatureFlag.SPARSE_MIXTURE_FP32 or \
-                         flag == inference.FeatureFlag.SPARSE_FUSED_FP32:
-                        baseline_speed_up = speed_up
-                        benchmark_results_ms.append(this_algorithm)
-                        benchmark_speed_up.append(baseline_speed_up)
+                        if flag == inference.FeatureFlag.DENSE_ONLY_FP16:
+                            dense_speed_up = speed_up
+                        elif flag == inference.FeatureFlag.SPARSE_MIXTURE_FP32 or \
+                             flag == inference.FeatureFlag.SPARSE_FUSED_FP32:
+                            baseline_speed_up = speed_up
+                            benchmark_results_ms.append(this_algorithm)
+                            benchmark_speed_up.append(baseline_speed_up)
 
-                    if flag == inference.FeatureFlag.DENSE_ONLY_FP16 or flag == inference.FeatureFlag.DENSE_ONLY_FP32:
-                        assert (torch.allclose(y, y_true_dense, atol=1e-1, rtol=1e-1))
+                        if flag == inference.FeatureFlag.DENSE_ONLY_FP16 or flag == inference.FeatureFlag.DENSE_ONLY_FP32:
+                            assert (torch.allclose(y, y_true_dense, atol=1e-1, rtol=1e-1))
 
                 f.write('\n')
                 f.flush()

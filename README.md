@@ -136,11 +136,17 @@ Performance and runtime notes:
 ## Inference
 
 This repository also contains an efficient CUDA kernel implementation of the 
-SpQR matvec. The file `inference_demo.py` 
+SpQR matvec. The file `inference_demo.py` contains a demo of this functionality 
+by running end-to-end model inference. Below is an example of how to launch it.
 
-In order to run the inference 
-
-The file `inference_demo.py`
+```bash
+python inference_demo.py \
+  /mnt/6e3c126c-c6bb-43eb-9d82-1e59b2111688/ecrncevi/Llama-2-7b-hf \
+  /home/elvircrn/CLionProjects/spqr_kernel/data/output_identity \
+  /home/elvircrn/CLionProjects/spqr_kernel/data/output_identity_compressed \
+  /mnt/6e3c126c-c6bb-43eb-9d82-1e59b2111688/ecrncevi/SpQR/AQLM/data/red_pajama_n=4096_4096_context_length_llama.pth \
+  cuda 
+```
 
 
 ## Citation
