@@ -9,7 +9,7 @@ import inference
 from scipy.stats import gmean
 
 if __name__ == '__main__':
-    with open('report/results_rtx_4060.csv', 'w') as f:
+    with open('report/v2_results_rtx_4060.csv', 'w') as f:
         base_path = sys.argv[1]
 
         seed = 1
@@ -101,7 +101,7 @@ if __name__ == '__main__':
                             y, spqr_runs = inference.spqr_mul_timer(spqr_module_device, x_fp16_device, flag, NUM_RUNS)
 
                         spqr_runs = spqr_runs[WARMUP:]
-                        this_algorithm = spqr_runs.median()
+                        this_algorithm = spqr_runs.min()
 
                         if flag == inference.FeatureFlag.TORCH_FP16:
                             torch_run = this_algorithm

@@ -60,6 +60,11 @@ __forceinline__ __device__ half shfl_reduce_half(half val) {
   return val;
 }
 
+using u64 = unsigned long long;
+using s32 = int;
+using u32 = unsigned int;
+using u16 = unsigned short;
+
 union RowBits {
   uint64_t mask;
 
@@ -69,19 +74,30 @@ union RowBits {
     uint64_t w: 48;
   };
 
-  __device__ uint64_t get_w(int i) {
+  __device__ __forceinline__ u16 get_w(int i) const {
     return (w >> (i * 3u)) & ((1u << 3u) - 1u);
   }
+
+  __device__ __forceinline__ u32 get_w2(int i) const {
+    return (mask >> (i * 6u)) & ((1u << 6u) - 1u);
+  }
 };
+
+static constexpr uint64_t magic = 0b10001111000110100010110001001000010100000001111000000000ull;
+
+
+__device__ __forceinline__ unsigned short fast_decode(unsigned short q) {
+  // The magic constant is now in constant memory for faster access.
+
+  // Shift the magic value right by 7 bits * q, and directly return the result.
+  // Since im is used for a lookup table, we shift and extract the correct value.
+  return static_cast<unsigned short>(0x4000 + q * 0x100);
+}
 
 template<class Bit_t, uint64_t BITS> __forceinline__ __host__ __device__ Bit_t get_bit(Bit_t w, Bit_t w_id) {
   return (w >> (w_id * BITS)) & ((1ull << BITS) - 1ull);
 }
 
-using u64 = unsigned long long;
-using s32 = int;
-using u32 = unsigned int;
-using u16 = unsigned short;
 
 half2 __forceinline__ __device__ dequantize2(const half2 &q,
                                              const half2 &s,
@@ -513,6 +529,7 @@ template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH,
     // Outliers
     const int *row_offsets,
     const u32 *col_vals,
+    const short *__restrict__ order,
     // Output
     half *__restrict__ y_fp16) {
   /*
@@ -527,6 +544,17 @@ template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH,
            └─────────────┘ └─┘   └─┘
   */
   extern __shared__ half s_x[];
+
+  __shared__ half2 s_half2_lut[64];
+
+  if (!threadIdx.x) {
+    for (int i = 0; i < 8; i++) {
+      for (int j = 0; j < 8; j++) {
+        s_half2_lut[j * 8 + i] = make_half2(__int2half_rd(i), __int2half_rd(j));
+      }
+    }
+  }
+
 
   __shared__ Acc_t s_y[BETA1];
   __shared__ u32 s_row_offsets[BETA1 + 1];
@@ -697,10 +725,7 @@ template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH,
     }
 
     if (!finished) {
-      int s = row_bits.s;
-      int z = row_bits.z;
-      half2 first_order_quantized = make_half2(__int2half_rd(s), __int2half_rd(z));
-
+      half2 first_order_quantized = s_half2_lut[row_bits.get_w2(0)];
       half2 first_order_dequantized = dequantize2(first_order_quantized,
                                                   iter_second_order.get_sws2(),
                                                   iter_second_order.get_swz2());
@@ -710,16 +735,16 @@ template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH,
 
 #pragma unroll
       for (int j = 0; j < BETA2 / 2; j++) {
-        int q_x = row_bits.get_w(2 * j);
-        int q_y = row_bits.get_w(2 * j + 1);
         if constexpr (std::is_same<Acc_t, float>::value) {
-          half2 q = make_half2(__int2half_rd(q_x), __int2half_rd(q_y));
+          half2 q = s_half2_lut[row_bits.get_w2(j + 1)];
           half2 w = dequantize2(q, ws2, wz2);
           float2 x_fp32 = __half22float2(s_x2[i * (BETA2 / 2) + j]);
           float2 w_fp32 = __half22float2(w);
           acc = fmaf(x_fp32.x, w_fp32.x, acc);
           acc = fmaf(x_fp32.y, w_fp32.y, acc);
         } else {
+          int q_x = row_bits.get_w(2 * j);
+          int q_y = row_bits.get_w(2 * j + 1);
           half2 q = make_half2(__int2half_rd(q_x), __int2half_rd(q_y));
           half2 w = dequantize2(q, ws2, wz2);
           acc = __hfma2(s_x2[i * BETA2 / 2 + j], w, acc);
@@ -788,11 +813,17 @@ template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH,
   __syncthreads();
 
 
-  // At this point, the result is in s_y.
-
-  if (threadIdx.x < BETA1) {
-    y_fp16[blockIdx.x * BETA1 + threadIdx.x] = __float2half(s_y_scalar[threadIdx.x]);
+  if (order == nullptr) {
+    if (threadIdx.x < BETA1 / 2) {
+      reinterpret_cast<half2 *>(y_fp16)[blockIdx.x * (BETA1 / 2) + threadIdx.x] = __float22half2_rn(s_y_vectorized[threadIdx.x]);
+    }
+  } else {
+    if (threadIdx.x < BETA1) {
+      short row = order[blockIdx.x * BETA1 + threadIdx.x];
+      y_fp16[row] = __float2half(s_y_scalar[threadIdx.x]);
+    }
   }
+
 }
 
 
@@ -1481,8 +1512,6 @@ union Features {
   } flags;
 };
 
-#include <iostream>
-
 int spqr_matvec(
     // W and meta
     int bits,
@@ -1503,6 +1532,7 @@ int spqr_matvec(
     // 16-bit
     // Input
     void *X,
+    void *order,
     // Output
     void *y,
     cudaStream_t stream,
@@ -1531,11 +1561,14 @@ int spqr_matvec(
   const auto *second_order_data_ptr =
       static_cast<const SecondOrder *>(second_order_data);
   const auto *col_vals_ptr = (const u32 *) col_vals;
+  const short *order_ptr = (const short *) order;
 
   float *d_yfp32;
-  cudaMalloc((void **) &d_yfp32, sizeof(float) * prob_m);
-  cudaMemset(d_yfp32, 0, sizeof(float) * prob_m);
-  cudaDeviceSynchronize();
+  if (features.flags.shared_mixture) {
+    cudaMalloc((void **) &d_yfp32, sizeof(float) * prob_m);
+    cudaMemset(d_yfp32, 0, sizeof(float) * prob_m);
+    cudaDeviceSynchronize();
+  }
 
   int ret = 0;
 
@@ -1560,6 +1593,7 @@ int spqr_matvec(
               X_ptr,
               row_offsets_ptr,
               col_vals_ptr,
+              order_ptr,
               y_ptr);
   } else {
     spqr_quantized_matvec<3, 16, 16, BLOCK_HEIGHT, BLOCK_WIDTH, 32, float,
@@ -1628,7 +1662,9 @@ int spqr_matvec(
     delete timer;
   }
 
-  cudaFree(d_yfp32);
+  if (!features.flags.fused_sparse) {
+    cudaFree(d_yfp32);
+  }
 
   return ret;
 }

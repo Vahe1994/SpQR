@@ -99,6 +99,7 @@ int spqr_matvec(
     // 16-bit
     // Input
     void *X,
+    void *order,
     // Output
     void *y,
     // GPU meta
@@ -277,7 +278,7 @@ void spqr_mul_timer(int m, int n,
                         // CSR Outliers
                         row_ids.data_ptr(), row_offsets.data_ptr(),
                         col_val.data_ptr(), nnz, dense_row_count, X.data_ptr(),
-                        Y.data_ptr(), at::cuda::getCurrentCUDAStream(dev),
+                        nullptr, Y.data_ptr(), at::cuda::getCurrentCUDAStream(dev),
                         measurements.data_ptr(), feature_flag);
 }
 
@@ -303,7 +304,7 @@ void spqr_mul(int m, int n,
   int err = spqr_matvec(
       bits, m, n, beta1, beta2, buff0.data_ptr(), buff1.data_ptr(),
       row_ids.data_ptr(), row_offsets.data_ptr(), col_val_ptr.data_ptr(), nnz,
-      dense_row_count, X.data_ptr(), Y.data_ptr(),
+      dense_row_count, X.data_ptr(), nullptr, Y.data_ptr(),
       at::cuda::getCurrentCUDAStream(dev), nullptr, feature_flag);
 }
 

@@ -27,7 +27,7 @@ if __name__ == '__main__':
     group_labels = [
         # FeatureFlag.SPARSE_SHARED_BASELINE_FP16.pretty() + ' (ms)',
         inference.FeatureFlag.TORCH_FP16.pretty() + ' (ms)',
-        inference.FeatureFlag.SPARSE_MIXTURE_FP32.pretty() + ' (ms)'
+        inference.FeatureFlag.SPARSE_FUSED_FP32.pretty() + ' (ms)'
     ]
     torch_key = group_labels[0]
 
