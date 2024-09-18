@@ -1558,8 +1558,7 @@ int spqr_matvec(
   const int *row_offsets_ptr = (const int *) row_offsets;
   const short *row_ids_ptr = (short *) row_ids;
   half *y_ptr = (half *) y;
-  const auto *second_order_data_ptr =
-      static_cast<const SecondOrder *>(second_order_data);
+  const auto *second_order_data_ptr = static_cast<const SecondOrder *>(second_order_data);
   const auto *col_vals_ptr = (const u32 *) col_vals;
   const short *order_ptr = (const short *) order;
 
