@@ -565,13 +565,13 @@ __global__ void spqr_quantized_matvec_fused(
 
   __shared__ half2 s_half2_lut[64];
 
-//  if (!threadIdx.x) {
-//    for (int i = 0; i < 8; i++) {
-//      for (int j = 0; j < 8; j++) {
-//        s_half2_lut[j * 8 + i] = make_half2(__int2half_rd(i), __int2half_rd(j));
-//      }
-//    }
-//  }
+  if (!threadIdx.x) {
+    for (int i = 0; i < 8; i++) {
+      for (int j = 0; j < 8; j++) {
+        s_half2_lut[j * 8 + i] = make_half2(__int2half_rd(i), __int2half_rd(j));
+      }
+    }
+  }
 
 
   __shared__ Acc_t s_y[BETA1];
@@ -767,6 +767,7 @@ __global__ void spqr_quantized_matvec_fused(
       __pipeline_commit();
     }
   }
+  return;
 
   auto s_y_scalar = scalarize<Acc_t>(s_y);
   auto s_y_vectorized = vectorize(s_y_scalar);
