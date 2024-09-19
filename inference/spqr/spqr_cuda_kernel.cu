@@ -775,7 +775,15 @@ template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH,
   int wid = threadIdx.x / BETA1;
 
   // We need to help out the compiler here - step size needs to be constexpr.
-  if (blockDim.x == 128) {
+  if (blockDim.x == 256) {
+    constexpr int step = 16;
+    for (int i = s + wid; i < e; i += step) {
+      auto colval = col_vals[i];
+      auto c = get_col(colval);
+      auto v = get_val(colval);
+      acc += __half2float(v) * __half2float(s_x[c]);
+    }
+  } else if (blockDim.x == 128) {
     constexpr int step = 8;
     for (int i = s + wid; i < e; i += step) {
       auto colval = col_vals[i];
