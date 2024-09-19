@@ -766,8 +766,8 @@ __global__ void spqr_quantized_matvec_fused(
       pipeline_stack_ptr++;
       __pipeline_commit();
     }
+    return;
   }
-  return;
 
   auto s_y_scalar = scalarize<Acc_t>(s_y);
   auto s_y_vectorized = vectorize(s_y_scalar);
