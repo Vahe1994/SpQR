@@ -244,10 +244,6 @@ def ones(m, n, beta1=16, beta2=16, bits=3) -> SPQRHost:
     col_ids = torch.zeros(1)
     nnz = 0
 
-    x = torch.ones(n).float()
-    y_gt = torch.zeros(m).float()
-    y = torch.zeros(m).float()
-
     return SPQRHost(
         m=m,
         n=n,

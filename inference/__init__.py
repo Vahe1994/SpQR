@@ -67,7 +67,7 @@ class SPQRHost:
     def nnz(self) -> int:
         return self.col_vals.shape[0]
 
-    def __init__(self, m, n, bits, W, beta1, beta2, W_s, W_z, W_s_s, W_s_z, W_z_s, W_z_z, row_offsets, col_ids, values, perm=None):
+    def __init__(self, m, n, bits, W, beta1, beta2, W_s, W_z, W_s_s, W_s_z, W_z_s, W_z_z, row_offsets, col_ids, values, in_perm=None, out_perm=None):
         self.m = m
         self.n = n
         self.bits = bits
@@ -83,11 +83,8 @@ class SPQRHost:
         self.row_offsets = row_offsets
         self.col_ids = col_ids
         self.values = values
-
-        if perm is None:
-            self.perm = torch.arange(m).short()
-        else:
-            self.perm = perm
+        self.in_perm = in_perm
+        self.out_perm = out_perm
 
         if self.values.shape[0] != 0:
             self.col_vals = values.view(torch.int16).to(torch.int64).bitwise_left_shift(16).bitwise_or(
@@ -124,7 +121,8 @@ class SPQRModule(nn.Module):
         self.col_vals = spqr_host.col_vals
         self.dense_row_count = spqr_host.dense_row_count
         self.deq_w = None
-        self.perm = spqr_host.perm
+        self.in_perm = spqr_host.in_perm
+        self.out_perm = spqr_host.out_perm
 
     def to_device(self, device: torch.device):
         self.buff0 = self.buff0.to(device=device)
@@ -148,7 +146,12 @@ class SPQRModule(nn.Module):
         self.row_ids = fn(self.row_ids)
         self.row_offsets = fn(self.row_offsets)
         self.col_vals = fn(self.col_vals)
-        self.perm = fn(self.perm)
+
+        if self.in_perm is not None:
+            self.in_perm = fn(self.in_perm)
+
+        if self.out_perm is not None:
+            self.out_perm = fn(self.out_perm)
 
         return self
 
@@ -161,14 +164,16 @@ class SPQRModule(nn.Module):
         return 1 - self.density
 
     def forward(self, x: T) -> T:
-        perm_long = self.perm.long()
-
         inner_dim = x.shape[1]
         y = torch.zeros((1, inner_dim, self.m), dtype=x.dtype, device=x.device)
 
         for i in range(inner_dim):
             _y = torch.zeros(self.m, dtype=x.dtype, device=x.device)
-            _x = x[0, i, :].flatten()[perm_long]
+            _x = x[0, i, :].flatten()
+
+            if self.in_perm is not None:
+                _x = _x[self.in_perm]
+
             spqr_cuda.spqr_mul(
                 self.m,
                 self.n,
@@ -186,6 +191,11 @@ class SPQRModule(nn.Module):
                 _x,
                 _y,
                 FeatureFlag.SPARSE_FUSED_FP32)
+
+            if self.out_perm is not None:
+                out_perm_long = self.out_perm
+                _y = _y[out_perm_long]
+
             y[0, i, :] = _y
 
         return y
@@ -995,6 +1005,8 @@ def write_tensor(spqr_host: SPQRHost, path: str):
 
 def load_compressed_tensor(p: str) -> SPQRModule:
     spqr_module = torch.load(p)
+    spqr_module.in_perm = spqr_module.perm.long()
+    spqr_module.out_perm = None
     return spqr_module
 
 
@@ -1035,7 +1047,7 @@ def load_original_tensor(p: str, model_args: ModelArgs) -> SPQRHost:
         row_offsets=outliers_matrix.crow_indices().int(),
         col_ids=col_ids,
         values=values,
-        perm=perm.short()
+        in_perm=perm.long()
     )
 
 

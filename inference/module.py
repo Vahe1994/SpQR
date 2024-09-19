@@ -30,7 +30,7 @@ class Mode(Enum):
 
 
 class LLama:
-    def find_layers_to_quantize(self, mod, compressed_path, weights_to_quantize=None, layer_id=-1, parent_name=''):
+    def find_layers_to_quantize(self, mod, compressed_path, parent_module=None, weights_to_quantize=None, layer_id=-1, parent_name=''):
         if weights_to_quantize is None:
             weights_to_quantize = []
         for name, m in mod.named_children():
@@ -46,18 +46,18 @@ class LLama:
                 p_pt = os.path.join(compressed_path, f'{layer_id}', f'{parent_name}.{name}.pt')
                 p_pth = os.path.join(compressed_path, f'{layer_id}', f'{parent_name}.{name}.pth')
                 if os.path.exists(p):
-                    weights_to_quantize.append((mod, name, p))
+                    weights_to_quantize.append((parent_module, mod, name, p))
                 elif os.path.exists(p_pt):
-                    weights_to_quantize.append((mod, name, p_pt))
+                    weights_to_quantize.append((parent_module, mod, name, p_pt))
                 elif os.path.exists(p_pth):
-                    weights_to_quantize.append((mod, name, p_pth))
+                    weights_to_quantize.append((parent_module, mod, name, p_pth))
             elif m is not mod:
-                self.find_layers_to_quantize(m, compressed_path, weights_to_quantize, layer_id, name)
+                self.find_layers_to_quantize(m, compressed_path, mod, weights_to_quantize, layer_id, name)
 
         return weights_to_quantize
 
     def change_tensor(self, w):
-        mod, name, p = w
+        parent_module, mod, name, p = w
 
         if self.flag == Mode.CPU_DEQUANTIZE_ORIGINAL:
             model = torch.load(p)
