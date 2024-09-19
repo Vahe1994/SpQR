@@ -67,7 +67,8 @@ class SPQRHost:
     def nnz(self) -> int:
         return self.col_vals.shape[0]
 
-    def __init__(self, m, n, bits, W, beta1, beta2, W_s, W_z, W_s_s, W_s_z, W_z_s, W_z_z, row_offsets, col_ids, values, in_perm=None, out_perm=None):
+    def __init__(self, m, n, bits, W, beta1, beta2, W_s, W_z, W_s_s, W_s_z, W_z_s, W_z_z, row_offsets, col_ids, values,
+                 in_perm=None, out_perm=None):
         self.m = m
         self.n = n
         self.bits = bits
@@ -105,6 +106,7 @@ class SPQRHost:
 
         spqr_cuda.tensor_compress_interleaved(m, n, bits, W, beta1, beta2, W_s, W_z, W_s_s, W_s_z, W_z_s, W_z_z,
                                               self.buff0, self.buff1)
+
 
 class SPQRModule(nn.Module):
     def __init__(self, spqr_host: SPQRHost, *args, **kwargs):
@@ -167,13 +169,12 @@ class SPQRModule(nn.Module):
         inner_dim = x.shape[1]
         y = torch.zeros((1, inner_dim, self.m), dtype=x.dtype, device=x.device)
 
+        # start_time = time.time()
         for i in range(inner_dim):
             _y = torch.zeros(self.m, dtype=x.dtype, device=x.device)
             _x = x[0, i, :].flatten()
-
             if self.in_perm is not None:
                 _x = _x[self.in_perm]
-
             spqr_cuda.spqr_mul(
                 self.m,
                 self.n,
@@ -191,15 +192,14 @@ class SPQRModule(nn.Module):
                 _x,
                 _y,
                 FeatureFlag.SPARSE_FUSED_FP32)
-
             if self.out_perm is not None:
                 out_perm_long = self.out_perm
                 _y = _y[out_perm_long]
-
             y[0, i, :] = _y
-
+        # end_time = time.time()
+        # duration = end_time - start_time
+        # print(f'\t\t{duration:.10f}')
         return y
-
 
 
 # Compression

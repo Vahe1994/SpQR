@@ -1,4 +1,5 @@
 import os
+import time
 from enum import Enum
 
 import torch
@@ -157,8 +158,12 @@ class LLama:
             input_ids = inputs['input_ids']
             attention_mask = inputs['attention_mask']
 
+            start_time = time.time()
             outputs = self.model(input_ids=input_ids, attention_mask=attention_mask, cache_position=cache_position,
                                  past_key_values=past_key_values, use_cache=True)
+            torch.cuda.synchronize()
+            end_time = time.time()
+            print(f'duration = {end_time - start_time}')
 
             next_token_ids = outputs.logits[:, -1:].argmax(-1)
             generated_ids = torch.cat([generated_ids, next_token_ids], dim=-1)
