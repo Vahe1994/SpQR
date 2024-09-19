@@ -564,7 +564,7 @@ template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH,
 
   u32 t_id = blockDim.x * threadIdx.y + threadIdx.x;
   const u32 TOTAL_THREADS = blockDim.x * blockDim.y;
-  const u32 MAX_PIPELINE_DEPTH = 4;
+  const u32 MAX_PIPELINE_DEPTH = 8;
   u32 pipeline_depth{};
 
   const auto total_threads = blockDim.x;
