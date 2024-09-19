@@ -1606,7 +1606,7 @@ int spqr_matvec(
 
   if (features.flags.fused_sparse) {
     if (is_a100) {
-      CALL_FUSED(1, 32, 2);
+      CALL_FUSED(1, 64, 2);
     } else {
       CALL_FUSED(1, 16, 4);
     }
