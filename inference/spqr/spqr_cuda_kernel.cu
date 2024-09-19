@@ -565,13 +565,13 @@ __global__ void spqr_quantized_matvec_fused(
 
   __shared__ half2 s_half2_lut[64];
 
-  if (!threadIdx.x) {
-    for (int i = 0; i < 8; i++) {
-      for (int j = 0; j < 8; j++) {
-        s_half2_lut[j * 8 + i] = make_half2(__int2half_rd(i), __int2half_rd(j));
-      }
-    }
-  }
+//  if (!threadIdx.x) {
+//    for (int i = 0; i < 8; i++) {
+//      for (int j = 0; j < 8; j++) {
+//        s_half2_lut[j * 8 + i] = make_half2(__int2half_rd(i), __int2half_rd(j));
+//      }
+//    }
+//  }
 
 
   __shared__ Acc_t s_y[BETA1];
@@ -778,6 +778,7 @@ __global__ void spqr_quantized_matvec_fused(
   int wid = threadIdx.x / BETA1;
 
   // We need to help out the compiler here - step size needs to be constexpr.
+#if 1
   if (blockDim.x == 512) {
     constexpr int step = 32;
     for (int i = s + wid; i < e; i += step) {
@@ -811,6 +812,7 @@ __global__ void spqr_quantized_matvec_fused(
       acc += __half2float(v) * __half2float(s_x[c]);
     }
   }
+#endif
 
   auto result_scalar = acc;
   auto other = __shfl_down_sync(HALF_MASK, result_scalar, BETA1);
@@ -1606,7 +1608,7 @@ int spqr_matvec(
 
   if (features.flags.fused_sparse) {
     if (is_a100) {
-      CALL_FUSED(1, 64, 2);
+      CALL_FUSED(1, 32, 2);
     } else {
       CALL_FUSED(1, 16, 4);
     }
