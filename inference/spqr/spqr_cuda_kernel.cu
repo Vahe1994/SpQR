@@ -521,7 +521,7 @@ DEVICE_INLINE u16 get_row(u64 m) { return m >> 32u; }
     constexpr int BLOCK_HEIGHT = _BLOCK_HEIGHT; \
     constexpr int BLOCK_WIDTH = _BLOCK_WIDTH; \
     size_t smem_size = sizeof(half) * prob_n; \
-    spqr_quantized_matvec_fused<3, 16, 16, BLOCK_HEIGHT, BLOCK_WIDTH, 32, float, uint64_t, PIPELINE_DEPTH> \
+    spqr_quantized_matvec_fused<3, 16, 16, BLOCK_HEIGHT, BLOCK_WIDTH, float, uint64_t, PIPELINE_DEPTH> \
             <<<dim3(updiv(prob_m, 16 * BLOCK_HEIGHT), 1, 1), \
             dim3(__min(updiv(prob_n, 16), BLOCK_WIDTH) * 16, 1, 1), smem_size, \
             stream>>>(prob_m, \
@@ -535,8 +535,7 @@ DEVICE_INLINE u16 get_row(u64 m) { return m >> 32u; }
             y_ptr);
 
 //
-template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH,
-    int A, class Acc_t, class W_t /* = uint64_t */, int PIPELINE_DEPTH>
+template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH, class Acc_t, class W_t /* = uint64_t */, int PIPELINE_DEPTH>
 __global__ void spqr_quantized_matvec_fused(
     // W and meta
     unsigned int prob_m,
@@ -694,19 +693,6 @@ __global__ void spqr_quantized_matvec_fused(
     return;
   } // || (threadIdx.x % BETA1)
 
-
-  u32 _num_participating_threads = {};
-
-  if (prob_n <= 128 || prob_m <= 128) {
-    u32 activemask = __activemask();
-    while (activemask & 1u) {
-      _num_participating_threads++;
-      activemask >>= 1u;
-    }
-  } else {
-    _num_participating_threads = blockDim.x;
-  }
-
   const int addr_per_row = MAX_ADDR_PER_ROW;
 
   for (int i = subtile_id, group_id = 0;; i += num_spqr_tiles_per_iteration, group_id++) {
@@ -785,7 +771,6 @@ __global__ void spqr_quantized_matvec_fused(
   auto s_y_scalar = scalarize<Acc_t>(s_y);
   auto s_y_vectorized = vectorize(s_y_scalar);
   using Vector_ptr_t = decltype(s_y_vectorized);
-  using Vector_t = std::remove_pointer_t<Vector_ptr_t>;
 
   int t = threadIdx.x % BETA1;
   int s = s_row_offsets[t];
@@ -793,7 +778,15 @@ __global__ void spqr_quantized_matvec_fused(
   int wid = threadIdx.x / BETA1;
 
   // We need to help out the compiler here - step size needs to be constexpr.
-  if (blockDim.x == 256) {
+  if (blockDim.x == 512) {
+    constexpr int step = 32;
+    for (int i = s + wid; i < e; i += step) {
+      auto colval = col_vals[i];
+      auto c = get_col(colval);
+      auto v = get_val(colval);
+      acc += __half2float(v) * __half2float(s_x[c]);
+    }
+  } else if (blockDim.x == 256) {
     constexpr int step = 16;
     for (int i = s + wid; i < e; i += step) {
       auto colval = col_vals[i];
@@ -836,6 +829,7 @@ __global__ void spqr_quantized_matvec_fused(
       atomicAdd(s_y_vectorized + lane_id, make_half2(result0, result1));
     }
   }
+
   __syncthreads();
 
 
@@ -849,7 +843,6 @@ __global__ void spqr_quantized_matvec_fused(
       y_fp16[row] = __float2half(s_y_scalar[threadIdx.x]);
     }
   }
-
 }
 
 
@@ -1613,15 +1606,14 @@ int spqr_matvec(
 
   if (features.flags.fused_sparse) {
     if (is_a100) {
-      CALL_FUSED(1, 16, 4);
+      CALL_FUSED(1, 32, 2);
     } else {
       CALL_FUSED(1, 16, 4);
     }
   } else {
     constexpr int BLOCK_HEIGHT = 1;
     constexpr int BLOCK_WIDTH = 16;
-    spqr_quantized_matvec<3, 16, 16, BLOCK_HEIGHT, BLOCK_WIDTH, 32, float,
-                          uint64_t>
+    spqr_quantized_matvec<3, 16, 16, BLOCK_HEIGHT, BLOCK_WIDTH, 32, float, uint64_t>
     <<<dim3(updiv(prob_m, 16 * BLOCK_HEIGHT), 1, 1),
     dim3(__min(updiv(prob_n, 16), BLOCK_WIDTH) * 16, 1, 1), 0, stream>>>(
         prob_m,
