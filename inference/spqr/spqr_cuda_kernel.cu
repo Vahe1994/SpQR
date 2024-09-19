@@ -1578,7 +1578,7 @@ int spqr_matvec(
   }
 
   constexpr int BLOCK_HEIGHT = 1;
-  constexpr int BLOCK_WIDTH = 8;
+  constexpr int BLOCK_WIDTH = 16;
 
   if (features.flags.fused_sparse) {
     size_t smem_size = sizeof(half) * prob_n;
