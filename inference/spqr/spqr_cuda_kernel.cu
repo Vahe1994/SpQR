@@ -24,6 +24,7 @@
 
 #include <vector>
 #include <cuda_pipeline.h>
+#include <iostream>
 
 extern "C" __device__ uint32_t __nvvm_get_smem_pointer(void *);
 
@@ -516,9 +517,27 @@ DEVICE_INLINE half get_val(u64 m) {
 
 DEVICE_INLINE u16 get_row(u64 m) { return m >> 32u; }
 
+#define CALL_FUSED(_BLOCK_HEIGHT, _BLOCK_WIDTH, PIPELINE_DEPTH) \
+    constexpr int BLOCK_HEIGHT = _BLOCK_HEIGHT; \
+    constexpr int BLOCK_WIDTH = _BLOCK_WIDTH; \
+    size_t smem_size = sizeof(half) * prob_n; \
+    spqr_quantized_matvec_fused<3, 16, 16, BLOCK_HEIGHT, BLOCK_WIDTH, 32, float, uint64_t, PIPELINE_DEPTH> \
+            <<<dim3(updiv(prob_m, 16 * BLOCK_HEIGHT), 1, 1), \
+            dim3(__min(updiv(prob_n, 16), BLOCK_WIDTH) * 16, 1, 1), smem_size, \
+            stream>>>(prob_m, \
+            prob_n, \
+            raw_data, \
+            second_order_data_ptr, \
+            X_ptr, \
+            row_offsets_ptr, \
+            col_vals_ptr, \
+            order_ptr, \
+            y_ptr);
+
 //
 template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH,
-    int A, class Acc_t, class W_t /* = uint64_t */> __global__ void spqr_quantized_matvec_fused(
+    int A, class Acc_t, class W_t /* = uint64_t */, int PIPELINE_DEPTH>
+__global__ void spqr_quantized_matvec_fused(
     // W and meta
     unsigned int prob_m,
     unsigned int prob_n,
@@ -564,7 +583,6 @@ template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH,
 
   u32 t_id = blockDim.x * threadIdx.y + threadIdx.x;
   const u32 TOTAL_THREADS = blockDim.x * blockDim.y;
-  const u32 MAX_PIPELINE_DEPTH = 8;
   u32 pipeline_depth{};
 
   const auto total_threads = blockDim.x;
@@ -600,7 +618,7 @@ template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH,
   }
 
 
-  for (int i = 0; i < MAX_PIPELINE_DEPTH && (i * total_threads + tid) < prob_n; i++) {
+  for (int i = 0; i < PIPELINE_DEPTH && (i * total_threads + tid) < prob_n; i++) {
     unsigned idx = i * total_threads + tid;
     if (idx < count) {
       __pipeline_memcpy_async(s_x2 + idx, x2 + idx, sizeof(half2));
@@ -1546,6 +1564,13 @@ int spqr_matvec(
     cudaStream_t stream,
     void *measurements,
     uint32_t feature_flag) {
+  cudaDeviceProp device_properties;
+  cudaGetDeviceProperties(&device_properties, 0);
+  std::string gpu_name = device_properties.name;
+
+  bool is_a100 = gpu_name.find("A100") != std::string::npos;
+
+
   if (prob_m == 0 || prob_n == 0) {
     return 0;
   }
@@ -1585,24 +1610,16 @@ int spqr_matvec(
     timer->start();
   }
 
-  constexpr int BLOCK_HEIGHT = 1;
-  constexpr int BLOCK_WIDTH = 16;
 
   if (features.flags.fused_sparse) {
-    size_t smem_size = sizeof(half) * prob_n;
-    spqr_quantized_matvec_fused<3, 16, 16, BLOCK_HEIGHT, BLOCK_WIDTH, 32, float, uint64_t>
-    <<<dim3(updiv(prob_m, 16 * BLOCK_HEIGHT), 1, 1),
-    dim3(__min(updiv(prob_n, 16), BLOCK_WIDTH) * 16, 1, 1), smem_size,
-    stream>>>(prob_m,
-              prob_n,
-              raw_data,
-              second_order_data_ptr,
-              X_ptr,
-              row_offsets_ptr,
-              col_vals_ptr,
-              order_ptr,
-              y_ptr);
+    if (is_a100) {
+      CALL_FUSED(1, 16, 1);
+    } else {
+      CALL_FUSED(1, 16, 1);
+    }
   } else {
+    constexpr int BLOCK_HEIGHT = 1;
+    constexpr int BLOCK_WIDTH = 16;
     spqr_quantized_matvec<3, 16, 16, BLOCK_HEIGHT, BLOCK_WIDTH, 32, float,
                           uint64_t>
     <<<dim3(updiv(prob_m, 16 * BLOCK_HEIGHT), 1, 1),

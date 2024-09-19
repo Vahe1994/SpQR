@@ -492,7 +492,7 @@ def spqr_mul_timer(spqr_device: SPQRModule, x, feature_flag: FeatureFlag, num_ru
         y = torch.zeros_like(y)
         spqr_cuda.spqr_mul_timer(
             spqr_device.m,
-            spqr_device.n,
+        spqr_device.n,
             spqr_device.bits,
             spqr_device.beta1,
             spqr_device.beta2,
