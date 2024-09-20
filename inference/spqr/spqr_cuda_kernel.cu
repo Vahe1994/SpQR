@@ -696,10 +696,11 @@ __global__ void spqr_quantized_matvec_fused(
 
   const int addr_per_row = MAX_ADDR_PER_ROW;
 
+  __syncthreads();
   for (int i = subtile_id; i < num_spqr_tiles_per_cuda_block; i += num_spqr_tiles_per_iteration, global_tile_id += num_spqr_tiles_per_iteration) {
-//    iter_second_order.load_async();
-//    row_bits.mask = raw_data[MAX_ADDR_PER_TILE * global_tile_id + row_pos * addr_per_row];
-//    __syncwarp();
+    iter_second_order.load_async();
+    row_bits.mask = raw_data[MAX_ADDR_PER_TILE * global_tile_id + row_pos * addr_per_row];
+    __syncthreads();
 
     if (pipeline_stack_ptr > 0) {
       __pipeline_wait_prior(pipeline_stack_ptr - 1);
