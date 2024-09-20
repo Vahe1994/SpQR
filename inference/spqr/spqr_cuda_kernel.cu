@@ -517,11 +517,11 @@ DEVICE_INLINE half get_val(u64 m) {
 
 DEVICE_INLINE u16 get_row(u64 m) { return m >> 32u; }
 
-#define CALL_FUSED(_BLOCK_HEIGHT, _BLOCK_WIDTH, PIPELINE_DEPTH) \
+#define CALL_FUSED(F, _BLOCK_HEIGHT, _BLOCK_WIDTH, PIPELINE_DEPTH) \
     constexpr int BLOCK_HEIGHT = _BLOCK_HEIGHT; \
     constexpr int BLOCK_WIDTH = _BLOCK_WIDTH; \
-    size_t smem_size = sizeof(half) * prob_n; \
-    spqr_quantized_matvec_fused<3, 16, 16, BLOCK_HEIGHT, BLOCK_WIDTH, float, uint64_t, PIPELINE_DEPTH> \
+    size_t smem_size = sizeof(half) * prob_n;                   \
+    F<3, 16, 16, BLOCK_HEIGHT, BLOCK_WIDTH, float, uint64_t, PIPELINE_DEPTH> \
             <<<dim3(updiv(prob_m, 16 * BLOCK_HEIGHT), 1, 1), \
             dim3(__min(updiv(prob_n, 16), BLOCK_WIDTH) * 16, 1, 1), smem_size, \
             stream>>>(prob_m, \
@@ -534,9 +534,299 @@ DEVICE_INLINE u16 get_row(u64 m) { return m >> 32u; }
             order_ptr, \
             y_ptr);
 
+__device__ void cp_async_quant_bits(void *__restrict__ dst_shared, const void *__restrict__ src_global) {
+  constexpr int BYTES = 16;
+  uint32_t smem = static_cast<uint32_t>(__cvta_generic_to_shared(dst_shared));
+  asm volatile(
+      "{\n"
+      "   .reg .b64 p;\n"
+      "   createpolicy.fractional.L2::evict_first.b64 p, 1.0;"
+      "   cp.async.cg.shared.global.L2::cache_hint [%0], [%1], %2, p;\n"
+      "}\n"::"r"(smem), "l"(src_global), "n"(BYTES)
+      );
+}
+
+
 //
 template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH, class Acc_t, class W_t /* = uint64_t */, int PIPELINE_DEPTH>
 __global__ void spqr_quantized_matvec_fused(
+    // W and meta
+    unsigned int prob_m,
+    unsigned int prob_n,
+    // W 1st order stats
+    const W_t *__restrict__ raw_data,
+    const SecondOrder *__restrict__ second_order_data,
+    const half *__restrict__ x,
+    // Outliers
+    const int *row_offsets,
+    const u32 *col_vals,
+    const short *__restrict__ order,
+    // Output
+    half *__restrict__ y_fp16) {
+  /*
+           ┌─────────────┐ ┌─┐   ┌─┐
+   beta1   │   block 0   │ │ │   │ │
+           ├─────────────┤ │ │   │ │
+   beta1   │   block 1   │ │ │   │ │
+           └─────────────┘ │x│ = │Y│
+           │    ...      │ │ │   │ │
+           ┌─────────────┐ │ │   │ │
+   beta1   │  block m-1  │ │ │   │ │
+           └─────────────┘ └─┘   └─┘
+  */
+  extern __shared__ half s_x[];
+
+  __shared__ half2 s_half2_lut[64];
+
+  if (!threadIdx.x) {
+    for (int i = 0; i < 8; i++) {
+      for (int j = 0; j < 8; j++) {
+        s_half2_lut[j * 8 + i] = make_half2(__int2half_rd(i), __int2half_rd(j));
+      }
+    }
+  }
+
+
+  __shared__ Acc_t s_y[BETA1];
+  __shared__ u32 s_row_offsets[BETA1 + 1];
+
+  half2 *s_x2 = reinterpret_cast<half2 *>(s_x);
+  const half2 *x2 = reinterpret_cast<const half2 *>(x);
+
+  u32 t_id = blockDim.x * threadIdx.y + threadIdx.x;
+  const u32 TOTAL_THREADS = blockDim.x * blockDim.y;
+  u32 pipeline_depth{};
+
+  const auto total_threads = blockDim.x;
+  const auto count = prob_n / 2;
+  const auto tid = threadIdx.x;
+  u32 pipeline_id{};
+
+
+  if constexpr (std::is_same<Acc_t, float>::value) {
+    if (threadIdx.x < BETA1) {
+      // TOD: Check if this really sets s_y to zero.
+      asm volatile ("cp.async.ca.shared.global [%0], [%0], 4, 0 ;\n" :
+          : "r"(__nvvm_get_smem_pointer(s_y + threadIdx.x))
+          );
+    }
+  } else {
+    if (threadIdx.x < BETA1 / 2) {
+      asm volatile ("cp.async.ca.shared.global [%0], [%0], 4, 0 ;\n" :
+          : "r"(__nvvm_get_smem_pointer(s_y + threadIdx.x))
+          );
+    }
+  }
+
+  // Here we load the row offsets into smem.
+  if (threadIdx.x < BETA1) {
+    __pipeline_memcpy_async(s_row_offsets + threadIdx.x, row_offsets + blockIdx.x * BETA1 + threadIdx.x, sizeof(u32));
+
+    // The first thread will read the last sparse row offset since we cannot be sure that
+    // we have enough threads to load all the sparse row offsets that we need.
+    if (!threadIdx.x) {
+      __pipeline_memcpy_async(s_row_offsets + BETA1, row_offsets + blockIdx.x * BETA1 + BETA1, sizeof(u32));
+    }
+  }
+
+
+  for (int i = 0; i < PIPELINE_DEPTH && (i * total_threads + tid) < prob_n; i++) {
+    unsigned idx = i * total_threads + tid;
+    if (idx < count) {
+      __pipeline_memcpy_async(s_x2 + idx, x2 + idx, sizeof(half2));
+      pipeline_depth++;
+      pipeline_id++;
+      __pipeline_commit();
+    }
+  }
+
+  int pipeline_stack_ptr = pipeline_depth;
+
+  const u32 THREAD_COUNT = blockDim.x; // = 128 (example)
+
+  // Number of SPQR tiles that this CUDA block will process.
+  u32 num_spqr_tiles_per_cuda_block = UPDIV(prob_n, BETA2);
+
+  u32 total_tiles = UPDIV(prob_m, BETA1) * UPDIV(prob_n, BETA2);
+
+  // Here is how we organize things here. We have THREAD_COUNT threads in a
+  // block in x-dimension. We distribute 1 thread per tile row. Therefore, we
+  // have BETA1 threads per tile. For now, a block only spans across 1 dimension
+  // of SPQR tiles.
+  const u32 num_spqr_tiles_per_iteration = THREAD_COUNT / BETA1;
+
+  const u32 subtile_id = threadIdx.x / BETA1;
+
+  if (subtile_id >= UPDIV(prob_n, BETA2)) {
+    return;
+  }
+
+  // Now we set up the X loads. We have BLOCK_WIDTH * BETA2 x halfs.
+  __shared__ SecondOrder s_second_order[BLOCK_HEIGHT * BLOCK_WIDTH];
+
+  int global_tile_id = blockIdx.x * num_spqr_tiles_per_cuda_block + subtile_id;
+
+  IterSecondOrder<BETA1> iter_second_order{
+      .base_ptr = second_order_data + global_tile_id,
+      .s_base = s_second_order + subtile_id,
+      .advance = BLOCK_WIDTH,
+      .n = total_tiles,
+      .id = global_tile_id
+  };
+
+  constexpr int bits = get_bits<W_t>();
+
+  constexpr int MAX_ADDR_PER_ROW = UPDIV(
+  // Weight storage
+      (BETA2 * BITS) +
+      // Weight + Scale
+      2 * BITS,
+  // u32/u64 storage
+      bits);
+
+  const int MAX_ADDR_PER_TILE = BETA1;
+
+  RowBits row_bits{};
+  const u32 row_pos = threadIdx.x & 0xF; // threadIdx.x % BETA1;
+
+  Acc_t acc{};
+
+  constexpr u32 FULL_MASK = 0xffffffff;
+  constexpr u32 HALF_MASK = FULL_MASK >> 16u;
+
+  const int addr_per_row = MAX_ADDR_PER_ROW;
+
+  for (int i = subtile_id; i < num_spqr_tiles_per_cuda_block; i += num_spqr_tiles_per_iteration, global_tile_id += num_spqr_tiles_per_iteration) {
+//    iter_second_order.load_async();
+//    row_bits.mask = raw_data[MAX_ADDR_PER_TILE * global_tile_id + row_pos * addr_per_row];
+//    __syncwarp();
+
+    if (pipeline_stack_ptr > 0) {
+      __pipeline_wait_prior(pipeline_stack_ptr - 1);
+      pipeline_stack_ptr--;
+    }
+
+    half2 first_order_quantized = s_half2_lut[row_bits.get_w2(0)];
+    half2 first_order_dequantized = dequantize2(first_order_quantized,
+                                                iter_second_order.get_sws2(),
+                                                iter_second_order.get_swz2());
+
+    half2 ws2 = __half2half2(first_order_dequantized.x);
+    half2 wz2 = __half2half2(first_order_dequantized.y);
+
+#pragma unroll
+    for (int j = 0; j < BETA2 / 2; j++) {
+      if constexpr (std::is_same<Acc_t, float>::value) {
+        half2 q = s_half2_lut[row_bits.get_w2(j + 1)];
+        half2 w = dequantize2(q, ws2, wz2);
+        float2 x_fp32 = __half22float2(s_x2[i * (BETA2 / 2) + j]);
+        float2 w_fp32 = __half22float2(w);
+        acc = fmaf(x_fp32.x, w_fp32.x, acc);
+        acc = fmaf(x_fp32.y, w_fp32.y, acc);
+      } else {
+        int q_x = row_bits.get_w(2 * j);
+        int q_y = row_bits.get_w(2 * j + 1);
+        half2 q = make_half2(__int2half_rd(q_x), __int2half_rd(q_y));
+        half2 w = dequantize2(q, ws2, wz2);
+        acc = __hfma2(s_x2[i * BETA2 / 2 + j], w, acc);
+      }
+    }
+
+    iter_second_order.next();
+
+    unsigned idx = pipeline_id * total_threads + tid;
+    if (idx < prob_n / 2) {
+      __pipeline_memcpy_async(s_x2 + idx, x2 + idx, sizeof(half2));
+      pipeline_id++;
+      pipeline_stack_ptr++;
+      __pipeline_commit();
+    }
+  }
+
+  auto s_y_scalar = scalarize<Acc_t>(s_y);
+  auto s_y_vectorized = vectorize(s_y_scalar);
+  using Vector_ptr_t = decltype(s_y_vectorized);
+
+  int t = threadIdx.x % BETA1;
+  int s = s_row_offsets[t];
+  int e = s_row_offsets[t + 1];
+  int wid = threadIdx.x / BETA1;
+
+  // We need to help out the compiler here - step size needs to be constexpr.
+#if 1
+  if (blockDim.x == 512) {
+    constexpr int step = 32;
+    for (int i = s + wid; i < e; i += step) {
+      auto colval = col_vals[i];
+      auto c = get_col(colval);
+      auto v = get_val(colval);
+      acc += __half2float(v) * __half2float(s_x[c]);
+    }
+  } else if (blockDim.x == 256) {
+    constexpr int step = 16;
+    for (int i = s + wid; i < e; i += step) {
+      auto colval = col_vals[i];
+      auto c = get_col(colval);
+      auto v = get_val(colval);
+      acc += __half2float(v) * __half2float(s_x[c]);
+    }
+  } else if (blockDim.x == 128) {
+    constexpr int step = 8;
+    for (int i = s + wid; i < e; i += step) {
+      auto colval = col_vals[i];
+      auto c = get_col(colval);
+      auto v = get_val(colval);
+      acc += __half2float(v) * __half2float(s_x[c]);
+    }
+  } else {
+    int step = blockDim.x / BETA1;
+    for (int i = s + wid; i < e; i += step) {
+      auto colval = col_vals[i];
+      auto c = get_col(colval);
+      auto v = get_val(colval);
+      acc += __half2float(v) * __half2float(s_x[c]);
+    }
+  }
+#endif
+
+  auto result_scalar = acc;
+  auto other = __shfl_down_sync(HALF_MASK, result_scalar, BETA1);
+  auto result = add_and_accum(other, result_scalar);
+  const unsigned int lane_id = threadIdx.x & 0x1F;
+  if constexpr (std::is_same_v<Acc_t, float>) {
+    __syncwarp();
+    if (lane_id < BETA1) {
+      atomicAdd(s_y_scalar + lane_id, result);
+    }
+  } else {
+    auto result0 = __shfl_down_sync(0, result, threadIdx.x);
+    auto result1 = __shfl_down_sync(0, result, threadIdx.x + 1);
+    __syncwarp();
+    if (lane_id < BETA1 / 2) {
+      atomicAdd(s_y_vectorized + lane_id, make_half2(result0, result1));
+    }
+  }
+
+  __syncthreads();
+
+
+  if (order == nullptr) {
+    if (threadIdx.x < BETA1 / 2) {
+      reinterpret_cast<half2 *>(y_fp16)[blockIdx.x * (BETA1 / 2) +
+                                        threadIdx.x] = __float22half2_rn(s_y_vectorized[threadIdx.x]);
+    }
+  } else {
+    if (threadIdx.x < BETA1) {
+      short row = order[blockIdx.x * BETA1 + threadIdx.x];
+      y_fp16[row] = __float2half(s_y_scalar[threadIdx.x]);
+    }
+  }
+}
+
+
+//
+template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH, class Acc_t, class W_t /* = uint64_t */, int PIPELINE_DEPTH>
+__global__ void spqr_quantized_matvec_fused_slow(
     // W and meta
     unsigned int prob_m,
     unsigned int prob_n,
@@ -699,7 +989,6 @@ __global__ void spqr_quantized_matvec_fused(
     // TODO: It seems that it's important that this remans a syncthread instead
     // of a syncwarp for some reason...
     __syncthreads();
-
     bool finished = (i >= num_spqr_tiles_per_cuda_block) |
                     (i * BETA2 >= prob_n) |
                     ((row_pos + blockId * BETA1) >= prob_m);
@@ -717,8 +1006,7 @@ __global__ void spqr_quantized_matvec_fused(
 
     if (!finished) {
       iter_second_order.load_async();
-      row_bits.mask =
-          raw_data[MAX_ADDR_PER_TILE * tile_id + row_pos * addr_per_row];
+      row_bits.mask = raw_data[MAX_ADDR_PER_TILE * tile_id + row_pos * addr_per_row];
     }
 
     __syncthreads();
@@ -766,7 +1054,6 @@ __global__ void spqr_quantized_matvec_fused(
       pipeline_stack_ptr++;
       __pipeline_commit();
     }
-    return;
   }
 
   auto s_y_scalar = scalarize<Acc_t>(s_y);
@@ -838,7 +1125,8 @@ __global__ void spqr_quantized_matvec_fused(
 
   if (order == nullptr) {
     if (threadIdx.x < BETA1 / 2) {
-      reinterpret_cast<half2 *>(y_fp16)[blockIdx.x * (BETA1 / 2) + threadIdx.x] = __float22half2_rn(s_y_vectorized[threadIdx.x]);
+      reinterpret_cast<half2 *>(y_fp16)[blockIdx.x * (BETA1 / 2) +
+                                        threadIdx.x] = __float22half2_rn(s_y_vectorized[threadIdx.x]);
     }
   } else {
     if (threadIdx.x < BETA1) {
@@ -1608,10 +1896,18 @@ int spqr_matvec(
 
 
   if (features.flags.fused_sparse) {
-    if (is_a100) {
-      CALL_FUSED(1, 32, 2);
+    if (prob_m % 256 == 0 && prob_n % 256 == 0) {
+      if (is_a100) {
+        CALL_FUSED(spqr_quantized_matvec_fused, 1, 32, 2);
+      } else {
+        CALL_FUSED(spqr_quantized_matvec_fused, 1, 16, 4);
+      }
     } else {
-      CALL_FUSED(1, 16, 4);
+      if (is_a100) {
+        CALL_FUSED(spqr_quantized_matvec_fused_slow, 1, 32, 2);
+      } else {
+        CALL_FUSED(spqr_quantized_matvec_fused_slow, 1, 16, 4);
+      }
     }
   } else {
     constexpr int BLOCK_HEIGHT = 1;
