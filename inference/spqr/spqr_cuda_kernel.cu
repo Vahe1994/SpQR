@@ -547,6 +547,77 @@ __device__ void cp_async_quant_bits(void *__restrict__ dst_shared, const void *_
 }
 
 
+template<class T>
+struct RingBuffer {
+  T *base;
+  u32 idx;
+  u32 n;
+  u32 advance;
+
+
+  DEVICE_INLINE RingBuffer(
+      T *__restrict__ base,
+      int initial_offset,
+      int n,
+      int advance) : base(base),
+                     idx(initial_offset),
+                     n(n),
+                     advance(advance) {
+  }
+
+  DEVICE_INLINE T* operator->() {
+    return base + idx;
+  }
+
+  DEVICE_INLINE T& operator*() {
+    return *(base + idx);
+  }
+
+  // buffer++
+  DEVICE_INLINE T *operator++(int) {
+    T *cp = base + idx;
+    next();
+    return cp;
+  }
+
+  // ++buffer
+  DEVICE_INLINE T *operator++() {
+    next();
+    return base + idx;
+  }
+
+  DEVICE_INLINE void next() {
+    idx += advance;
+    idx %= n;
+  }
+
+  DEVICE_INLINE T* get() {
+    return base + idx;
+  }
+};
+
+// Wait until at most `n` async copy stages are still pending.
+template<int n>
+__device__ inline void cp_async_wait() {
+  asm volatile("cp.async.wait_group %0;\n" :: "n"(n));
+}
+
+// Predicated asynchronous global->shared copy; used for inputs A where we apply predication to handle batchsizes that
+// are not multiples of 16.
+__device__ inline void cp_async4_pred(void* smem_ptr, const void* glob_ptr, bool pred = true) {
+  const int BYTES = 16;
+  uint32_t smem = static_cast<uint32_t>(__cvta_generic_to_shared(smem_ptr));
+  asm volatile(
+      "{\n"
+      "   .reg .pred p;\n"
+      "   setp.ne.b32 p, %0, 0;\n"
+      "   @p cp.async.cg.shared.global [%1], [%2], %3;\n"
+      "}\n" :: "r"((int) pred), "r"(smem), "l"(glob_ptr), "n"(BYTES)
+      );
+}
+
+
+
 //
 template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH, class Acc_t, class W_t /* = uint64_t */, int PIPELINE_DEPTH>
 __global__ void spqr_quantized_matvec_fused(
@@ -590,6 +661,9 @@ __global__ void spqr_quantized_matvec_fused(
   __shared__ Acc_t s_y[BETA1];
   __shared__ u32 s_row_offsets[BETA1 + 1];
 
+  // Now we set up the X loads. We have BLOCK_WIDTH * BETA2 x halfs.
+  __shared__ SecondOrder s_second_order[PIPELINE_DEPTH * BLOCK_WIDTH];
+
   half2 *s_x2 = reinterpret_cast<half2 *>(s_x);
   const half2 *x2 = reinterpret_cast<const half2 *>(x);
 
@@ -598,7 +672,6 @@ __global__ void spqr_quantized_matvec_fused(
   u32 pipeline_depth{};
 
   const auto total_threads = blockDim.x;
-  const auto count = prob_n / 2;
   const auto tid = threadIdx.x;
   u32 pipeline_id{};
 
@@ -629,19 +702,6 @@ __global__ void spqr_quantized_matvec_fused(
     }
   }
 
-
-  for (int i = 0; i < PIPELINE_DEPTH && (i * total_threads + tid) < prob_n; i++) {
-    unsigned idx = i * total_threads + tid;
-    if (idx < count) {
-      __pipeline_memcpy_async(s_x2 + idx, x2 + idx, sizeof(half2));
-      pipeline_depth++;
-      pipeline_id++;
-      __pipeline_commit();
-    }
-  }
-
-  int pipeline_stack_ptr = pipeline_depth;
-
   const u32 THREAD_COUNT = blockDim.x; // = 128 (example)
 
   // Number of SPQR tiles that this CUDA block will process.
@@ -655,24 +715,43 @@ __global__ void spqr_quantized_matvec_fused(
   // of SPQR tiles.
   const u32 num_spqr_tiles_per_iteration = THREAD_COUNT / BETA1;
 
-  const u32 subtile_id = threadIdx.x / BETA1;
+  const u32 subtile_id = threadIdx.x / BETA2;
+
+  RingBuffer<SecondOrder> s_second_order_pipeline_ptr(s_second_order,
+                                                      subtile_id,
+                                                      PIPELINE_DEPTH * num_spqr_tiles_per_iteration,
+                                                      num_spqr_tiles_per_iteration);
+
+  const SecondOrder* local_second_order = second_order_data + blockIdx.x * num_spqr_tiles_per_cuda_block;
+  int local_second_idx = subtile_id;
+
+  __syncthreads();
+
+  for (int i = 0; i < PIPELINE_DEPTH && (i * total_threads + tid) < prob_n; i++) {
+    unsigned idx = i * total_threads + tid;
+
+    if (threadIdx.x % BETA1 == 0 && local_second_idx < num_spqr_tiles_per_cuda_block) {
+      __pipeline_memcpy_async(s_second_order_pipeline_ptr.get(), local_second_order + local_second_idx, sizeof(SecondOrder));
+      s_second_order_pipeline_ptr++;
+      local_second_idx += num_spqr_tiles_per_iteration;
+    }
+
+    if (idx < prob_n) {
+      __pipeline_memcpy_async(s_x2 + idx, x2 + idx, sizeof(half2));
+      pipeline_id++;
+      __pipeline_commit();
+    }
+    pipeline_depth++;
+  }
+
+  int pipeline_stack_ptr = pipeline_depth;
 
   if (subtile_id >= UPDIV(prob_n, BETA2)) {
     return;
   }
 
-  // Now we set up the X loads. We have BLOCK_WIDTH * BETA2 x halfs.
-  __shared__ SecondOrder s_second_order[BLOCK_HEIGHT * BLOCK_WIDTH];
 
   int global_tile_id = blockIdx.x * num_spqr_tiles_per_cuda_block + subtile_id;
-
-  IterSecondOrder<BETA1> iter_second_order{
-      .base_ptr = second_order_data + global_tile_id,
-      .s_base = s_second_order + subtile_id,
-      .advance = BLOCK_WIDTH,
-      .n = total_tiles,
-      .id = global_tile_id
-  };
 
   constexpr int bits = get_bits<W_t>();
 
@@ -696,21 +775,20 @@ __global__ void spqr_quantized_matvec_fused(
 
   const int addr_per_row = MAX_ADDR_PER_ROW;
 
+  RingBuffer<SecondOrder> s_ptr(s_second_order, threadIdx.x / BETA2, PIPELINE_DEPTH * num_spqr_tiles_per_iteration, num_spqr_tiles_per_iteration);
+
   __syncthreads();
-  for (int i = subtile_id; i < num_spqr_tiles_per_cuda_block; i += num_spqr_tiles_per_iteration, global_tile_id += num_spqr_tiles_per_iteration) {
-    iter_second_order.load_async();
+  for (int i = subtile_id; i < num_spqr_tiles_per_cuda_block; i += num_spqr_tiles_per_iteration, global_tile_id += num_spqr_tiles_per_iteration, s_ptr++) {
     row_bits.mask = raw_data[MAX_ADDR_PER_TILE * global_tile_id + row_pos * addr_per_row];
-    __syncthreads();
 
     if (pipeline_stack_ptr > 0) {
       __pipeline_wait_prior(pipeline_stack_ptr - 1);
       pipeline_stack_ptr--;
     }
+//    __syncwarp();
 
     half2 first_order_quantized = s_half2_lut[row_bits.get_w2(0)];
-    half2 first_order_dequantized = dequantize2(first_order_quantized,
-                                                iter_second_order.get_sws2(),
-                                                iter_second_order.get_swz2());
+    half2 first_order_dequantized = dequantize2(first_order_quantized, s_ptr->get_sws2(), s_ptr->get_swz2());
 
     half2 ws2 = __half2half2(first_order_dequantized.x);
     half2 wz2 = __half2half2(first_order_dequantized.y);
@@ -733,16 +811,21 @@ __global__ void spqr_quantized_matvec_fused(
       }
     }
 
-    iter_second_order.next();
+    unsigned quantized_bits_idx = pipeline_id * total_threads + tid;
 
-    unsigned idx = pipeline_id * total_threads + tid;
-    if (idx < prob_n / 2) {
-      __pipeline_memcpy_async(s_x2 + idx, x2 + idx, sizeof(half2));
+    if (threadIdx.x % BETA1 == 0 && local_second_idx < num_spqr_tiles_per_cuda_block) {
+      __pipeline_memcpy_async(s_second_order_pipeline_ptr.get(), local_second_order + local_second_idx, sizeof(SecondOrder));
+      ++s_second_order_pipeline_ptr;
+      local_second_idx += num_spqr_tiles_per_iteration;
+    }
+    if (quantized_bits_idx < prob_n / 2) {
+      __pipeline_memcpy_async(s_x2 + quantized_bits_idx, x2 + quantized_bits_idx, sizeof(half2));
       pipeline_id++;
       pipeline_stack_ptr++;
-      __pipeline_commit();
     }
+    __pipeline_commit();
   }
+//  __syncthreads(); // TODO: Why???
 
   auto s_y_scalar = scalarize<Acc_t>(s_y);
   auto s_y_vectorized = vectorize(s_y_scalar);
@@ -789,6 +872,7 @@ __global__ void spqr_quantized_matvec_fused(
     }
   }
 #endif
+
 
   auto result_scalar = acc;
   auto other = __shfl_down_sync(HALF_MASK, result_scalar, BETA1);
@@ -1901,7 +1985,7 @@ int spqr_matvec(
       if (is_a100) {
         CALL_FUSED(spqr_quantized_matvec_fused, 1, 32, 2);
       } else {
-        CALL_FUSED(spqr_quantized_matvec_fused, 1, 16, 4);
+        CALL_FUSED(spqr_quantized_matvec_fused, 1, 32, 2);
       }
     } else {
       if (is_a100) {

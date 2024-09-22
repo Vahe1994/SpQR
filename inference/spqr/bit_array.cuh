@@ -9,6 +9,10 @@
 #define __device__
 #endif
 
+#ifndef __forceinline__
+#define __forceinline__
+#endif
+
 #include <cstdint>
 #include <cstdio>
 #include <type_traits>
@@ -126,4 +130,9 @@ union SecondOrder {
     half2 ss;
     half2 zz;
   } members;
+
+
+  __device__ __forceinline__ half2 get_sws2() const { return members.ss; }
+
+  __device__ __forceinline__ half2 get_swz2() const { return members.zz; }
 };
