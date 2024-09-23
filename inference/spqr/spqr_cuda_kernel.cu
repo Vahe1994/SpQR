@@ -1932,9 +1932,9 @@ int spqr_matvec(
   if (features.flags.fused_sparse) {
     if (prob_m % 256 == 0 && prob_n % 256 == 0) {
       if (is_a100) {
-        CALL_FUSED(spqr_quantized_matvec_fused, 1, 16, 4);
+        CALL_FUSED(spqr_quantized_matvec_fused_slow, 1, 16, 4);
       } else {
-        CALL_FUSED(spqr_quantized_matvec_fused_slow, 1, 16, 1);
+        CALL_FUSED(spqr_quantized_matvec_fused_slow, 1, 16, 4);
       }
     } else {
       if (is_a100) {
