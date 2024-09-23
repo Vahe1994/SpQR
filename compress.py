@@ -7,8 +7,6 @@ import inference
 
 import modelutils
 
-from torchvision.transforms import functional as F
-
 
 
 if __name__ == '__main__':
