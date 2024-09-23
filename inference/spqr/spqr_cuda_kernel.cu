@@ -91,8 +91,6 @@ union RowBits {
   }
 };
 
-static constexpr uint64_t magic = 0b10001111000110100010110001001000010100000001111000000000ull;
-
 
 __device__ __forceinline__ unsigned short fast_decode(unsigned short q) {
   // The magic constant is now in constant memory for faster access.
@@ -533,7 +531,6 @@ DEVICE_INLINE u16 get_row(u64 m) { return m >> 32u; }
             stream>>>(prob_m, \
             prob_n, \
             raw_data, \
-            second_order_data_ptr, \
             X_ptr, \
             row_offsets_ptr, \
             col_vals_ptr, \
@@ -925,11 +922,10 @@ __global__ void spqr_quantized_matvec_fused_slow(
     unsigned int prob_n,
     // W 1st order stats
     const W_t *__restrict__ raw_data,
-    const SecondOrder *__restrict__ second_order_data,
     const half *__restrict__ x,
     // Outliers
-    const int *row_offsets,
-    const u32 *col_vals,
+    const int * __restrict__ row_offsets,
+    const u32 * __restrict__ col_vals,
     const short *__restrict__ order,
     // Output
     half *__restrict__ y_fp16) {
@@ -945,14 +941,21 @@ __global__ void spqr_quantized_matvec_fused_slow(
            └─────────────┘ └─┘   └─┘
   */
   extern __shared__ half s_x[];
-  __shared__ half2 s_half2_lut[64];
+  __shared__ half2 s_half2_lut_global[64 * 8];
   __shared__ Acc_t s_y[BETA1];
   __shared__ u32 s_row_offsets[BETA1 + 1];
 
+  static constexpr int WARP_SIZE = 32;
+
+  auto s_half2_lut = s_half2_lut_global + (threadIdx.x / 32) * 64;
+
   // TODO: Make this async?
 
-  for (int i = threadIdx.x; i < 64; i += blockDim.x) {
-    s_half2_lut[i] = make_half2(__int2half_rd(i >> 3), __int2half_rd(i & 0b111));
+  for (int i = threadIdx.x % WARP_SIZE; i < 64; i += WARP_SIZE) {
+    s_half2_lut[i] = make_half2(
+        __int2half_rd(i & 0b111),
+        __int2half_rd(i >> 3)
+    );
   }
 
 
@@ -1026,9 +1029,6 @@ __global__ void spqr_quantized_matvec_fused_slow(
     return;
   }
 
-  // Now we set up the X loads. We have BLOCK_WIDTH * BETA2 x halfs.
-  __shared__ SecondOrder s_second_order[BLOCK_HEIGHT * BLOCK_WIDTH];
-
   auto local_raw_data = raw_data + blockIdx.x * num_spqr_tiles_per_cuda_block + row_pos;
   RowBits row_bits;
   Acc_t acc{};
@@ -1043,12 +1043,15 @@ __global__ void spqr_quantized_matvec_fused_slow(
   } // || (threadIdx.x % BETA1)
 
 
+  __syncthreads();
   for (int i = subtile_id; i < num_spqr_tiles_per_cuda_block; i += num_spqr_tiles_per_iteration, local_raw_data += num_spqr_tiles_per_iteration * BETA1) {
     row_bits.mask = *(local_raw_data);
+    __syncthreads();
 
     constexpr static unsigned long long int NUM_USEFUL_BITS = 18ull * static_cast<u64>(BITS);
     constexpr static int OFFSET = FRAG_SIZE / 4;
 
+    __syncwarp();
     uint64_t s_order_partial = (row_bits.mask >> NUM_USEFUL_BITS) << ((FRAG_SIZE / OFFSET) * row_pos);
     SecondOrder _s{.v = recover_second_order(s_order_partial)};
 
@@ -1065,6 +1068,7 @@ __global__ void spqr_quantized_matvec_fused_slow(
     half2 ws2 = __half2half2(first_order_dequantized.x);
     half2 wz2 = __half2half2(first_order_dequantized.y);
 
+    __syncthreads();
 #pragma unroll
     for (int j = 0; j < BETA2 / 2; j++) {
       if constexpr (std::is_same<Acc_t, float>::value) {
@@ -1113,10 +1117,13 @@ __global__ void spqr_quantized_matvec_fused_slow(
   } else if (blockDim.x == 256) {
     constexpr int step = 16;
     for (int i = s + wid; i < e; i += step) {
-      auto colval = col_vals[i];
-      auto c = get_col(colval);
-      auto v = get_val(colval);
-      acc += __half2float(v) * __half2float(s_x[c]);
+      ColVal colval{
+        ._ = __ldg(col_vals + i)
+      };
+      auto c = colval.members.c;
+      auto v = colval.members.v;
+      acc += __half2float(__hmul(s_x[c], v));
+      // acc = fmaf(__half2float(v), __half2float(s_x[c]), acc);
     }
   } else if (blockDim.x == 128) {
     constexpr int step = 8;
