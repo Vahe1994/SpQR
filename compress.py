@@ -15,7 +15,7 @@ if __name__ == '__main__':
     uncompressed_model_path = sys.argv[1]
     compressed_model_path = sys.argv[2]
 
-    visualize_errors = False
+    report_errors = False
 
     os.makedirs(uncompressed_model_path, exist_ok=True)
 
@@ -47,15 +47,12 @@ if __name__ == '__main__':
 
             m = torch.load(tensor_path, map_location='cpu')
 
-            deq_w_c = inference.spqr_dequantize_compressed(spqr_module).half()
-            deq_w_o = modelutils.layer_weight_dequantization(m).half()
-
-            max_abs_error = (deq_w_c - deq_w_o).abs()
-            cnt = (max_abs_error != 0).sum()
-
-            print(f'INFO: Maximum absolute conversion error: {max_abs_error} cnt {cnt} nnz {spqr_module.nnz}')
-
-            if visualize_errors:
+            if report_errors:
+                deq_w_c = inference.spqr_dequantize_compressed(spqr_module).half()
+                deq_w_o = modelutils.layer_weight_dequantization(m).half()
+                max_abs_error = (deq_w_c - deq_w_o).abs()
+                cnt = (max_abs_error != 0).sum()
+                print(f'INFO: Maximum absolute conversion error: {max_abs_error} cnt {cnt} nnz {spqr_module.nnz}')
                 d = (deq_w_c - deq_w_o).abs()
                 import matplotlib.pyplot as plt;
 
@@ -67,4 +64,4 @@ if __name__ == '__main__':
             tensor_path = f'{os.path.join(output_folder, tensor_name)}.pth'
 
             # Dump the compressed version
-            inference.write_tensor(spqr_host, tensor_path)
+            inference.write_tensor(spqr_module, tensor_path)

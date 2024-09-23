@@ -354,10 +354,10 @@ void tensor_compress_interleaved(
       second_vector_ptr->members.ss = ss;
       second_vector_ptr->members.zz = zz;
 
-      second_vector_ptr++;
-
       int to_add{};
       int k{};
+      Bit_t sanity{};
+      uint64_t v = second_vector_ptr->v;
       for (k = 0; k < beta1 && i + k < m; k++) {
         Bit_t tile[16]{};
         for (int ii = 0; ii < 16; ii++) tile[i] = 0;
@@ -378,8 +378,24 @@ void tensor_compress_interleaved(
             to_add++;
           }
         }
-        tile_array.push(ws, wz, tile, to_add);
+        static constexpr uint64_t FRAG_SIZE = 8ull;
+        uint64_t PARTIAL_OFFSET = BITS * (beta2 + 2); // = 54, for example
+
+        uint64_t FRAG_MASK = Bit_t((1ull << FRAG_SIZE) - 1ull);
+        
+        uint64_t partial = (v >> (Bit_t((k / (FRAG_SIZE / 4))) * Bit_t(FRAG_SIZE))) & FRAG_MASK;
+
+        
+        tile_array.push(ws, wz, tile, to_add, (partial << PARTIAL_OFFSET));
+
+        sanity |= (partial << (FRAG_SIZE * (k / (FRAG_SIZE / 4))));
       }
+
+#if 0
+      printf("valid = %d\n", sanity == second_vector_ptr->v);
+#endif
+
+      second_vector_ptr++;
 
       Bit_t tile[16]{};
       for (; k < beta1; k++) {

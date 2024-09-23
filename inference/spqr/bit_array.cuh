@@ -33,7 +33,7 @@ public:
   Bit_t *ptr;
   explicit TileArray(Bit_t *ptr) : ptr(ptr), buffer(ptr) {}
 
-  void push(Bit_t s, Bit_t z, Bit_t *x, int n) {
+  void push(Bit_t s, Bit_t z, Bit_t *x, int n, Bit_t buff = Bit_t{}) {
     Bit_t b = (z << BITS) | s;
     int i = 0, j = 2;
 
@@ -45,7 +45,7 @@ public:
       for (; j < VALUES_PER_ADDR && i < VALUES_TO_ADD; j++, i++) {
         b |= (x[i] << (j * BITS));
       }
-      *buffer = b;
+      *buffer = b | buff;
       _b = b;
       b = 0;
       j = 0;

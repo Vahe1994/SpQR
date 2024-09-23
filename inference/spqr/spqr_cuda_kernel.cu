@@ -22,6 +22,9 @@
 #include <cusparse.h>
 #include <cuda_pipeline.h>
 
+#define DEVICE_INLINE __forceinline__ __device__
+
+
 extern "C" __device__ uint32_t __nvvm_get_smem_pointer(void *);
 
 // TODO: Why isn't this already available?
@@ -37,16 +40,15 @@ template<class Acc_t> constexpr __device__ __host__ bool is_fp32() {
   return false;
 }
 
-__forceinline__ __device__ uint64_t recover_second_order(uint64_t val) {
+DEVICE_INLINE uint64_t recover_second_order(uint64_t val) {
   constexpr unsigned int FULL_MASK = 0xffffffff;
-  val += __shfl_down_sync(FULL_MASK, val, 8);
-  val += __shfl_down_sync(FULL_MASK, val, 4);
-  val += __shfl_down_sync(FULL_MASK, val, 2);
-  val += __shfl_down_sync(FULL_MASK, val, 1);
+  val |= __shfl_xor_sync(FULL_MASK, val, 2);
+  val |= __shfl_xor_sync(FULL_MASK, val, 4);
+  val |= __shfl_xor_sync(FULL_MASK, val, 8);
   return val;
 }
 
-__forceinline__ __device__ float shfl_reduce_float(float val) {
+DEVICE_INLINE float shfl_reduce_float(float val) {
   unsigned int FULL_MASK = 0xffffffff;
   val += __shfl_down_sync(FULL_MASK, val, 16);
   val += __shfl_down_sync(FULL_MASK, val, 8);
@@ -56,7 +58,7 @@ __forceinline__ __device__ float shfl_reduce_float(float val) {
   return val;
 }
 
-__forceinline__ __device__ half shfl_reduce_half(half val) {
+DEVICE_INLINE half shfl_reduce_half(half val) {
   unsigned int FULL_MASK = 0xffffffff;
   val = __hadd(val, __shfl_down_sync(FULL_MASK, val, 16));
   val = __hadd(val, __shfl_down_sync(FULL_MASK, val, 8));
@@ -105,9 +107,9 @@ template<class Bit_t, uint64_t BITS> __forceinline__ __host__ __device__ Bit_t g
 }
 
 
-half2 __forceinline__ __device__ dequantize2(const half2 &q,
-                                             const half2 &s,
-                                             const half2 &z) {
+half2 DEVICE_INLINE dequantize2(const half2 &q,
+                                const half2 &s,
+                                const half2 &z) {
   const half2 &res = __hmul2(s, __hsub2(q, z));
 #if 0
   printf("dequantize2 called :: %f = %f x (%f - %f)\n%f = %f x (%f - %f)\n",
@@ -118,15 +120,15 @@ half2 __forceinline__ __device__ dequantize2(const half2 &q,
   return res;
 }
 
-float2 __forceinline__ __device__ dequantize2_fp32(const float2 &q,
-                                                   const float2 &s,
-                                                   const float2 &z) {
+float2 DEVICE_INLINE dequantize2_fp32(const float2 &q,
+                                      const float2 &s,
+                                      const float2 &z) {
   return make_float2(s.x * (q.x - z.x), s.y * (q.y - z.y));
 }
 
-template<class Bit_t, class Scalar_t> __forceinline__ __device__ Scalar_t dequantize(Bit_t q,
-                                                                                     Scalar_t s,
-                                                                                     Scalar_t z) {
+template<class Bit_t, class Scalar_t> DEVICE_INLINE Scalar_t dequantize(Bit_t q,
+                                                                        Scalar_t s,
+                                                                        Scalar_t z) {
   if constexpr (std::is_same<Bit_t, half>::value) {
     return __hmul(s, __hsub(q, z));
   } else {
@@ -266,7 +268,6 @@ struct Timer {
   }
 };
 
-#define DEVICE_INLINE __forceinline__ __device__
 
 __device__ void _debug_halfs() {
 }
@@ -619,6 +620,9 @@ __device__ inline void cp_async2_pred(void *smem_ptr, const void *glob_ptr, bool
       );
 }
 
+static constexpr int FRAG_SIZE = 8;
+
+
 //
 template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH, class Acc_t, class W_t /* = uint64_t */, int PIPELINE_DEPTH>
 __global__ void spqr_quantized_matvec_fused(
@@ -653,7 +657,6 @@ __global__ void spqr_quantized_matvec_fused(
   __shared__ u32 s_row_offsets[BETA1 + 1];
   __shared__ uint64_t s_w[PIPELINE_DEPTH * BETA2 * BLOCK_WIDTH];
 
-  static constexpr int SECOND_ORDER_FRAGMENT_SIZE = 4;
   SecondOrder second_order;
 
   if (!threadIdx.x) {
@@ -771,12 +774,14 @@ __global__ void spqr_quantized_matvec_fused(
   RingBuffer<uint64_t> s_w_ring_buffer(s_w, threadIdx.x, PIPELINE_DEPTH * BETA2 * BLOCK_WIDTH, BLOCK_WIDTH * BETA2);
 
   __syncthreads();
-  for (int i = subtile_id; i < num_spqr_tiles_per_cuda_block; i += num_spqr_tiles_per_iteration, global_tile_id += num_spqr_tiles_per_iteration) {
+  for (int i = subtile_id; i <
+                           num_spqr_tiles_per_cuda_block; i += num_spqr_tiles_per_iteration, global_tile_id += num_spqr_tiles_per_iteration) {
     uint64_t m = *s_w_ring_buffer.get();
     RowBits row_bits{.mask = m};
 
-    uint64_t s_order_partial = (m >> (18ull * static_cast<u64>(BITS))) << static_cast<u64>((threadIdx.x % BETA2) * SECOND_ORDER_FRAGMENT_SIZE);
 
+    uint64_t s_order_partial = (m >> (18ull * static_cast<u64>(BITS)));
+    s_order_partial <<= static_cast<u64>((threadIdx.x % BETA2) * FRAG_SIZE);
     second_order.v = recover_second_order(s_order_partial);
 
     if (pipeline_stack_ptr > 0) {
@@ -1098,6 +1103,15 @@ __global__ void spqr_quantized_matvec_fused_slow(
     }
 
     __syncthreads();
+
+    unsigned int k = threadIdx.x % BETA2;
+
+    uint64_t s_order_partial = (row_bits.mask >> (18ull * static_cast<u64>(BITS))) << (FRAG_SIZE * (k / (FRAG_SIZE / 4)));
+
+    SecondOrder _s{.v = recover_second_order(s_order_partial)};
+
+    __syncthreads();
+
 
     if (pipeline_stack_ptr > 0) {
       __pipeline_wait_prior(pipeline_stack_ptr - 1);
@@ -1463,7 +1477,7 @@ template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH,
   }
 }
 
-template<typename T> __forceinline__ __device__ T myLoad(const T *d) {
+template<typename T> DEVICE_INLINE T myLoad(const T *d) {
   return *d;
 }
 
@@ -1988,7 +2002,7 @@ int spqr_matvec(
       if (is_a100) {
         CALL_FUSED(spqr_quantized_matvec_fused, 1, 32, 2);
       } else {
-        CALL_FUSED(spqr_quantized_matvec_fused, 1, 32, 4);
+        CALL_FUSED(spqr_quantized_matvec_fused_slow, 1, 16, 1);
       }
     } else {
       if (is_a100) {

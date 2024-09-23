@@ -997,16 +997,12 @@ class Model:
         self.args = ModelArgs(model_path)
 
 
-def write_tensor(spqr_host: SPQRHost, path: str):
-    spqr_module = SPQRModule(spqr_host)
-
+def write_tensor(spqr_module: SPQRModule, path: str):
     torch.save(spqr_module, path)
 
 
 def load_compressed_tensor(p: str) -> SPQRModule:
     spqr_module = torch.load(p)
-    spqr_module.in_perm = spqr_module.perm.long()
-    spqr_module.out_perm = None
     return spqr_module
 
 
