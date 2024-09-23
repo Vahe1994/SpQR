@@ -496,11 +496,11 @@ template<class Vec_t> __host__ __device__ auto scalarize(void *ptr) {
   }
 }
 
-__device__ __forceinline__ float add_and_accum(float a, float b) {
+DEVICE_INLINE float add_and_accum(float a, float b) {
   return a + b;
 }
 
-__device__ __forceinline__ half add_and_accum(const half2 &a, const half2 &b) {
+DEVICE_INLINE half add_and_accum(const half2 &a, const half2 &b) {
   half2 r = __hadd2(a, b);
   return __hadd(r.x, r.y);
 }
@@ -945,26 +945,20 @@ __global__ void spqr_quantized_matvec_fused_slow(
            └─────────────┘ └─┘   └─┘
   */
   extern __shared__ half s_x[];
-
   __shared__ half2 s_half2_lut[64];
-
-  if (!threadIdx.x) {
-    for (int i = 0; i < 8; i++) {
-      for (int j = 0; j < 8; j++) {
-        s_half2_lut[j * 8 + i] = make_half2(__int2half_rd(i), __int2half_rd(j));
-      }
-    }
-  }
-
-
   __shared__ Acc_t s_y[BETA1];
   __shared__ u32 s_row_offsets[BETA1 + 1];
+
+  // TODO: Make this async?
+
+  for (int i = threadIdx.x; i < 64; i += blockDim.x) {
+    s_half2_lut[i] = make_half2(__int2half_rd(i >> 3), __int2half_rd(i & 0b111));
+  }
+
 
   half2 *s_x2 = reinterpret_cast<half2 *>(s_x);
   const half2 *x2 = reinterpret_cast<const half2 *>(x);
 
-  u32 t_id = blockDim.x * threadIdx.y + threadIdx.x;
-  const u32 TOTAL_THREADS = blockDim.x * blockDim.y;
   u32 pipeline_depth{};
 
   const auto total_threads = blockDim.x;
@@ -1012,7 +1006,6 @@ __global__ void spqr_quantized_matvec_fused_slow(
 
   int pipeline_stack_ptr = pipeline_depth;
 
-  constexpr u32 WARP_SIZE = 32;
   const u32 THREAD_COUNT = blockDim.x; // = 128 (example)
 
   const u32 blockId = blockIdx.x;
@@ -1020,15 +1013,14 @@ __global__ void spqr_quantized_matvec_fused_slow(
   // Number of SPQR tiles that this CUDA block will process.
   u32 num_spqr_tiles_per_cuda_block = UPDIV(prob_n, BETA2);
 
-  u32 total_tiles = UPDIV(prob_m, BETA1) * UPDIV(prob_n, BETA2);
-
   // Here is how we organize things here. We have THREAD_COUNT threads in a
   // block in x-dimension. We distribute 1 thread per tile row. Therefore, we
   // have BETA1 threads per tile. For now, a block only spans across 1 dimension
   // of SPQR tiles.
   const u32 num_spqr_tiles_per_iteration = THREAD_COUNT / BETA1;
 
-  const u32 subtile_id = threadIdx.x / BETA1;
+  u32 row_pos = threadIdx.x & 0xF; // threadIdx.x % BETA1;
+  const u32 subtile_id = row_pos;
 
   if (subtile_id >= UPDIV(prob_n, BETA2)) {
     return;
@@ -1037,38 +1029,12 @@ __global__ void spqr_quantized_matvec_fused_slow(
   // Now we set up the X loads. We have BLOCK_WIDTH * BETA2 x halfs.
   __shared__ SecondOrder s_second_order[BLOCK_HEIGHT * BLOCK_WIDTH];
 
-  int tile_id = blockIdx.x * num_spqr_tiles_per_cuda_block + subtile_id;
-
-  IterSecondOrder<BETA1> iter_second_order{
-      .base_ptr = second_order_data + tile_id,
-      .s_base = s_second_order + subtile_id,
-      .advance = BLOCK_WIDTH,
-      .n = total_tiles,
-      .id = tile_id
-  };
-
-  constexpr int bits = get_bits<W_t>();
-
-  constexpr int MAX_ADDR_PER_ROW = UPDIV(
-  // Weight storage
-      (BETA2 * BITS) +
-      // Weight + Scale
-      2 * BITS,
-  // u32/u64 storage
-      bits);
-
-  const int MAX_ADDR_PER_TILE = BETA1;
-
+  auto local_raw_data = raw_data + blockIdx.x * num_spqr_tiles_per_cuda_block + row_pos;
   RowBits row_bits;
-  u32 row_pos = threadIdx.x & 0xF; // threadIdx.x % BETA1;
-
   Acc_t acc{};
 
   constexpr u32 FULL_MASK = 0xffffffff;
   constexpr u32 HALF_MASK = FULL_MASK >> 16u;
-  constexpr u32 HALF_WARP = WARP_SIZE / 2u;
-
-  const int other_lane_idx = (threadIdx.x + HALF_WARP) % WARP_SIZE;
 
   if ((row_pos + blockId * BETA1) >= prob_m) {
     // TODO: Maybe don't do this, since we need these threads to load x
@@ -1076,77 +1042,45 @@ __global__ void spqr_quantized_matvec_fused_slow(
     return;
   } // || (threadIdx.x % BETA1)
 
-  const int addr_per_row = MAX_ADDR_PER_ROW;
 
-  for (int i = subtile_id, group_id = 0;; i += num_spqr_tiles_per_iteration, group_id++) {
-    // TODO: It seems that it's important that this remans a syncthread instead
-    // of a syncwarp for some reason...
-    __syncthreads();
-    bool finished = (i >= num_spqr_tiles_per_cuda_block) |
-                    (i * BETA2 >= prob_n) |
-                    ((row_pos + blockId * BETA1) >= prob_m);
+  for (int i = subtile_id; i < num_spqr_tiles_per_cuda_block; i += num_spqr_tiles_per_iteration, local_raw_data += num_spqr_tiles_per_iteration * BETA1) {
+    row_bits.mask = *(local_raw_data);
 
-    bool other_finished =
-        __shfl_sync(FULL_MASK, finished, other_lane_idx, WARP_SIZE) |
-        // We also have the case where the matrix dimension is smaller than
-        // the warp size. Maybe use __activemask() here?
-        !(__activemask() & (1u << other_lane_idx)) |
-        ((other_lane_idx + blockId * BETA1) >= prob_m);
+    constexpr static unsigned long long int NUM_USEFUL_BITS = 18ull * static_cast<u64>(BITS);
+    constexpr static int OFFSET = FRAG_SIZE / 4;
 
-    if (finished & other_finished) {
-      break;
-    }
-
-    if (!finished) {
-      iter_second_order.load_async();
-      row_bits.mask = raw_data[MAX_ADDR_PER_TILE * tile_id + row_pos * addr_per_row];
-    }
-
-    __syncthreads();
-
-    unsigned int k = threadIdx.x % BETA2;
-
-    uint64_t s_order_partial = (row_bits.mask >> (18ull * static_cast<u64>(BITS))) << (FRAG_SIZE * (k / (FRAG_SIZE / 4)));
-
+    uint64_t s_order_partial = (row_bits.mask >> NUM_USEFUL_BITS) << ((FRAG_SIZE / OFFSET) * row_pos);
     SecondOrder _s{.v = recover_second_order(s_order_partial)};
-
-    __syncthreads();
-
 
     if (pipeline_stack_ptr > 0) {
       __pipeline_wait_prior(pipeline_stack_ptr - 1);
       pipeline_stack_ptr--;
     }
 
-    if (!finished) {
-      half2 first_order_quantized = s_half2_lut[row_bits.get_w2(0)];
-      half2 first_order_dequantized = dequantize2(first_order_quantized,
-                                                  iter_second_order.get_sws2(),
-                                                  iter_second_order.get_swz2());
+    half2 first_order_quantized = s_half2_lut[row_bits.get_w2(0)];
+    half2 first_order_dequantized = dequantize2(first_order_quantized,
+                                                _s.get_sws2(),
+                                                _s.get_swz2());
 
-      half2 ws2 = __half2half2(first_order_dequantized.x);
-      half2 wz2 = __half2half2(first_order_dequantized.y);
+    half2 ws2 = __half2half2(first_order_dequantized.x);
+    half2 wz2 = __half2half2(first_order_dequantized.y);
 
 #pragma unroll
-      for (int j = 0; j < BETA2 / 2; j++) {
-        if constexpr (std::is_same<Acc_t, float>::value) {
-          half2 q = s_half2_lut[row_bits.get_w2(j + 1)];
-          half2 w = dequantize2(q, ws2, wz2);
-          float2 x_fp32 = __half22float2(s_x2[i * (BETA2 / 2) + j]);
-          float2 w_fp32 = __half22float2(w);
-          acc = fmaf(x_fp32.x, w_fp32.x, acc);
-          acc = fmaf(x_fp32.y, w_fp32.y, acc);
-        } else {
-          int q_x = row_bits.get_w(2 * j);
-          int q_y = row_bits.get_w(2 * j + 1);
-          half2 q = make_half2(__int2half_rd(q_x), __int2half_rd(q_y));
-          half2 w = dequantize2(q, ws2, wz2);
-          acc = __hfma2(s_x2[i * BETA2 / 2 + j], w, acc);
-        }
+    for (int j = 0; j < BETA2 / 2; j++) {
+      if constexpr (std::is_same<Acc_t, float>::value) {
+        half2 q = s_half2_lut[row_bits.get_w2(j + 1)];
+        half2 w = dequantize2(q, ws2, wz2);
+        float2 x_fp32 = __half22float2(s_x2[i * (BETA2 / 2) + j]);
+        float2 w_fp32 = __half22float2(w);
+        acc = fmaf(x_fp32.x, w_fp32.x, acc);
+        acc = fmaf(x_fp32.y, w_fp32.y, acc);
+      } else {
+        int q_x = row_bits.get_w(2 * j);
+        int q_y = row_bits.get_w(2 * j + 1);
+        half2 q = make_half2(__int2half_rd(q_x), __int2half_rd(q_y));
+        half2 w = dequantize2(q, ws2, wz2);
+        acc = __hfma2(s_x2[i * BETA2 / 2 + j], w, acc);
       }
-
-      iter_second_order.next();
-      tile_id += num_spqr_tiles_per_iteration;
     }
 
     unsigned idx = pipeline_id * total_threads + tid;
@@ -1160,9 +1094,8 @@ __global__ void spqr_quantized_matvec_fused_slow(
 
   auto s_y_scalar = scalarize<Acc_t>(s_y);
   auto s_y_vectorized = vectorize(s_y_scalar);
-  using Vector_ptr_t = decltype(s_y_vectorized);
 
-  int t = threadIdx.x % BETA1;
+  int t = row_pos;
   int s = s_row_offsets[t];
   int e = s_row_offsets[t + 1];
   int wid = threadIdx.x / BETA1;
@@ -1223,7 +1156,6 @@ __global__ void spqr_quantized_matvec_fused_slow(
   }
 
   __syncthreads();
-
 
   if (order == nullptr) {
     if (threadIdx.x < BETA1 / 2) {
@@ -2000,7 +1932,7 @@ int spqr_matvec(
   if (features.flags.fused_sparse) {
     if (prob_m % 256 == 0 && prob_n % 256 == 0) {
       if (is_a100) {
-        CALL_FUSED(spqr_quantized_matvec_fused, 1, 32, 2);
+        CALL_FUSED(spqr_quantized_matvec_fused, 1, 16, 4);
       } else {
         CALL_FUSED(spqr_quantized_matvec_fused_slow, 1, 16, 1);
       }
@@ -2008,7 +1940,7 @@ int spqr_matvec(
       if (is_a100) {
         CALL_FUSED(spqr_quantized_matvec_fused_slow, 1, 32, 2);
       } else {
-        CALL_FUSED(spqr_quantized_matvec_fused_slow, 1, 16, 4);
+        CALL_FUSED(spqr_quantized_matvec_fused_slow, 1, 32, 8);
       }
     }
   } else {
