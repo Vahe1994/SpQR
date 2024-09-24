@@ -926,8 +926,8 @@ __global__ void spqr_quantized_matvec_fused_slow(
     const SecondOrder *__restrict__ second_order,
     const half *__restrict__ x,
     // Outliers
-    const int * __restrict__ row_offsets,
-    const u32 * __restrict__ col_vals,
+    const int *__restrict__ row_offsets,
+    const u32 *__restrict__ col_vals,
     const short *__restrict__ order,
     // Output
     half *__restrict__ y_fp16) {
@@ -1047,9 +1047,11 @@ __global__ void spqr_quantized_matvec_fused_slow(
   constexpr static unsigned long long int NUM_USEFUL_BITS = 18ull * static_cast<u64>(BITS);
   constexpr static int OFFSET = FRAG_SIZE / 4;
 
-  for (u32 i = subtile_id; i < num_spqr_tiles_per_cuda_block; i += num_spqr_tiles_per_iteration, local_raw_data += num_spqr_tiles_per_iteration * BETA1) {
+  for (u32 i = subtile_id; i < num_spqr_tiles_per_cuda_block; i += num_spqr_tiles_per_iteration, local_raw_data +=
+                                                                                                     num_spqr_tiles_per_iteration *
+                                                                                                     BETA1) {
     RowBits row_bits{
-      .mask = *(local_raw_data)
+        .mask = *(local_raw_data)
     };
     uint64_t s_order_partial = (row_bits.mask >> NUM_USEFUL_BITS) << (FRAG_SIZE * (row_pos / OFFSET));
     SecondOrder _s{.v = recover_second_order(s_order_partial)};
@@ -1076,9 +1078,9 @@ __global__ void spqr_quantized_matvec_fused_slow(
     half2 ws2 = __half2half2(first_order_dequantized.x);
     half2 wz2 = __half2half2(first_order_dequantized.y);
 
-     const auto s_x2_ = s_x2 + i * (BETA2 >> 1);
+    const auto s_x2_ = s_x2 + i * (BETA2 >> 1);
 
-//    __syncthreads();
+    __syncthreads();
 #pragma unroll
     for (int j = 0; j < BETA2 / 2; j++) {
       if constexpr (std::is_same<Acc_t, float>::value) {
@@ -1134,7 +1136,7 @@ __global__ void spqr_quantized_matvec_fused_slow(
     constexpr int step = 16;
     for (int i = s + wid; i < e; i += step) {
       ColVal colval{
-        ._ = __ldg(col_vals + i)
+          ._ = __ldg(col_vals + i)
       };
       auto c = colval.members.c;
       auto v = colval.members.v;
