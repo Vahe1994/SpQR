@@ -935,7 +935,7 @@ __device__ __forceinline__ uint64_t __ld_stream(const uint64_t * ptr) {
   uint64_t v;
   asm volatile(
       "{\n"
-      "   ld.wt.u64 %0, [%1];\n"
+      "   ld.global.cs.u64 %0, [%1];\n"
       "}\n" :: "l"(v), "l"(ptr)
       );
   return v;
@@ -970,7 +970,7 @@ __global__ void spqr_quantized_matvec_fused_slow(
   static constexpr int WARP_SIZE = 32;
 
   extern __shared__ half2 s_x2[];
-  __shared__ half2 s_half2_lut_global[64 * 8];
+  __shared__ half2 s_half2_lut_global[64 * BLOCK_WIDTH];
   __shared__ Acc_t s_y[BETA1];
   __shared__ u32 s_row_offsets[BETA1 + 1];
 
@@ -1972,7 +1972,7 @@ int spqr_matvec(
       if (is_a100) {
         CALL_FUSED(spqr_quantized_matvec_fused_slow, 1, 32, 2);
       } else {
-        CALL_FUSED(spqr_quantized_matvec_fused_slow, 1, 16, 4);
+        CALL_FUSED(spqr_quantized_matvec_fused_slow, 1, 16, 2);
       }
     } else {
       if (is_a100) {
