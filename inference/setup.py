@@ -7,6 +7,10 @@ class build_ext_with_compiler_detection(cpp_extension.BuildExtension):
         # self.compiler.linker_so[0] = 'mold'
         super().build_extensions()
 
+import sys
+
+a = 80 # sys.argv[1]
+
 
 setup(
     name='inference',
@@ -33,16 +37,10 @@ setup(
             ],
                 'nvcc': [
                     # https://github.com/pytorch/pytorch/blob/main/torch/utils/cpp_extension.py#L1050C13-L1050C17
-                    # '-dlto',
-                    # '--ptxas-options=-v',
-                    '-lineinfo',
                     '-O3',
-                    '-std=c++17'
-                ],
-                'nvcclink': [
-                    '-arch=sm_86',
-                    '-gencode=arch=compute_86,code=sm_86',
-                    '-gencode=arch=compute_86,code=compute_86'
+                    '-std=c++17',
+                    f'-arch=sm_{a}',
+                    f'-gencode=arch=compute_{a},code=compute_{a}'
                 ]}
         )
     ],
