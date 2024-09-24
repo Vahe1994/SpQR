@@ -1063,7 +1063,7 @@ __global__ void spqr_quantized_matvec_fused_slow(
 
   Acc_t acc{};
   for (u32 i = subtile_id; i < num_spqr_tiles_per_cuda_block; i += num_spqr_tiles_per_iteration, local_raw_data += num_spqr_tiles_per_iteration * BETA1) {
-    auto v = __ldgg(local_raw_data);
+    auto v = __ldg(local_raw_data);
     RowBits row_bits{
         .mask = v
     };
