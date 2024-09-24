@@ -7,9 +7,7 @@ class build_ext_with_compiler_detection(cpp_extension.BuildExtension):
         # self.compiler.linker_so[0] = 'mold'
         super().build_extensions()
 
-import sys
-
-a = 80 # sys.argv[1]
+ARCH = 86
 
 
 setup(
@@ -39,8 +37,8 @@ setup(
                     # https://github.com/pytorch/pytorch/blob/main/torch/utils/cpp_extension.py#L1050C13-L1050C17
                     '-O3',
                     '-std=c++17',
-                    f'-arch=sm_{a}',
-                    f'-gencode=arch=compute_{a},code=compute_{a}'
+                    f'-arch=sm_{ARCH}',
+                    f'-gencode=arch=compute_{ARCH},code=compute_{ARCH}'
                 ]}
         )
     ],

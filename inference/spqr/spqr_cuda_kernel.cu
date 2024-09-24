@@ -855,7 +855,15 @@ __global__ void spqr_quantized_matvec_fused(
 
   // We need to help out the compiler here - step size needs to be constexpr.
 #if 1
-  if (blockDim.x == 512) {
+  if (blockDim.x == 1024) {
+    constexpr int step = 64;
+    for (int i = s + wid; i < e; i += step) {
+      auto colval = col_vals[i];
+      auto c = get_col(colval);
+      auto v = get_val(colval);
+      acc += __half2float(v) * __half2float(s_x[c]);
+    }
+  } else if (blockDim.x == 512) {
     constexpr int step = 32;
     for (int i = s + wid; i < e; i += step) {
       auto colval = col_vals[i];
@@ -936,7 +944,7 @@ __device__ __forceinline__ uint64_t __ld_stream(const uint64_t * ptr) {
   asm volatile(
       "{\n"
       "   ld.global.cs.u64 %0, [%1];\n"
-      "}\n" :: "l"(v), "l"(ptr)
+      "}\n" : "=l"(v) : "l"(ptr)
       );
   return v;
 }
@@ -1970,7 +1978,7 @@ int spqr_matvec(
   if (features.flags.fused_sparse) {
     if (prob_m % 256 == 0 && prob_n % 256 == 0) {
       if (is_a100) {
-        CALL_FUSED(spqr_quantized_matvec_fused_slow, 1, 32, 1);
+        CALL_FUSED(spqr_quantized_matvec_fused_slow, 1, 64, 1);
       } else {
         CALL_FUSED(spqr_quantized_matvec_fused_slow, 1, 16, 2);
       }
