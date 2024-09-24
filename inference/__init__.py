@@ -707,34 +707,30 @@ def create_twos(m, n) -> Tuple[SPQRHost, SPQRModule]:
 
     return spqr_host, spqr_device
 
-
-def create_ones_random_2nd_order(m, n) -> Tuple[SPQRHost, SPQRModule]:
-    beta1, beta2 = 16, 16
-    bits = 3
-
-    def c(E):
-        return compress(E, bits)
-
-    W_dequantized = torch.ones(m * n).float()
-    W = c(W_dequantized.int()).int()
+def create_ones_random_2nd_order(m, n, density, device: torch.device, bits=3, beta1=16, beta2=16) -> Tuple[
+    SPQRModule, SPQRModule]:
+    W = torch.ones(m * n).char()
 
     num_first_order_groups = updiv(n, beta2) * m
     num_second_order_groups = updiv(m, beta1) * updiv(n, beta2)
 
     W_s_raw = torch.ones(num_first_order_groups).char()
     W_z_raw = torch.zeros(num_first_order_groups).char()
-    W_s = c(W_s_raw.int())
-    W_z = c(W_z_raw.int())
 
-    W_s_s = torch.rand(num_second_order_groups).float()
-    W_s_z = torch.rand(num_second_order_groups).float()
-    W_z_s = torch.rand(num_second_order_groups).float()
-    W_z_z = torch.rand(num_second_order_groups).float()
+    W_s = W_s_raw.char()
+    W_z = W_z_raw.char()
 
-    values = torch.zeros(1).float()
-    row_offsets = torch.zeros(m + 1).int()
-    col_ids = torch.zeros(1)
-    nnz = 0
+    W_s_s = generate_x_fp32(num_second_order_groups).half()
+    W_s_z = generate_x_fp32(num_second_order_groups).half()
+    W_z_s = generate_x_fp32(num_second_order_groups).half()
+    W_z_z = generate_x_fp32(num_second_order_groups).half()
+
+    if density == 0:
+        values = torch.zeros(0).half()
+        row_offsets = torch.zeros(m + 1).int()
+        col_ids = torch.zeros(0).short()
+    else:
+        row_offsets, values, col_ids, nnz = random_csr_host(m, n, density)
 
     spqr_host = SPQRHost(
         m=m,
@@ -751,15 +747,13 @@ def create_ones_random_2nd_order(m, n) -> Tuple[SPQRHost, SPQRModule]:
         W_z_z=W_z_z,
         row_offsets=row_offsets,
         col_ids=col_ids,
-        values=values,
-        W_dequantized=W_dequantized,
-        W_s_raw=W_s_raw,
-        W_z_raw=W_z_raw)
+        values=values)
 
-    spqr_device = host_to_device(spqr_host)
+    spqr_module = SPQRModule(spqr_host)
+    spqr_module_device = SPQRModule(spqr_host)
+    spqr_module_device.to_device(device)
 
-    return spqr_host, spqr_device
-
+    return spqr_module, spqr_module_device
 
 def create_ones_random_1st_order(m, n) -> Tuple[SPQRHost, SPQRModule]:
     beta1, beta2 = 16, 16

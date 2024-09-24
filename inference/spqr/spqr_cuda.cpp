@@ -391,8 +391,11 @@ void tensor_compress_interleaved(
         sanity |= (partial << (FRAG_SIZE * (k / (FRAG_SIZE / 4))));
       }
 
-#if 0
-      printf("valid = %d\n", sanity == second_vector_ptr->v);
+#if 1
+      if (sanity != second_vector_ptr->v) {
+        printf("valid = %d\n", sanity == second_vector_ptr->v);
+        exit(1);
+      }
 #endif
 
       second_vector_ptr++;

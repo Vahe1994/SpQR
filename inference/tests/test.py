@@ -36,9 +36,9 @@ class TestSparseFp16Fused(unittest.TestCase):
         print('')
         # Call this once just to trigger the annoying torch sparse warning.
         device = torch.device('cuda:0')
-        for m in [ 4096, 11008]:
-            for n in [ 4096, 11008]:
-                for density in [0]: #, 0.01, 0.05, 0.5, 0.9]:
+        for m in [4096, 11008]:
+            for n in [4096, 11008]:
+                for density in [0]:  # , 0.01, 0.05, 0.5, 0.9]:
                     for flag in [
                         # inference.FeatureFlag.SPARSE_NAIVE_FP16,
                         inference.FeatureFlag.SPARSE_FUSED_FP32,
@@ -49,7 +49,10 @@ class TestSparseFp16Fused(unittest.TestCase):
 
                         # Generate test case
                         x_fp32 = inference.generate_x_fp32(n)
+                        # x_fp32 = inference.generate_x_fp32(n) * 0 + 1
                         spqr_module, spqr_module_device = inference.create_random(m, n, density, device)
+                        # spqr_module, spqr_module_device = inference.create_ones_random_2nd_order(m, n, density, device)
+                        # spqr_module, spqr_module_device = inference.create_ones(m, n, device)
 
                         x_fp16_device = x_fp32.cuda(device=device).half()
 
