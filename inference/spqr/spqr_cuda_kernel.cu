@@ -531,7 +531,6 @@ DEVICE_INLINE u16 get_row(u64 m) { return m >> 32u; }
             stream>>>(prob_m, \
             prob_n, \
             raw_data,                               \
-            second_order_data_ptr,                    \
             X_ptr, \
             row_offsets_ptr, \
             col_vals_ptr, \
@@ -603,11 +602,22 @@ struct RingBuffer {
 // Wait until at most `n` async copy stages are still pending.
 template<int n>
 __device__ inline void cp_async_wait() {
-  asm volatile("cp.async.wait_group %0;\n"::"n"(n));
+  // asm volatile("cp.async.wait_group %0;\n"::"n"(n));
+  asm volatile("cp.async.wait_all;\n");
 }
 
-__device__ inline void cp_async2_pred(void *smem_ptr, const void *glob_ptr, bool pred = true) {
-  const int BYTES = 8;
+__device__ inline void cp_async_128_stream(int4 *smem_ptr, const int4 *glob_ptr) {
+  const int BYTES = 16;
+  uint32_t smem = static_cast<uint32_t>(__cvta_generic_to_shared(smem_ptr));
+  asm volatile(
+      "{\n"
+      "   cp.async.ca.shared.global [%0], [%1], %2;\n"
+      "}\n"::"r"(smem), "l"(glob_ptr), "n"(BYTES)
+      );
+}
+
+__device__ inline void cp_async_128_pred(int4 *smem_ptr, const int4 *glob_ptr, bool pred = true) {
+  const int BYTES = 16;
   uint32_t smem = static_cast<uint32_t>(__cvta_generic_to_shared(smem_ptr));
   asm volatile(
       "{\n"
@@ -654,8 +664,6 @@ __global__ void spqr_quantized_matvec_fused(
   __shared__ Acc_t s_y[BETA1];
   __shared__ u32 s_row_offsets[BETA1 + 1];
   __shared__ uint64_t s_w[PIPELINE_DEPTH * BETA2 * BLOCK_WIDTH];
-
-  SecondOrder second_order;
 
   if (!threadIdx.x) {
     for (int i = 0; i < 8; i++) {
@@ -777,10 +785,13 @@ __global__ void spqr_quantized_matvec_fused(
     uint64_t m = *s_w_ring_buffer.get();
     RowBits row_bits{.mask = m};
 
+    constexpr static u64 FIRST_SECOND_ORDER_BIT_COUNT = 18ull * static_cast<u64>(BITS);
 
-    uint64_t s_order_partial = (m >> (18ull * static_cast<u64>(BITS)));
+    uint64_t s_order_partial = (m >> FIRST_SECOND_ORDER_BIT_COUNT);
     s_order_partial <<= static_cast<u64>((threadIdx.x % BETA2) * FRAG_SIZE);
-    second_order.v = recover_second_order(s_order_partial);
+    SecondOrder second_order {
+        .v = recover_second_order(s_order_partial)
+    };
 
     if (pipeline_stack_ptr > 0) {
       __pipeline_wait_prior(pipeline_stack_ptr - 1);
@@ -914,6 +925,10 @@ __global__ void spqr_quantized_matvec_fused(
   }
 }
 
+// Async copy fence.
+__device__ inline void cp_async_commit() {
+  asm volatile("cp.async.commit_group;\n" ::);
+}
 
 //
 template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH, class Acc_t, class W_t /* = uint64_t */, int PIPELINE_DEPTH>
@@ -923,7 +938,6 @@ __global__ void spqr_quantized_matvec_fused_slow(
     unsigned int prob_n,
     // W 1st order stats
     const W_t *__restrict__ raw_data,
-    const SecondOrder *__restrict__ second_order,
     const half *__restrict__ x,
     // Outliers
     const int *__restrict__ row_offsets,
@@ -949,11 +963,12 @@ __global__ void spqr_quantized_matvec_fused_slow(
 
   static constexpr int WARP_SIZE = 32;
 
-  auto s_half2_lut = s_half2_lut_global + (threadIdx.x / 32) * 64;
+  auto s_half2_lut = s_half2_lut_global + ((threadIdx.x >> 5) << 6);
 
   // TODO: Make this async?
 
-  for (int i = threadIdx.x % WARP_SIZE; i < 64; i += WARP_SIZE) {
+#pragma loop unroll
+  for (int i = threadIdx.x & 0x1F; i < 64; i += WARP_SIZE) {
     s_half2_lut[i] = make_half2(
         __int2half_rd(i & 0b111),
         __int2half_rd(i >> 3)
@@ -988,16 +1003,9 @@ __global__ void spqr_quantized_matvec_fused_slow(
   }
 
   // Here we load the row offsets into smem.
-  if (threadIdx.x < BETA1) {
+  if (threadIdx.x <= BETA1) {
     __pipeline_memcpy_async(s_row_offsets + threadIdx.x, row_offsets + blockIdx.x * BETA1 + threadIdx.x, sizeof(u32));
-
-    // The first thread will read the last sparse row offset since we cannot be sure that
-    // we have enough threads to load all the sparse row offsets that we need.
-    if (!threadIdx.x) {
-      __pipeline_memcpy_async(s_row_offsets + BETA1, row_offsets + blockIdx.x * BETA1 + BETA1, sizeof(u32));
-    }
   }
-
 
   for (int i = 0; i < PIPELINE_DEPTH && (i * total_threads + tid) < prob_n; i++) {
     unsigned idx = i * total_threads + tid;
@@ -1009,7 +1017,7 @@ __global__ void spqr_quantized_matvec_fused_slow(
     }
   }
 
-  int pipeline_stack_ptr = pipeline_depth;
+  u32 pipeline_stack_ptr = pipeline_depth;
 
   const u32 THREAD_COUNT = blockDim.x; // = 128 (example)
 
@@ -1031,8 +1039,7 @@ __global__ void spqr_quantized_matvec_fused_slow(
     return;
   }
 
-  auto local_raw_data = raw_data + blockIdx.x * num_spqr_tiles_per_cuda_block * BETA1 + subtile_id * BETA1 + row_pos;
-  Acc_t acc{};
+  const W_t *local_raw_data = raw_data + blockIdx.x * num_spqr_tiles_per_cuda_block * BETA1 + subtile_id * BETA1 + row_pos;
 
   constexpr u32 FULL_MASK = 0xffffffff;
   constexpr u32 HALF_MASK = FULL_MASK >> 16u;
@@ -1047,20 +1054,13 @@ __global__ void spqr_quantized_matvec_fused_slow(
   constexpr static unsigned long long int NUM_USEFUL_BITS = 18ull * static_cast<u64>(BITS);
   constexpr static int OFFSET = FRAG_SIZE / 4;
 
-  for (u32 i = subtile_id; i < num_spqr_tiles_per_cuda_block; i += num_spqr_tiles_per_iteration, local_raw_data +=
-                                                                                                     num_spqr_tiles_per_iteration *
-                                                                                                     BETA1) {
+  Acc_t acc{};
+  for (u32 i = subtile_id; i < num_spqr_tiles_per_cuda_block; i += num_spqr_tiles_per_iteration, local_raw_data += num_spqr_tiles_per_iteration * BETA1) {
     RowBits row_bits{
-        .mask = *(local_raw_data)
+        .mask = __ldg(local_raw_data)
     };
     uint64_t s_order_partial = (row_bits.mask >> NUM_USEFUL_BITS) << (FRAG_SIZE * (row_pos / OFFSET));
     SecondOrder _s{.v = recover_second_order(s_order_partial)};
-
-    if (pipeline_stack_ptr > 0) {
-      __pipeline_wait_prior(pipeline_stack_ptr - 1);
-      pipeline_stack_ptr--;
-    }
-
     half2 first_order_quantized = s_half2_lut[row_bits.get_w2(0)];
 #if 0
     if (threadIdx.x == 1)
@@ -1080,9 +1080,14 @@ __global__ void spqr_quantized_matvec_fused_slow(
 
     const auto s_x2_ = s_x2 + i * (BETA2 >> 1);
 
+    if (pipeline_stack_ptr > 0) {
+      __pipeline_wait_prior(pipeline_stack_ptr - 1);
+      pipeline_stack_ptr--;
+    }
+
     __syncthreads();
 #pragma unroll
-    for (int j = 0; j < BETA2 / 2; j++) {
+    for (u32 j = 0; j < BETA2 / 2; j++) {
       if constexpr (std::is_same<Acc_t, float>::value) {
         half2 q = s_half2_lut[row_bits.get_w2(j + 1)];
         half2 w = dequantize2(q, ws2, wz2);
@@ -1118,9 +1123,9 @@ __global__ void spqr_quantized_matvec_fused_slow(
   auto s_y_vectorized = vectorize(s_y_scalar);
 
   u32 t = row_pos;
-  int s = s_row_offsets[t];
-  int e = s_row_offsets[t + 1];
-  int wid = threadIdx.x / BETA1;
+  u32 s = s_row_offsets[t];
+  u32 e = s_row_offsets[t + 1];
+  u32 wid = subtile_id;
 
   // We need to help out the compiler here - step size needs to be constexpr.
 #if 1
@@ -1134,13 +1139,13 @@ __global__ void spqr_quantized_matvec_fused_slow(
     }
   } else if (blockDim.x == 256) {
     constexpr int step = 16;
-    for (int i = s + wid; i < e; i += step) {
+    for (u32 i = s + wid; i < e; i += step) {
       ColVal colval{
           ._ = __ldg(col_vals + i)
       };
       auto c = colval.members.c;
       auto v = colval.members.v;
-      acc += __half2float(__hmul(s_x[c], v));
+      acc += __half2float(v) * __half2float(s_x[c]);
     }
   } else if (blockDim.x == 128) {
     constexpr int step = 8;
@@ -1956,7 +1961,7 @@ int spqr_matvec(
       if (is_a100) {
         CALL_FUSED(spqr_quantized_matvec_fused_slow, 1, 32, 4);
       } else {
-        CALL_FUSED(spqr_quantized_matvec_fused_slow, 1, 16, 4);
+        CALL_FUSED(spqr_quantized_matvec_fused_slow, 1, 16, 1);
       }
     } else {
       if (is_a100) {
