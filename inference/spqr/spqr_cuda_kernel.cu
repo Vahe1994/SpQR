@@ -933,7 +933,11 @@ __device__ inline void cp_async_commit() {
 
 __device__ __forceinline__ uint64_t __ld_stream(const uint64_t *__restrict__ ptr) {
   uint64_t v{};
-  asm volatile("ld.cs.u64 %0, [%1];\n" :: "l"(v), "l"(ptr));
+  asm volatile(
+      "{\n"
+      "   ld.global.u64 %0, [%1];\n"
+      "}\n" :: "l"(v), "l"(ptr)
+      );
   return v;
 }
 
@@ -1060,7 +1064,7 @@ __global__ void spqr_quantized_matvec_fused_slow(
   Acc_t acc{};
   for (u32 i = subtile_id; i < num_spqr_tiles_per_cuda_block; i += num_spqr_tiles_per_iteration, local_raw_data += num_spqr_tiles_per_iteration * BETA1) {
     RowBits row_bits{
-        .mask = __ld_stream(local_raw_data)
+        .mask = __ldg(local_raw_data)
     };
     uint64_t s_order_partial = (row_bits.mask >> NUM_USEFUL_BITS) << (FRAG_SIZE * (row_pos / OFFSET));
     SecondOrder _s{.v = recover_second_order(s_order_partial)};
