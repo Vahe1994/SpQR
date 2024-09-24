@@ -935,7 +935,7 @@ __device__ __forceinline__ uint64_t __ld_stream(const uint64_t * ptr) {
   uint64_t v;
   asm volatile(
       "{\n"
-      "   ld.const.u64 %0, [%1];\n"
+      "   ld.wt.u64 %0, [%1];\n"
       "}\n" :: "l"(v), "l"(ptr)
       );
   return v;
@@ -1063,8 +1063,9 @@ __global__ void spqr_quantized_matvec_fused_slow(
 
   Acc_t acc{};
   for (u32 i = subtile_id; i < num_spqr_tiles_per_cuda_block; i += num_spqr_tiles_per_iteration, local_raw_data += num_spqr_tiles_per_iteration * BETA1) {
+    auto v = __ldgg(local_raw_data);
     RowBits row_bits{
-        .mask = __ld_stream(local_raw_data)
+        .mask = v
     };
     uint64_t s_order_partial = (row_bits.mask >> NUM_USEFUL_BITS) << (FRAG_SIZE * (row_pos / OFFSET));
     SecondOrder _s{.v = recover_second_order(s_order_partial)};
@@ -1969,9 +1970,9 @@ int spqr_matvec(
   if (features.flags.fused_sparse) {
     if (prob_m % 256 == 0 && prob_n % 256 == 0) {
       if (is_a100) {
-        CALL_FUSED(spqr_quantized_matvec_fused_slow, 1, 16, 2);
+        CALL_FUSED(spqr_quantized_matvec_fused_slow, 1, 32, 2);
       } else {
-        CALL_FUSED(spqr_quantized_matvec_fused_slow, 1, 16, 2);
+        CALL_FUSED(spqr_quantized_matvec_fused_slow, 1, 16, 4);
       }
     } else {
       if (is_a100) {
