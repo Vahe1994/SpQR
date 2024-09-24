@@ -524,7 +524,7 @@ DEVICE_INLINE u16 get_row(u64 m) { return m >> 32u; }
 #define CALL_FUSED(F, _BLOCK_HEIGHT, _BLOCK_WIDTH, PIPELINE_DEPTH) \
     constexpr int BLOCK_HEIGHT = _BLOCK_HEIGHT; \
     constexpr int BLOCK_WIDTH = _BLOCK_WIDTH; \
-    size_t smem_size = sizeof(half) * prob_n;                   \
+    size_t smem_size = sizeof(half2) * prob_n / 2;                   \
     F<3, 16, 16, BLOCK_HEIGHT, BLOCK_WIDTH, float, uint64_t, PIPELINE_DEPTH> \
             <<<dim3(updiv(prob_m, 16 * BLOCK_HEIGHT), 1, 1), \
             dim3(__min(updiv(prob_n, 16), BLOCK_WIDTH) * 16, 1, 1), smem_size, \
@@ -930,6 +930,13 @@ __device__ inline void cp_async_commit() {
   asm volatile("cp.async.commit_group;\n" ::);
 }
 
+
+__device__ __forceinline__ uint64_t __ld_stream(const uint64_t *__restrict__ ptr) {
+  uint64_t v{};
+  asm volatile("ld.cs.u64 %0, [%1];\n" :: "l"(v), "l"(ptr));
+  return v;
+}
+
 //
 template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH, class Acc_t, class W_t /* = uint64_t */, int PIPELINE_DEPTH>
 __global__ void spqr_quantized_matvec_fused_slow(
@@ -956,16 +963,14 @@ __global__ void spqr_quantized_matvec_fused_slow(
    beta1   │  block m-1  │ │ │   │ │
            └─────────────┘ └─┘   └─┘
   */
-  extern __shared__ half s_x[];
+  static constexpr int WARP_SIZE = 32;
+
+  extern __shared__ half2 s_x2[];
   __shared__ half2 s_half2_lut_global[64 * 8];
   __shared__ Acc_t s_y[BETA1];
   __shared__ u32 s_row_offsets[BETA1 + 1];
 
-  static constexpr int WARP_SIZE = 32;
-
   auto s_half2_lut = s_half2_lut_global + ((threadIdx.x >> 5) << 6);
-
-  // TODO: Make this async?
 
 #pragma loop unroll
   for (int i = threadIdx.x & 0x1F; i < 64; i += WARP_SIZE) {
@@ -975,8 +980,6 @@ __global__ void spqr_quantized_matvec_fused_slow(
     );
   }
 
-
-  half2 *s_x2 = reinterpret_cast<half2 *>(s_x);
   const half2 *x2 = reinterpret_cast<const half2 *>(x);
 
   u32 pipeline_depth{};
@@ -1057,7 +1060,7 @@ __global__ void spqr_quantized_matvec_fused_slow(
   Acc_t acc{};
   for (u32 i = subtile_id; i < num_spqr_tiles_per_cuda_block; i += num_spqr_tiles_per_iteration, local_raw_data += num_spqr_tiles_per_iteration * BETA1) {
     RowBits row_bits{
-        .mask = __ldg(local_raw_data)
+        .mask = __ld_stream(local_raw_data)
     };
     uint64_t s_order_partial = (row_bits.mask >> NUM_USEFUL_BITS) << (FRAG_SIZE * (row_pos / OFFSET));
     SecondOrder _s{.v = recover_second_order(s_order_partial)};
@@ -1126,6 +1129,9 @@ __global__ void spqr_quantized_matvec_fused_slow(
   u32 s = s_row_offsets[t];
   u32 e = s_row_offsets[t + 1];
   u32 wid = subtile_id;
+
+
+  half *s_x = reinterpret_cast<half*>(s_x2);
 
   // We need to help out the compiler here - step size needs to be constexpr.
 #if 1
@@ -1961,7 +1967,7 @@ int spqr_matvec(
       if (is_a100) {
         CALL_FUSED(spqr_quantized_matvec_fused_slow, 1, 32, 4);
       } else {
-        CALL_FUSED(spqr_quantized_matvec_fused_slow, 1, 16, 1);
+        CALL_FUSED(spqr_quantized_matvec_fused_slow, 1, 16, 2);
       }
     } else {
       if (is_a100) {
