@@ -978,7 +978,7 @@ __global__ void spqr_quantized_matvec_fused_slow(
   static constexpr int WARP_SIZE = 32;
 
   extern __shared__ half2 s_x2[];
-  __shared__ half2 s_half2_lut_global[64 * BLOCK_WIDTH];
+  __shared__ half2 s_half2_lut_global[64 * BLOCK_WIDTH * 2];
   __shared__ Acc_t s_y[BETA1];
   __shared__ u32 s_row_offsets[BETA1 + 1];
 

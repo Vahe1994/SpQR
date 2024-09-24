@@ -992,6 +992,7 @@ class Model:
 
 
 def write_tensor(spqr_module: SPQRModule, path: str):
+    spqr_module.buff1 = None
     torch.save(spqr_module, path)
 
 
