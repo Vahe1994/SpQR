@@ -5,6 +5,7 @@ import os
 import sys
 
 import inference
+import tests.test_util as test_util
 
 from scipy.stats import gmean
 
@@ -69,7 +70,7 @@ if __name__ == '__main__':
                 spqr_module.to_device(device)
                 spqr_module_device = spqr_module
 
-                x_fp32 = inference.generate_x_fp32(n)
+                x_fp32 = test_util.generate_x_fp32(n)
                 x_fp16_device = x_fp32.cuda(device=device).half()
 
                 deq_w_device = deq_w.to(device).half().flatten()

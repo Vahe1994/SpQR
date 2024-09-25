@@ -6,6 +6,7 @@ import time
 import os
 import sys
 
+import test_util
 import inference
 
 seed = 1
@@ -42,8 +43,8 @@ class TestSparseFp16Easy(unittest.TestCase):
                         inference.FeatureFlag.SPARSE_FUSED_FP32,
                     ]:
                         # Generate test case
-                        x_fp32 = inference.generate_x_fp32(n) * 0 + 1
-                        spqr_module, spqr_module_device = inference.create_ones(m, n, device)
+                        x_fp32 = test_util.generate_x_fp32(n) * 0 + 1
+                        spqr_module, spqr_module_device = test_util.create_ones(m, n, device)
 
                         x_fp16_device = x_fp32.cuda(device=device).half()
 
@@ -75,9 +76,9 @@ class TestSparseFp16Fused(unittest.TestCase):
                         inference.FeatureFlag.SPARSE_FUSED_FP32,
                     ]:
                         # Generate test case
-                        x_fp32 = inference.generate_x_fp32(n)
+                        x_fp32 = test_util.generate_x_fp32(n)
                         # x_fp32 = inference.generate_x_fp32(n) * 0 + 1
-                        spqr_module, spqr_module_device = inference.create_random(m, n, density, device)
+                        spqr_module, spqr_module_device = test_util.create_random(m, n, density, device)
                         # spqr_module, spqr_module_device = inference.create_ones_random_2nd_order(m, n, density, device)
                         # spqr_module, spqr_module_device = inference.create_ones(m, n, device)
 
@@ -115,8 +116,8 @@ class TestSparseFp16(unittest.TestCase):
                         print(f'Running m = {m} n = {n} density = {density} flag = {flag}')
 
                         # Generate test case
-                        x_fp32 = inference.generate_x_fp32(n)
-                        spqr_module, spqr_module_device = inference.create_random(m, n, density, device)
+                        x_fp32 = test_util.generate_x_fp32(n)
+                        spqr_module, spqr_module_device = test_util.create_random(m, n, density, device)
 
                         x_fp16_device = x_fp32.cuda(device=device).half()
 
