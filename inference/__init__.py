@@ -139,7 +139,6 @@ class SPQRModule(torch.nn.Module):
     def sparsity(self) -> float:
         return 1 - self.density
 
-    @torch.jit.export
     def forward(self, x: T) -> T:
         inner_dim = x.shape[1]
         y = torch.zeros((1, inner_dim, self.m), dtype=x.dtype, device=x.device)
