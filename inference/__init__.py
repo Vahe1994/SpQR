@@ -169,7 +169,7 @@ class SPQRModule(torch.nn.Module):
                     # TODO: Might case a CPU regression
                     _x,
                     self._y,
-                    FeatureFlag.SPARSE_FUSED_FP32)
+                    FeatureFlag.SPARSE_FUSED_FP32_ASYNC)
                 if self.out_perm is not None:
                     out_perm_long = self.out_perm
                     self._y = self._y[out_perm_long]
@@ -192,7 +192,7 @@ class SPQRModule(torch.nn.Module):
                 # TODO: Might case a CPU regression
                 _x.flatten(),
                 self.y_single.flatten(),
-                FeatureFlag.SPARSE_FUSED_FP32)
+                FeatureFlag.SPARSE_FUSED_FP32_ASYNC)
             return self.y_single
 
 
