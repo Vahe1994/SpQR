@@ -1,6 +1,6 @@
 import os
 import time
-from enum import Enum
+from enum import Enum, IntEnum
 
 import torch
 import torch.nn as nn
@@ -22,12 +22,14 @@ except ModuleNotFoundError:
     has_safetensors = False
 
 
-class Mode(Enum):
+class Mode(IntEnum):
     CPU_DEQUANTIZE = 1
     CUDA = 2
     CPU = 3
     QUANTIZE_NEAREST = 4
     CPU_DEQUANTIZE_ORIGINAL = 5
+    CUDA_PT = 6
+    CUDA_DENSE = 7
 
 
 class LLama:
@@ -124,22 +126,27 @@ class LLama:
             self.dtype = torch.float16
 
         self.device = device
-        with suspend_nn_inits():
-            config = AutoConfig.from_pretrained(pretrained_model_path, torchscript=False)
-            config.max_position_embeddings = 4096
 
-            self.model = AutoModelForCausalLM.from_pretrained(
-                pretrained_model_name_or_path=pretrained_model_path,
-                trust_remote_code=True,
-                torch_dtype=torch.half,
-                config=config
-            )
+        if flag == Mode.CUDA_PT:
+            self.model = torch.load(quantized_model_path)
+        else:
+            with suspend_nn_inits():
+                config = AutoConfig.from_pretrained(pretrained_model_path, torchscript=False)
+                config.max_position_embeddings = 4096
+
+                self.model = AutoModelForCausalLM.from_pretrained(
+                    pretrained_model_name_or_path=pretrained_model_path,
+                    trust_remote_code=True,
+                    torch_dtype=torch.half,
+                    config=config
+                )
+
 
         self.device = device
 
         if flag == Mode.QUANTIZE_NEAREST:
             self.quantize_nearest(self.model, self.device)
-        elif flag != Mode.CPU:
+        elif flag != Mode.CPU and flag != Mode.CUDA_PT and flag != Mode.CUDA_DENSE:
             self.model = self.linear_to_spqr(self.model, quantized_model_path, self.device)
 
         self.model = self.model.to(device=self.device, dtype=self.dtype)
