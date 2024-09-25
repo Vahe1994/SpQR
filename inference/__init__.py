@@ -177,8 +177,8 @@ class SPQRModule(torch.nn.Module):
             return self.y[:, :inner_dim, :]
         else:
             _x = x.flatten()
-            if self.in_perm is not None:
-                _x = _x[self.in_perm]
+            # if self.in_perm is not None:
+            #     _x = _x[self.in_perm]
             spqr_cuda.spqr_mul(
                 self.m,
                 self.n,
@@ -190,7 +190,7 @@ class SPQRModule(torch.nn.Module):
                 self.col_vals,
                 self.nnz,
                 # TODO: Might case a CPU regression
-                _x,
+                _x.flatten(),
                 self.y_single.flatten(),
                 FeatureFlag.SPARSE_FUSED_FP32)
             return self.y_single
