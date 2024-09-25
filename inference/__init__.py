@@ -12,7 +12,6 @@
 # limitations under the License.
 
 from enum import IntEnum
-from typing import Tuple
 
 import numpy as np
 
@@ -22,11 +21,6 @@ import torch
 import spqr_cuda
 
 from torch import Tensor as T, nn
-
-import time
-
-import warnings
-
 
 # Utility functions
 
@@ -442,18 +436,6 @@ def spqr_mul_timer(spqr_device: SPQRModule, x, feature_flag: FeatureFlag, num_ru
     return y, runs
 
 
-class ModelArgs:
-    bits: int
-    beta1: int
-    beta2: int
-
-    def __init__(self, model_path: str):
-        b = torch.load(os.path.join(model_path, 'args.pt'))
-        self.bits = b['wbits']
-        self.beta1 = b['qq_groupsize']
-        self.beta2 = b['groupsize']
-
-
 def write_tensor(spqr_module: SPQRModule, path: str):
     torch.save(spqr_module, path)
 
@@ -461,47 +443,6 @@ def write_tensor(spqr_module: SPQRModule, path: str):
 def load_compressed_tensor(p: str) -> SPQRModule:
     spqr_module = torch.load(p)
     return spqr_module
-
-
-def load_uncompressed_spqr_tensor(p: str, model_args: ModelArgs) -> SPQRUncompressed:
-    bits = model_args.bits
-    beta1 = model_args.beta1
-    beta2 = model_args.beta2
-
-    t = torch.load(p, map_location='cpu')
-
-    W = t['quant_weights']
-    m = W.shape[0]
-    n = W.shape[1]
-    W = list_flatten(W)
-    W_s = list_flatten(t['quant_layer_scale'])
-    W_z = list_flatten(t['quant_layer_zeros'])
-
-    perm = t['perm']
-
-    outliers_matrix = t['outliers_matrix'].to_sparse_csr()
-
-    col_ids = outliers_matrix.col_indices().short()
-    values = outliers_matrix.values().half()
-
-    return SPQRUncompressed(
-        m=m,
-        n=n,
-        bits=bits,
-        W=list_flatten(W),
-        beta1=beta1,
-        beta2=beta2,
-        W_s=W_s,
-        W_z=W_z,
-        W_s_s=list_flatten(t['quant_layer_scale_qq_scale']),
-        W_s_z=list_flatten(t['quant_layer_scale_qq_zero']),
-        W_z_s=list_flatten(t['quant_layer_zero_qq_scale']),
-        W_z_z=list_flatten(t['quant_layer_zero_qq_zero']),
-        row_offsets=outliers_matrix.crow_indices().int(),
-        col_ids=col_ids,
-        values=values,
-        in_perm=perm.long()
-    )
 
 
 def calculate_buffer_sizes(m, n, beta1, beta2):
