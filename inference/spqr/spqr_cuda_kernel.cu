@@ -41,7 +41,7 @@ template<class Acc_t> constexpr __device__ __host__ bool is_fp32() {
 }
 
 DEVICE_INLINE uint64_t recover_second_order(uint64_t val) {
-  constexpr unsigned int FULL_MASK = 0xffffffff;
+  constexpr unsigned int FULL_MASK = 0xffffffffu;
   val |= __shfl_xor_sync(FULL_MASK, val, 2);
   val |= __shfl_xor_sync(FULL_MASK, val, 4);
   val |= __shfl_xor_sync(FULL_MASK, val, 8);
@@ -631,6 +631,7 @@ __device__ inline void cp_async_128_pred(int4 *smem_ptr, const int4 *glob_ptr, b
 static constexpr int FRAG_SIZE = 8;
 
 
+#if 0
 //
 template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH, class Acc_t, class W_t /* = uint64_t */, int PIPELINE_DEPTH>
 __global__ void spqr_quantized_matvec_fused(
@@ -932,6 +933,7 @@ __global__ void spqr_quantized_matvec_fused(
     }
   }
 }
+#endif
 
 // Async copy fence.
 __device__ inline void cp_async_commit() {
@@ -978,14 +980,15 @@ __global__ void spqr_quantized_matvec_fused_slow(
   static constexpr int WARP_SIZE = 32;
 
   extern __shared__ half2 s_x2[];
-  __shared__ half2 s_half2_lut_global[64 * BLOCK_WIDTH * 2];
+  __shared__ half2 s_half2_lut_global[64 * BLOCK_WIDTH];
   __shared__ Acc_t s_y[BETA1];
   __shared__ u32 s_row_offsets[BETA1 + 1];
 
-  auto s_half2_lut = s_half2_lut_global + ((threadIdx.x >> 5) << 6);
+  static constexpr int HALF_WARP_SIZE = 16;
+  auto s_half2_lut = s_half2_lut_global + ((threadIdx.x / HALF_WARP_SIZE) << 6);
 
 #pragma loop unroll
-  for (int i = threadIdx.x & 0x1F; i < 64; i += WARP_SIZE) {
+  for (int i = threadIdx.x % HALF_WARP_SIZE; i < 64; i += HALF_WARP_SIZE) {
     s_half2_lut[i] = make_half2(
         __int2half_rd(i & 0b111),
         __int2half_rd(i >> 3)
@@ -1018,8 +1021,8 @@ __global__ void spqr_quantized_matvec_fused_slow(
   }
 
   // Here we load the row offsets into smem.
-  if (threadIdx.x <= BETA1) {
-    __pipeline_memcpy_async(s_row_offsets + threadIdx.x, row_offsets + blockIdx.x * BETA1 + threadIdx.x, sizeof(u32));
+  for (int i = threadIdx.x; i <= BETA1; i += blockDim.x) {
+    __pipeline_memcpy_async(s_row_offsets + i, row_offsets + blockIdx.x * BETA1 + i, sizeof(u32));
   }
 
   for (int i = 0; i < PIPELINE_DEPTH && (i * total_threads + tid) < prob_n; i++) {
@@ -1079,13 +1082,12 @@ __global__ void spqr_quantized_matvec_fused_slow(
     SecondOrder _s{.v = recover_second_order(s_order_partial)};
     half2 first_order_quantized = s_half2_lut[row_bits.get_w2(0)];
 #if 0
-    if (threadIdx.x == 1)
-      printf("forderdeq = %f %f second = %f %f %f %f\n", __half2float(first_order_quantized.x),
-             __half2float(first_order_quantized.y),
-             __half2float(_s.get_sws2().x),
-             __half2float(_s.get_sws2().y),
-             __half2float(_s.get_swz2().x),
-             __half2float(_s.get_swz2().y));
+    printf("forderdeq = %f %f second = %f %f %f %f\n", __half2float(first_order_quantized.x),
+           __half2float(first_order_quantized.y),
+           __half2float(_s.get_sws2().x),
+           __half2float(_s.get_sws2().y),
+           __half2float(_s.get_swz2().x),
+           __half2float(_s.get_swz2().y));
 #endif
     half2 first_order_dequantized = dequantize2(first_order_quantized,
                                                 _s.get_sws2(),
@@ -1134,6 +1136,8 @@ __global__ void spqr_quantized_matvec_fused_slow(
       __pipeline_commit();
     }
   }
+
+  __syncthreads();
 
   auto s_y_scalar = scalarize<Acc_t>(s_y);
   auto s_y_vectorized = vectorize(s_y_scalar);
@@ -1185,9 +1189,8 @@ __global__ void spqr_quantized_matvec_fused_slow(
   }
 #endif
 
-  auto result_scalar = acc;
-  auto other = __shfl_down_sync(HALF_MASK, result_scalar, BETA1);
-  auto result = add_and_accum(other, result_scalar);
+  auto other = __shfl_down_sync(HALF_MASK, acc, BETA1);
+  auto result = add_and_accum(other, acc);
   const unsigned int lane_id = threadIdx.x & 0x1F;
   if constexpr (std::is_same_v<Acc_t, float>) {
     if (lane_id < BETA1) {
@@ -1934,7 +1937,6 @@ int spqr_matvec(
 
   bool is_a100 = gpu_name.find("A100") != std::string::npos;
 
-
   if (prob_m == 0 || prob_n == 0) {
     return 0;
   }
@@ -1978,15 +1980,15 @@ int spqr_matvec(
   if (features.flags.fused_sparse) {
     if (prob_m % 256 == 0 && prob_n % 256 == 0) {
       if (is_a100) {
-        CALL_FUSED(spqr_quantized_matvec_fused_slow, 1, 64, 1);
+        CALL_FUSED(spqr_quantized_matvec_fused_slow, 1, 16, 1);
       } else {
         CALL_FUSED(spqr_quantized_matvec_fused_slow, 1, 16, 2);
       }
     } else {
       if (is_a100) {
-        CALL_FUSED(spqr_quantized_matvec_fused_slow, 1, 32, 2);
+        CALL_FUSED(spqr_quantized_matvec_fused_slow, 1, 1, 1);
       } else {
-        CALL_FUSED(spqr_quantized_matvec_fused_slow, 1, 16, 1);
+        CALL_FUSED(spqr_quantized_matvec_fused_slow, 1, 1, 1);
       }
     }
   } else {
