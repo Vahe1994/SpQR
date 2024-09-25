@@ -179,6 +179,9 @@ class SPQRModule(torch.nn.Module):
             _x = x
             # if self.in_perm is not None:
             #     _x = _x[self.in_perm]
+
+            self.y_single = torch.zeros((1, 1, self.m), dtype=torch.float16, device=self.buff0.device)
+
             spqr_cuda.spqr_mul(
                 self.m,
                 self.n,
