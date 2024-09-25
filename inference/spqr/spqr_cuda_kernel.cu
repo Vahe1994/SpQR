@@ -1985,11 +1985,7 @@ int spqr_matvec(
         CALL_FUSED(spqr_quantized_matvec_fused_slow, 1, 16, 2);
       }
     } else {
-      if (is_a100) {
-        CALL_FUSED(spqr_quantized_matvec_fused_slow, 1, 1, 1);
-      } else {
-        CALL_FUSED(spqr_quantized_matvec_fused_slow, 1, 1, 1);
-      }
+      CALL_FUSED(spqr_quantized_matvec_fused_slow, 1, 1, 1);
     }
   } else {
     constexpr int BLOCK_HEIGHT = 1;
