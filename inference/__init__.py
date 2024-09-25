@@ -104,6 +104,7 @@ class SPQRModule(torch.nn.Module):
         self.deq_w = None
         self.in_perm = spqr_host.in_perm
         self.out_perm = spqr_host.out_perm
+
         self.y = torch.zeros((1, 10, self.m), dtype=torch.float16, device=self.buff0.device)
         self._y = torch.zeros(self.m, dtype=torch.float16, device=self.buff0.device)
 
@@ -142,10 +143,14 @@ class SPQRModule(torch.nn.Module):
         return 1 - self.density
 
     def forward(self, x: T) -> T:
+        if not hasattr(self, '_y'):
+            self.y = torch.zeros((1, 10, self.m), dtype=torch.float16, device=self.buff0.device)
+            self._y = torch.zeros(self.m, dtype=torch.float16, device=self.buff0.device)
+
         inner_dim = x.shape[1]
 
         for i in range(inner_dim):
-            _x = x[0, i, :].flatten()
+            _x = x[..., i, :].flatten()
             if self.in_perm is not None:
                 _x = _x[self.in_perm]
             spqr_cuda.spqr_mul(
@@ -170,7 +175,7 @@ class SPQRModule(torch.nn.Module):
         # end_time = time.time()
         # duration = end_time - start_time
         # print(f'\t\t{duration:.10f}')
-        return self.y
+        return self.y[:, :inner_dim, :]
 
 
 # Compression
