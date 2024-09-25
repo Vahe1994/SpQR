@@ -1,5 +1,5 @@
 /*
- * Copyright (C) SPQR Kernel.2024 Elvir Crncevic (elvir.crncevic@ist.ac.at)
+ * Copyright (C) SPQR Kernel.2024 Elvir Crncevic (elvircrn@gmail.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.

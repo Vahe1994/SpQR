@@ -1,5 +1,5 @@
 /*
- * Copyright (C) SPQR Kernel.2024 Elvir Crncevic (elvir.crncevic@ist.ac.at)
+ * Copyright (C) SPQR Kernel.2024 Elvir Crncevic (elvircrn@gmail.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,6 @@
 #include <c10/util/Exception.h>
 #include <cuda_fp16.h>
 #include <cuda_runtime.h>
-#include <iostream>
 #include <torch/python.h>
 #include <vector>
 
@@ -32,7 +31,7 @@ __half int2half_rd(const int value) {
   return halfValue;
 }
 
-template <class Bit_t, class Scalar_t>
+template<class Bit_t, class Scalar_t>
 Scalar_t host_dequantize(Bit_t q, Scalar_t s, Scalar_t z) {
   // TODO: Clean up these ifs.
   Scalar_t result;
@@ -47,18 +46,11 @@ Scalar_t host_dequantize(Bit_t q, Scalar_t s, Scalar_t z) {
   return result;
 }
 
-template <class Weight_t> struct Weights2DConst {
-  int m;
-  int n;
-  const Weight_t *w;
-
-  Weight_t operator()(int i, int j) const { return w[i * n + j]; }
-};
-
-template <class Weight_t> struct Weights2D {
+template<class Weight_t> struct Weights2D {
   int m;
   int n;
   Weight_t *w;
+
   Weight_t &operator()(int i, int j) { return w[i * n + j]; }
 };
 
@@ -92,10 +84,12 @@ int spqr_matvec(
     // W and meta
     int bits, int prob_m, int prob_n,
     // Quantization
-    int beta1, int beta2, const void *buff0, const void *buff1, void *row_ids,
+    int beta1, int beta2,
+    const void *buff0,
     void *row_offsets,
     // 32-bit
-    void *col_vals, int nnz, int dense_row_count,
+    void *col_vals,
+    int nnz,
     // 16-bit
     // Input
     void *X,
@@ -103,11 +97,9 @@ int spqr_matvec(
     // Output
     void *y,
     // GPU meta
-    cudaStream_t stream = nullptr, void *measurements = nullptr,
+    cudaStream_t stream = nullptr,
+    void *measurements = nullptr,
     uint32_t feature_flag = 0);
-
-const int ERR_PROB_SHAPE = 1;
-const int ERR_KERN_SHAPE = 2;
 
 void torch_mul_device(int m, int n, const torch::Tensor &deq_w,
                       const torch::Tensor &X, torch::Tensor &Y,
@@ -120,28 +112,35 @@ void torch_mul_device(int m, int n, const torch::Tensor &deq_w,
 
 void dequantize_compressed(int m, int n, int bits, int beta1, int beta2,
                            const torch::Tensor &buff0,
-                           const torch::Tensor &buff1,
-                           // Outliers
-                           // 32-bit
+    // Outliers
+    // 32-bit
                            const torch::Tensor &row_offsets,
-                           // 32-bit
-                           const torch::Tensor &col_vals, int nnz,
+    // 32-bit
+                           const torch::Tensor &col_vals,
+                           int nnz,
                            const torch::Tensor &deq_w_tensor) {
-
-  SecondOrder *w2 = reinterpret_cast<SecondOrder *>(buff1.data_ptr());
-
-  half *deq_w = reinterpret_cast<half*>(deq_w_tensor.data_ptr());
+  half *deq_w = reinterpret_cast<half *>(deq_w_tensor.data_ptr());
   int tile_id{};
   int subtile_id{};
   int w_id{};
-  uint64_t *buff0_ptr = reinterpret_cast<uint64_t*>(buff0.data_ptr());
+  uint64_t *buff0_ptr = reinterpret_cast<uint64_t *>(buff0.data_ptr());
 
   for (int ii = 0; ii < m; ii += beta1) {
     for (int jj = 0; jj < n; jj += beta2) {
-      const half wss2 = w2[tile_id].members.ss.x;
-      const half wsz2 = w2[tile_id].members.zz.x;
-      const half wzs2 = w2[tile_id].members.ss.y;
-      const half wzz2 = w2[tile_id].members.zz.y;
+      uint64_t w2_bits{};
+
+      for (int k = 0; k < beta1; k++) {
+        uint64_t partial = (buff0_ptr[k] >> (bits * (beta1 + 2)));
+        w2_bits |= (partial << (SECOND_ORDER_FRAGMENT_SIZE_BITS * (k / (SECOND_ORDER_FRAGMENT_SIZE_BITS / 4))));
+      }
+
+      SecondOrder w2{ .v = w2_bits };
+
+      const half wss2 = w2.members.ss.x;
+      const half wsz2 = w2.members.zz.x;
+      const half wzs2 = w2.members.ss.y;
+      const half wzz2 = w2.members.zz.y;
+
       tile_id++;
 
       for (int i = 0; i < beta1 && i + ii < m; i++) {
@@ -154,8 +153,7 @@ void dequantize_compressed(int m, int n, int bits, int beta1, int beta2,
         half z = host_dequantize(wz, wzs2, wzz2);
 
         for (int j = 0; j < beta2 && j + jj < n; j++) {
-          half w = host_dequantize<half, half>(
-              int2half_rd(wbits[2 + j]), s, z);
+          half w = host_dequantize<half, half>(int2half_rd(wbits[2 + j]), s, z);
           deq_w[(i + ii) * n + j + jj] = w;
           w_id++;
         }
@@ -197,12 +195,11 @@ inline int compress(int bits /* = 3 */, int bucket_value_count /* = 10 */,
 void tensor_compress2(const torch::Tensor &W, int m, int n, int bit_count,
                       int beta1, int beta2, torch::Tensor &out) {
   Weights2D<uint8_t> weights{
-      .m = m, .n = n, .w = (uint8_t *)W.data_ptr<uint8_t>()};
+      .m = m, .n = n, .w = (uint8_t *) W.data_ptr<uint8_t>()};
 
   std::vector<uint8_t> arr(beta1 * beta2);
 
   constexpr int BUCKET_SIZE = 32;
-  int w_bit_count = beta1 * beta2 * bit_count;
   int *buff = out.data_ptr<int>();
   for (int i = 0; i < m; i += beta1) {
     for (int j = 0; j < n; j += beta2) {
@@ -224,8 +221,6 @@ void tensor_compress(torch::Tensor W, int bit_count, torch::Tensor &out) {
 
   // Values per bucket
   int values_per_bucket = 32 / bit_count;
-
-  int total_buckets = out.size(0);
 
   // Position within bucket
   int buff_id = 0;
@@ -254,57 +249,51 @@ void tensor_compress(torch::Tensor W, int bit_count, torch::Tensor &out) {
 }
 
 void spqr_mul_timer(int m, int n,
-                    // W and meta
+    // W and meta
                     int bits,
-                    // Quantization
-                    int beta1, int beta2,
-                    // W 1st order stats
-                    const torch::Tensor &raw_data,
-                    // W 1st order stats
-                    const torch::Tensor &second_order_data,
-                    const torch::Tensor &row_ids,
-                    // 16-bit
+    // Quantization
+                    int beta1,
+                    int beta2,
+                    const torch::Tensor &weights,
+    // 16-bit
                     const torch::Tensor &row_offsets,
-                    // 32-bit
-                    const torch::Tensor &col_val, int nnz,
-                    int dense_row_count,
-                    // 16-bit
+    // 32-bit
+                    const torch::Tensor &col_val,
+                    int nnz,
+    // 16-bit
                     const torch::Tensor &X,
                     torch::Tensor &Y,
-                    torch::Tensor &measurements, uint32_t feature_flag) {
-  int dev = raw_data.get_device();
-  int err = spqr_matvec(bits, m, n, beta1, beta2, raw_data.data_ptr(),
-                        second_order_data.data_ptr(),
-                        // CSR Outliers
-                        row_ids.data_ptr(), row_offsets.data_ptr(),
-                        col_val.data_ptr(), nnz, dense_row_count, X.data_ptr(),
+                    torch::Tensor &measurements,
+                    uint32_t feature_flag) {
+  int dev = weights.get_device();
+  int err = spqr_matvec(bits, m, n, beta1, beta2, weights.data_ptr(),
+                        row_offsets.data_ptr(),
+                        col_val.data_ptr(), nnz, X.data_ptr(),
                         nullptr, Y.data_ptr(), at::cuda::getCurrentCUDAStream(dev),
                         measurements.data_ptr(), feature_flag);
 }
 
 void spqr_mul(int m, int n,
-              // W and meta
+    // W and meta
               int bits,
-              // Quantization
+    // Quantization
               int beta1, int beta2,
-              // W 1st order stats
+    // W 1st order stats
               const torch::Tensor &buff0,
-              // W 1st order stats
-              const torch::Tensor &buff1,
-              // 32-bit
-              const torch::Tensor &row_ids, const torch::Tensor &row_offsets,
-              // 16-bit
+    // 32-bit
+              const torch::Tensor &row_offsets,
+    // 16-bit
               const torch::Tensor &col_val_ptr,
               int nnz,
-              int dense_row_count,
-              // 16-bit
+    // 16-bit
               const torch::Tensor &X, torch::Tensor &Y,
               uint32_t feature_flag = 0) {
   int dev = buff0.get_device();
+  // TODO: Propagate error one layer up.
   int err = spqr_matvec(
-      bits, m, n, beta1, beta2, buff0.data_ptr(), buff1.data_ptr(),
-      row_ids.data_ptr(), row_offsets.data_ptr(), col_val_ptr.data_ptr(), nnz,
-      dense_row_count, X.data_ptr(), nullptr, Y.data_ptr(),
+      bits, m, n, beta1, beta2, buff0.data_ptr(),
+      row_offsets.data_ptr(), col_val_ptr.data_ptr(), nnz,
+      X.data_ptr(), nullptr, Y.data_ptr(),
       at::cuda::getCurrentCUDAStream(dev), nullptr, feature_flag);
 }
 
@@ -313,7 +302,7 @@ void tensor_compress_interleaved(
     const torch::Tensor &W_s, const torch::Tensor &W_z,
     const torch::Tensor &W_s_s, const torch::Tensor &W_s_z,
     const torch::Tensor &W_z_s, const torch::Tensor &W_z_z,
-    const torch::Tensor &out, const torch::Tensor &out_second_order) {
+    const torch::Tensor &out) {
   TORCH_CHECK(W.dtype() == torch::kChar, "W should be of type char")
   TORCH_CHECK(W_s.dtype() == torch::kChar, "W_s should be of type char")
   TORCH_CHECK(W_z.dtype() == torch::kChar, "W_z should be of type char")
@@ -328,8 +317,6 @@ void tensor_compress_interleaved(
 
   constexpr int BITS = 3;
   TileArray<Bit_t, BITS> tile_array(static_cast<Bit_t *>(out.data_ptr()));
-
-  SecondOrder *second_vector_ptr = static_cast<SecondOrder *>(out_second_order.data_ptr());
 
   int tile_m = UPDIV(m, beta1);
   int tile_n = UPDIV(n, beta2);
@@ -348,16 +335,23 @@ void tensor_compress_interleaved(
       half *w_z_s = static_cast<half *>(W_z_s.data_ptr()) + tile_id;
       half *w_z_z = static_cast<half *>(W_z_z.data_ptr()) + tile_id;
 
-      half2 ss; ss.x = *w_s_s; ss.y = *w_z_s;
-      half2 zz; zz.x = *w_s_z; zz.y = *w_z_z;
+      half2 ss;
+      ss.x = *w_s_s;
+      ss.y = *w_z_s;
+      half2 zz;
+      zz.x = *w_s_z;
+      zz.y = *w_z_z;
 
-      second_vector_ptr->members.ss = ss;
-      second_vector_ptr->members.zz = zz;
+      SecondOrder second_order{
+          .members = {
+              .ss = ss,
+              .zz = zz
+          }
+      };
 
       int to_add{};
       int k{};
-      Bit_t sanity{};
-      uint64_t v = second_vector_ptr->v;
+      uint64_t v = second_order.v;
       for (k = 0; k < beta1 && i + k < m; k++) {
         Bit_t tile[16]{};
         for (int ii = 0; ii < 16; ii++) tile[i] = 0;
@@ -373,31 +367,23 @@ void tensor_compress_interleaved(
         int wz = *w_z;
 
         for (int l = 0; l < beta2 && j + l < n; l++, id++, global_id++) {
-           tile[id] = static_cast<Bit_t>(w[(i + k) * n + (j + l)]);
+          tile[id] = static_cast<Bit_t>(w[(i + k) * n + (j + l)]);
           if (!k) {
             to_add++;
           }
         }
+
         uint64_t PARTIAL_OFFSET = BITS * (beta2 + 2); // = 54, for example
 
         uint64_t FRAG_MASK = Bit_t((1ull << SECOND_ORDER_FRAGMENT_SIZE_BITS) - 1ull);
-        
-        uint64_t partial = (v >> (Bit_t((k / (SECOND_ORDER_FRAGMENT_SIZE_BITS / 4))) * Bit_t(SECOND_ORDER_FRAGMENT_SIZE_BITS))) & FRAG_MASK;
 
-        
+        uint64_t partial =
+            (v >> (Bit_t((k / (SECOND_ORDER_FRAGMENT_SIZE_BITS / 4))) * Bit_t(SECOND_ORDER_FRAGMENT_SIZE_BITS))) &
+            FRAG_MASK;
+
         tile_array.push(ws, wz, tile, to_add, (partial << PARTIAL_OFFSET));
 
-        sanity |= (partial << (SECOND_ORDER_FRAGMENT_SIZE_BITS * (k / (SECOND_ORDER_FRAGMENT_SIZE_BITS / 4))));
       }
-
-#if 1
-      if (sanity != second_vector_ptr->v) {
-        printf("valid = %d\n", sanity == second_vector_ptr->v);
-        exit(1);
-      }
-#endif
-
-      second_vector_ptr++;
 
       Bit_t tile[16]{};
       for (; k < beta1; k++) {
@@ -417,52 +403,7 @@ void tensor_compress_interleaved(
     }                                                                          \
   }
 
-#define CHECK_CUSPARSE(func)                                                   \
-  {                                                                            \
-    cusparseStatus_t status = (func);                                          \
-    if (status != CUSPARSE_STATUS_SUCCESS) {                                   \
-      printf("CUSPARSE API failed with error (%d) at line %d\n", status,       \
-             __LINE__);                                                        \
-      return EXIT_FAILURE;                                                     \
-    }                                                                          \
-  }
-
-int preprocess_sparse(int prob_m, int prob_n,
-                      // Outliers
-                      const torch::Tensor &values,
-                      // 16-bit
-                      const torch::Tensor &row_offsets,
-                      // 32-bit
-                      const torch::Tensor &col_ptr,
-                      // 16-bit
-                      const torch::Tensor &X, torch::Tensor &Y, int nnz,
-                      torch::Tensor &cusparse_buffer) {
-  half alpha = __float2half(1.f);
-  half beta = __float2half(1.f);
-
-  cusparseHandle_t handle = nullptr;
-  cusparseSpMatDescr_t matA;
-  cusparseDnVecDescr_t vecX, vecY;
-  void *dBuffer = nullptr;
-  size_t bufferSize = 0;
-  CHECK_CUSPARSE(cusparseCreate(&handle));
-  // Create dense vector X
-  CHECK_CUSPARSE(cusparseCreateDnVec(&vecX, prob_n, X.data_ptr(), CUDA_R_32F))
-  // Create dense vector y
-  CHECK_CUSPARSE(cusparseCreateDnVec(&vecY, prob_m, Y.data_ptr(), CUDA_R_32F))
-
-  CHECK_CUSPARSE(cusparseCreateCsr(
-      &matA, prob_m, prob_n, nnz, row_offsets.data_ptr(), col_ptr.data_ptr(),
-      values.data_ptr(), CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
-      CUSPARSE_INDEX_BASE_ZERO, CUDA_R_32F))
-  // Create sparse matrix A in CSR format
-  // allocate an external buffer if needed
-  CHECK_CUSPARSE(cusparseSpMV_bufferSize(
-      handle, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, matA, vecX, &beta, vecY,
-      CUDA_R_32F, CUSPARSE_SPMV_ALG_DEFAULT, &bufferSize));
-  CHECK_CUDA(cudaMalloc(&dBuffer, bufferSize));
-}
-
+// We need this to have a valid CMake configuration which is useful for IDE support during kernel development.
 #if PYBIND_SKIP == 1
 #else
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
@@ -475,7 +416,6 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("tensor_compress2", &tensor_compress2, "Tensor compress.");
   m.def("tensor_compress_interleaved", &tensor_compress_interleaved,
         "Tensor compress.");
-  m.def("preprocess_sparse", &preprocess_sparse, "Preprocess sparse.");
 }
 #endif
 
@@ -485,6 +425,7 @@ using namespace torch;
 int main() { return 0; }
 
 #else
+#include <iostream>
 
 int main() {
   int m = 32;

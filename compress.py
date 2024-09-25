@@ -7,8 +7,6 @@ import inference
 
 import modelutils
 
-
-
 if __name__ == '__main__':
     uncompressed_model_path = sys.argv[1]
     compressed_model_path = sys.argv[2]
@@ -39,7 +37,7 @@ if __name__ == '__main__':
             print(f'INFO: Converting layer {layer_id}  tensor name = {tensor_name}')
 
             # Load the original SPQR format.
-            spqr_host = inference.load_original_tensor(tensor_path, model_args)
+            spqr_host = inference.load_uncompressed_spqr_tensor(tensor_path, model_args)
 
             spqr_module = inference.SPQRModule(spqr_host)
 
@@ -57,7 +55,9 @@ if __name__ == '__main__':
                 vis = (torch.nn.functional.normalize(d) * 255).unsqueeze(0).unsqueeze(0)
                 vis = torch.nn.functional.max_pool2d(vis, kernel_size=4, stride=4)
                 vis = vis.squeeze()
-                plt.imshow(vis.cpu().numpy()); plt.axis('off'); plt.show()
+                plt.imshow(vis.cpu().numpy());
+                plt.axis('off');
+                plt.show()
 
             tensor_path = f'{os.path.join(output_folder, tensor_name)}.pth'
 

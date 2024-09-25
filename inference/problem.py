@@ -8,7 +8,7 @@ import torch.nn.functional as F
 from matplotlib import pyplot as plt
 from scipy.sparse import csr_matrix, coo_matrix
 
-from inference import SPQRHost, updiv, compress, list_flatten, random_like
+from inference import SPQRUncompressed, updiv, compress, list_flatten, random_like
 
 
 def max_pool2d(input_tensor, kernel_size):
@@ -214,7 +214,7 @@ class Problem:
         )
 
 
-def ones(m, n, beta1=16, beta2=16, bits=3) -> SPQRHost:
+def ones(m, n, beta1=16, beta2=16, bits=3) -> SPQRUncompressed:
     m = m
     n = n
     bits = bits
@@ -244,7 +244,7 @@ def ones(m, n, beta1=16, beta2=16, bits=3) -> SPQRHost:
     col_ids = torch.zeros(1)
     nnz = 0
 
-    return SPQRHost(
+    return SPQRUncompressed(
         m=m,
         n=n,
         bits=bits,

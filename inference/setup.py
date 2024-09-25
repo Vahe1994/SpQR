@@ -14,7 +14,7 @@ setup(
     name='inference',
     version='0.1.1',
     author='elvircrn',
-    author_email='elvir.crncevic@ist.ac.at',
+    author_email='elvircrn@gmail.com',
     description='SPQR',
     install_requires=['numpy', 'torch'],
     packages=['inference'],

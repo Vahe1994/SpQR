@@ -9,7 +9,7 @@ import inference
 from scipy.stats import gmean
 
 if __name__ == '__main__':
-    with open('report/___.csv', 'w') as f:
+    with open(sys.argv[3], 'w') as f:
         base_path = sys.argv[1]
 
         seed = 1

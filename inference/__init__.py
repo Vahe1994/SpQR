@@ -43,7 +43,7 @@ def updiv(x, y): return (x + y - 1) // y
 
 
 # Data structures
-class SPQRHost:
+class SPQRUncompressed:
     m: int
     n: int
     bits: int
@@ -93,23 +93,12 @@ class SPQRHost:
         else:
             self.col_vals = torch.zeros(0)
 
-        ROW_CUTOFF = 0.02
-
-        nnzs = row_offsets.diff()
-        nnz_ids = (nnzs * -1).sort().indices
-        nnzs = nnzs[nnz_ids]
-        self.row_ids = nnz_ids.short()
-        row_densities = nnzs / n
-        self.dense_row_count = (row_densities >= ROW_CUTOFF).sum().item()
-
-        self.buff0, self.buff1 = allocate_compressed_buffers(m, n, beta1, beta2, 'cpu')
-
-        spqr_cuda.tensor_compress_interleaved(m, n, bits, W, beta1, beta2, W_s, W_z, W_s_s, W_s_z, W_z_s, W_z_z,
-                                              self.buff0, self.buff1)
+        self.buff0 = allocate_compressed_buffers(m, n, beta1, beta2, 'cpu')
+        spqr_cuda.tensor_compress_interleaved(m, n, bits, W, beta1, beta2, W_s, W_z, W_s_s, W_s_z, W_z_s, W_z_z, self.buff0)
 
 
 class SPQRModule(nn.Module):
-    def __init__(self, spqr_host: SPQRHost, *args, **kwargs):
+    def __init__(self, spqr_host: SPQRUncompressed, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.m = spqr_host.m
         self.n = spqr_host.n
@@ -117,22 +106,16 @@ class SPQRModule(nn.Module):
         self.beta1 = spqr_host.beta1
         self.beta2 = spqr_host.beta2
         self.buff0 = spqr_host.buff0
-        self.buff1 = spqr_host.buff1
-        self.row_ids = spqr_host.row_ids
         self.row_offsets = spqr_host.row_offsets
         self.col_vals = spqr_host.col_vals
-        self.dense_row_count = spqr_host.dense_row_count
         self.deq_w = None
         self.in_perm = spqr_host.in_perm
         self.out_perm = spqr_host.out_perm
 
     def to_device(self, device: torch.device):
         self.buff0 = self.buff0.to(device=device)
-        self.buff1 = self.buff1.to(device=device)
-        self.row_ids = self.row_ids.to(device=device)
         self.row_offsets = self.row_offsets.to(device=device)
         self.col_vals = self.col_vals.to(device=device)
-        self.dense_row_count = self.dense_row_count
 
     @property
     def nnz(self):
@@ -144,8 +127,6 @@ class SPQRModule(nn.Module):
 
         # Apply the function to custom attributes
         self.buff0 = fn(self.buff0)
-        self.buff1 = fn(self.buff1)
-        self.row_ids = fn(self.row_ids)
         self.row_offsets = fn(self.row_offsets)
         self.col_vals = fn(self.col_vals)
 
@@ -169,7 +150,6 @@ class SPQRModule(nn.Module):
         inner_dim = x.shape[1]
         y = torch.zeros((1, inner_dim, self.m), dtype=x.dtype, device=x.device)
 
-        # start_time = time.time()
         for i in range(inner_dim):
             _y = torch.zeros(self.m, dtype=x.dtype, device=x.device)
             _x = x[0, i, :].flatten()
@@ -182,12 +162,9 @@ class SPQRModule(nn.Module):
                 self.beta1,
                 self.beta2,
                 self.buff0,
-                self.buff1,
-                self.row_ids,
                 self.row_offsets,
                 self.col_vals,
                 self.nnz,
-                self.dense_row_count,
                 # TODO: Might case a CPU regression
                 _x,
                 _y,
@@ -248,7 +225,6 @@ def _spqr_dequantize(p: SPQRModule, nnz):
         p.beta1,
         p.beta2,
         p.buff0,
-        p.buff1,
         p.row_offsets,
         p.col_vals,
         nnz,
@@ -264,7 +240,7 @@ def spqr_dequantize_compressed(p: SPQRModule):
     return _spqr_dequantize(p, p.col_vals.shape[0])
 
 
-def spqr_dequantize_dense(p: SPQRHost):
+def spqr_dequantize_dense(p: SPQRUncompressed):
     deq_w = torch.zeros(p.m, p.n).float().contiguous()
     spqr_cuda.spqr_dequantize_host(
         p.m,
@@ -287,7 +263,7 @@ def spqr_dequantize_dense(p: SPQRHost):
     return deq_w
 
 
-def spqr_dequantize_dense(p: SPQRHost):
+def spqr_dequantize_dense(p: SPQRUncompressed):
     deq_w = torch.zeros(p.m, p.n).float().contiguous()
     spqr_cuda.spqr_dequantize_host(
         p.m,
@@ -310,7 +286,7 @@ def spqr_dequantize_dense(p: SPQRHost):
     return deq_w
 
 
-def spqr_dequantize(p: SPQRHost):
+def spqr_dequantize(p: SPQRUncompressed):
     deq_w = torch.zeros(p.m, p.n).float().contiguous()
     spqr_cuda.spqr_dequantize_host(
         p.m,
@@ -334,7 +310,7 @@ def spqr_dequantize(p: SPQRHost):
     return deq_w
 
 
-def spqr_mul_host(p: SPQRHost, x, y_gt, y, dequantized_w):
+def spqr_mul_host(p: SPQRUncompressed, x, y_gt, y, dequantized_w):
     spqr_cuda.spqr_mul_host_fp32(
         p.m,
         p.n,
@@ -436,12 +412,9 @@ def spqr_mul(spqr_device: SPQRModule, x, y, feature_flag: FeatureFlag):
         spqr_device.beta1,
         spqr_device.beta2,
         spqr_device.buff0,
-        spqr_device.buff1,
-        spqr_device.row_ids,
         spqr_device.row_offsets,
         spqr_device.col_vals,
         spqr_device.nnz,
-        spqr_device.dense_row_count,
         x,
         y,
         int(feature_flag)
@@ -492,7 +465,7 @@ def spqr_mul_timer(spqr_device: SPQRModule, x, feature_flag: FeatureFlag, num_ru
         y = torch.zeros_like(y)
         spqr_cuda.spqr_mul_timer(
             spqr_device.m,
-        spqr_device.n,
+            spqr_device.n,
             spqr_device.bits,
             spqr_device.beta1,
             spqr_device.beta2,
@@ -515,22 +488,14 @@ def spqr_mul_timer(spqr_device: SPQRModule, x, feature_flag: FeatureFlag, num_ru
 
 def calculate_buffer_sizes(m, n, beta1, beta2):
     total_blocks = updiv(m, beta1) * updiv(n, beta2)
-
-    # For 32 bits, we need two slots per row
-    # per_row = 2
-
-    # 6 bits for s/z and 16 3-bits for weights per row
-    per_row = 1
-
-    block_size = beta1 * per_row
-
-    return block_size * total_blocks, total_blocks
+    per_tile_row = 1
+    block_size = beta1 * per_tile_row
+    return block_size * total_blocks
 
 
-def allocate_compressed_buffers(m, n, beta1, beta2, device):
-    sz0, sz1 = calculate_buffer_sizes(m, n, beta1, beta2)
-    return (torch.zeros(sz0, dtype=torch.int64, device=device),
-            torch.zeros(sz1, dtype=torch.int64, device=device))
+def allocate_compressed_buffers(m, n, beta1, beta2, device) -> torch.Tensor:
+    sz0 = calculate_buffer_sizes(m, n, beta1, beta2)
+    return torch.zeros(sz0, dtype=torch.int64, device=device)
 
 
 def num_tiles(m, n, beta1, beta2):
@@ -591,7 +556,7 @@ def create_random(m, n, density, device: torch.device, bits=3, beta1=16, beta2=1
     else:
         row_offsets, values, col_ids, nnz = random_csr_host(m, n, density)
 
-    spqr_host = SPQRHost(
+    spqr_host = SPQRUncompressed(
         m=m,
         n=n,
         bits=bits,
@@ -615,12 +580,12 @@ def create_random(m, n, density, device: torch.device, bits=3, beta1=16, beta2=1
     return spqr_module, spqr_module_device
 
 
-def host_to_device(spqr_host: SPQRHost, device: torch.device):
+def host_to_device(spqr_host: SPQRUncompressed, device: torch.device):
     row_offsets = spqr_host.row_offsets.cuda(device=device).int()
     col_ptr = spqr_host.col_ids.cuda(device=device).short()
     values = spqr_host.values.cuda(device=device).half()
 
-    first_order, second_order = (
+    first_order = (
         allocate_compressed_buffers(spqr_host.m, spqr_host.n, spqr_host.beta1, spqr_host.beta2, 'cpu'))
 
     spqr_cuda.tensor_compress_interleaved(
@@ -636,26 +601,25 @@ def host_to_device(spqr_host: SPQRHost, device: torch.device):
         spqr_host.W_s_z.half(),
         spqr_host.W_z_s.half(),
         spqr_host.W_z_z.half(),
-        first_order,
-        second_order
+        first_order
     )
 
-    return compress_sparse_device(SPQRModule(
+    return SPQRModule(
+        spqr_host,
         spqr_host.m,
         spqr_host.n,
         spqr_host.bits,
         spqr_host.beta1,
         spqr_host.beta2,
         first_order.cuda(device=device),
-        second_order.cuda(device=device),
         row_offsets.cuda(device=device).int(),
         col_ptr.cuda(device=device).short(),
         values.cuda(device=device).half(),
         torch.empty(spqr_host.nnz)
-    ))
+    )
 
 
-def create_twos(m, n) -> Tuple[SPQRHost, SPQRModule]:
+def create_twos(m, n) -> Tuple[SPQRUncompressed, SPQRModule]:
     beta1, beta2 = 16, 16
     bits = 3
 
@@ -683,7 +647,7 @@ def create_twos(m, n) -> Tuple[SPQRHost, SPQRModule]:
     col_ids = torch.zeros(1)
     nnz = 0
 
-    spqr_host = SPQRHost(
+    spqr_host = SPQRUncompressed(
         m=m,
         n=n,
         bits=bits,
@@ -706,6 +670,7 @@ def create_twos(m, n) -> Tuple[SPQRHost, SPQRModule]:
     spqr_device = host_to_device(spqr_host)
 
     return spqr_host, spqr_device
+
 
 def create_ones_random_2nd_order(m, n, density, device: torch.device, bits=3, beta1=16, beta2=16) -> Tuple[
     SPQRModule, SPQRModule]:
@@ -732,7 +697,7 @@ def create_ones_random_2nd_order(m, n, density, device: torch.device, bits=3, be
     else:
         row_offsets, values, col_ids, nnz = random_csr_host(m, n, density)
 
-    spqr_host = SPQRHost(
+    spqr_host = SPQRUncompressed(
         m=m,
         n=n,
         bits=bits,
@@ -755,7 +720,8 @@ def create_ones_random_2nd_order(m, n, density, device: torch.device, bits=3, be
 
     return spqr_module, spqr_module_device
 
-def create_ones_random_1st_order(m, n) -> Tuple[SPQRHost, SPQRModule]:
+
+def create_ones_random_1st_order(m, n) -> Tuple[SPQRUncompressed, SPQRModule]:
     beta1, beta2 = 16, 16
     bits = 3
 
@@ -783,7 +749,7 @@ def create_ones_random_1st_order(m, n) -> Tuple[SPQRHost, SPQRModule]:
     col_ids = torch.zeros(1)
     nnz = 0
 
-    spqr_host = SPQRHost(
+    spqr_host = SPQRUncompressed(
         m=m,
         n=n,
         bits=bits,
@@ -808,7 +774,7 @@ def create_ones_random_1st_order(m, n) -> Tuple[SPQRHost, SPQRModule]:
     return spqr_host, spqr_device
 
 
-def create_ones_random_w(m, n) -> Tuple[SPQRHost, SPQRModule]:
+def create_ones_random_w(m, n) -> Tuple[SPQRUncompressed, SPQRModule]:
     beta1, beta2 = 16, 16
     bits = 3
 
@@ -836,7 +802,7 @@ def create_ones_random_w(m, n) -> Tuple[SPQRHost, SPQRModule]:
     col_ids = torch.zeros(1)
     nnz = 0
 
-    spqr_host = SPQRHost(
+    spqr_host = SPQRUncompressed(
         m=m,
         n=n,
         bits=bits,
@@ -887,7 +853,7 @@ def create_ones(m, n, device: torch.device, bits=3, beta1=16, beta2=16) -> Tuple
     row_offsets = torch.zeros(m + 1).int()
     col_ids = torch.zeros(0)
 
-    spqr_host = SPQRHost(
+    spqr_host = SPQRUncompressed(
         m=m,
         n=n,
         bits=bits,
@@ -935,7 +901,7 @@ def create_just_sparse(m, n, density):
 
     row_offsets, values, col_ids, nnz = random_csr_host(m, n, density)
 
-    spqr_host = SPQRHost(
+    spqr_host = SPQRUncompressed(
         m=m,
         n=n,
         bits=bits,
@@ -960,7 +926,7 @@ def create_just_sparse(m, n, density):
     return spqr_host, spqr_device
 
 
-def create_random_from_sparse(m, n, row_offsets, col_ids, values, device: torch.device) -> Tuple[SPQRHost, SPQRModule]:
+def create_random_from_sparse(m, n, row_offsets, col_ids, values, device: torch.device) -> Tuple[SPQRUncompressed, SPQRModule]:
     spqr_host, spqr_device = create_random(m, n, device)
 
     spqr_host.row_offsets = row_offsets
@@ -1000,7 +966,7 @@ def load_compressed_tensor(p: str) -> SPQRModule:
     return spqr_module
 
 
-def load_original_tensor(p: str, model_args: ModelArgs) -> SPQRHost:
+def load_uncompressed_spqr_tensor(p: str, model_args: ModelArgs) -> SPQRUncompressed:
     bits = model_args.bits
     beta1 = model_args.beta1
     beta2 = model_args.beta2
@@ -1021,7 +987,7 @@ def load_original_tensor(p: str, model_args: ModelArgs) -> SPQRHost:
     col_ids = outliers_matrix.col_indices().short()
     values = outliers_matrix.values().half()
 
-    return SPQRHost(
+    return SPQRUncompressed(
         m=m,
         n=n,
         bits=bits,
@@ -1042,7 +1008,7 @@ def load_original_tensor(p: str, model_args: ModelArgs) -> SPQRHost:
 
 
 def create_random_from_sparse_repeat(m, n, row_offsets, col_ids, values, rep, device: torch.device) -> Tuple[
-    SPQRHost, SPQRModule]:
+    SPQRUncompressed, SPQRModule]:
     if rep == 1:
         return create_random_from_sparse(m, n, row_offsets, col_ids, values, device)
 
