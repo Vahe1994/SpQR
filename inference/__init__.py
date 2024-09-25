@@ -61,7 +61,6 @@ class SPQRUncompressed:
     dense_row_count: int
     row_ids: T
     buff0: T
-    buff1: T
 
     @property
     def nnz(self) -> int:
@@ -470,12 +469,9 @@ def spqr_mul_timer(spqr_device: SPQRModule, x, feature_flag: FeatureFlag, num_ru
             spqr_device.beta1,
             spqr_device.beta2,
             spqr_device.buff0,
-            spqr_device.buff1,
-            spqr_device.row_ids,
             spqr_device.row_offsets,
             spqr_device.col_vals,
             spqr_device.nnz,
-            spqr_device.dense_row_count,
             x,
             y,
             runs[i],
@@ -926,8 +922,9 @@ def create_just_sparse(m, n, density):
     return spqr_host, spqr_device
 
 
-def create_random_from_sparse(m, n, row_offsets, col_ids, values, device: torch.device) -> Tuple[SPQRUncompressed, SPQRModule]:
-    spqr_host, spqr_device = create_random(m, n, device)
+def create_random_from_sparse(m, n, row_offsets, col_ids, values, device: torch.device) -> Tuple[
+    SPQRUncompressed, SPQRModule]:
+    spqr_host, spqr_device = create_random(m, n, device, device)
 
     spqr_host.row_offsets = row_offsets
     spqr_host.values = values
@@ -937,7 +934,7 @@ def create_random_from_sparse(m, n, row_offsets, col_ids, values, device: torch.
     spqr_device.values = values.half().cuda(device=device)
     spqr_device.col_ids = col_ids.cuda(device=device)
 
-    return spqr_host, compress_sparse_device(spqr_device)
+    return spqr_host, spqr_device
 
 
 class ModelArgs:
