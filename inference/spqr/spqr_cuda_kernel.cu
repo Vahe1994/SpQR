@@ -518,10 +518,10 @@ int spqr_matvec(
     timer->start();
   }
 
-  cudaDeviceProp device_properties;
-  cudaGetDeviceProperties(&device_properties, 0);
-  std::string gpu_name = device_properties.name;
-  bool is_a100 = gpu_name.find("A100") != std::string::npos;
+//   cudaDeviceProp device_properties;
+//   cudaGetDeviceProperties(&device_properties, 0);
+//   std::string gpu_name = device_properties.name;
+  bool is_a100 = true; // gpu_name.find("A100") != std::string::npos;
 
   if (prob_m == 0 || prob_n == 0) {
     return 0;
