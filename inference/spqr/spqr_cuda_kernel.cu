@@ -512,26 +512,24 @@ int spqr_matvec(
     cudaStream_t stream,
     void *measurements,
     uint32_t feature_flag) {
-  cudaDeviceProp device_properties;
-  cudaGetDeviceProperties(&device_properties, 0);
-  std::string gpu_name = device_properties.name;
+  Timer *timer{};
+  if (measurements) {
+    timer = new Timer(stream);
+    timer->start();
+  }
 
-  bool is_a100 = gpu_name.find("A100") != std::string::npos;
+//   cudaDeviceProp device_properties;
+//   cudaGetDeviceProperties(&device_properties, 0);
+//   std::string gpu_name = device_properties.name;
+  bool is_a100 = true; // gpu_name.find("A100") != std::string::npos;
 
   if (prob_m == 0 || prob_n == 0) {
     return 0;
   }
 
-  cudaStream_t stream_sparse;
-  cudaStream_t stream_sparse0;
   Features features{._ = feature_flag};
 
   bool dense_only = (nnz == 0) | features.flags.dense_only;
-
-  if (features.flags.shared_mixture && nnz) {
-    cudaStreamCreate(&stream_sparse);
-    cudaStreamCreate(&stream_sparse0);
-  }
 
   const uint64_t *raw_data = (const uint64_t *) _raw_data;
   const half *X_ptr = (const half *) X;
@@ -542,11 +540,6 @@ int spqr_matvec(
 
   int ret = 0;
 
-  Timer *timer{};
-  if (measurements) {
-    timer = new Timer(stream);
-    timer->start();
-  }
 
   if (prob_m % 256 == 0 && prob_n % 256 == 0) {
     if (is_a100) {
