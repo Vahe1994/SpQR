@@ -177,8 +177,8 @@ class SPQRModule(torch.nn.Module):
             return self.y[:, :inner_dim, :]
         else:
             _x = x
-            # if self.in_perm is not None:
-            #     _x = _x[self.in_perm]
+            if self.in_perm is not None:
+                _x = _x[self.in_perm]
 
             self.y_single = torch.empty((1, 1, self.m), dtype=torch.float16, device=self.buff0.device)
 
