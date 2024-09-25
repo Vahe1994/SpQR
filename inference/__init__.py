@@ -28,7 +28,6 @@ import time
 import warnings
 
 
-
 # Utility functions
 
 def list_flatten(W):
@@ -263,29 +262,6 @@ def spqr_dequantize_dense(p: SPQRUncompressed):
     return deq_w
 
 
-def spqr_dequantize_dense(p: SPQRUncompressed):
-    deq_w = torch.zeros(p.m, p.n).float().contiguous()
-    spqr_cuda.spqr_dequantize_host(
-        p.m,
-        p.n,
-        p.bits,
-        p.W,
-        p.beta1,
-        p.beta2,
-        p.W_s,
-        p.W_z,
-        p.W_s_s,
-        p.W_s_z,
-        p.W_z_s,
-        p.W_z_z,
-        p.values,
-        p.row_offsets,
-        p.col_ids,
-        0,  # This makes sure that we only quantize the dense part
-        deq_w)
-    return deq_w
-
-
 def spqr_dequantize(p: SPQRUncompressed):
     deq_w = torch.zeros(p.m, p.n).float().contiguous()
     spqr_cuda.spqr_dequantize_host(
@@ -480,6 +456,7 @@ def spqr_mul_timer(spqr_device: SPQRModule, x, feature_flag: FeatureFlag, num_ru
             feature_flag)
 
     return y, runs
+
 
 class ModelArgs:
     bits: int
