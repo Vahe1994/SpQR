@@ -18,6 +18,7 @@ try:
 except ModuleNotFoundError:
     has_safetensors = False
 
+
 @torch.no_grad()
 def get_inps(model, data_iterable, nsamples, seqlen=4096):
     dev = model.device
@@ -109,7 +110,6 @@ def perplexity_eval(model, testenc, randomize, tokenizer, dataset_name, nsamples
     if randomize:
         inps = torch.randn_like(inps)
 
-
     outs = torch.zeros_like(inps)
     for k, v in forward_args.items():
         forward_args[k] = v.to(dev) if isinstance(v, torch.Tensor) else v
@@ -141,7 +141,6 @@ def perplexity_eval(model, testenc, randomize, tokenizer, dataset_name, nsamples
     print(f"\n{dataset_name} perplexity = {ppl.item():.4f}\n")
 
 
-
 if __name__ == "__main__":
     pretrained_model_path = sys.argv[1]
     uncompressed_model_path = sys.argv[2]
@@ -154,8 +153,9 @@ if __name__ == "__main__":
     with torch.no_grad():
         for p in configs:
             model = LLama(pretrained_model_path, compressed_model_path, p)
-            os.system('clear')
-            while True:
-                text = input()
-                generated_text = model.generate(text, max_new_tokens=15)
-                print(f'{generated_text}')
+            text = 'The recipe for banana bread is '  # input()
+            s = time.time()
+            generated_text = model.generate(text, max_new_tokens=15)
+            e = time.time()
+            print(f'{generated_text}')
+            print(f'Duration = {e - s}s')
