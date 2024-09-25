@@ -196,6 +196,8 @@ DEVICE_INLINE half get_val(u32 m) {
             order_ptr, \
             y_ptr);
 
+
+
 template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH, class Acc_t, class W_t /* = uint64_t */, int PIPELINE_DEPTH>
 __global__ void spqr_quantized_matvec_fused(
     // W and meta
@@ -378,42 +380,14 @@ __global__ void spqr_quantized_matvec_fused(
 
   half *s_x = reinterpret_cast<half *>(s_x2);
 
-  // We need to help out the compiler here - step size needs to be constexpr.
 #if 1
-  if (blockDim.x == 512) {
-    constexpr int step = 32;
-    for (int i = s + wid; i < e; i += step) {
-      auto colval = col_vals[i];
-      auto c = get_col(colval);
-      auto v = get_val(colval);
-      acc += __half2float(v) * __half2float(s_x[c]);
-    }
-  } else if (blockDim.x == 256) {
-    constexpr int step = 16;
-    for (u32 i = s + wid; i < e; i += step) {
-      ColVal colval{
-          ._ = __ldg(col_vals + i)
-      };
-      auto c = colval.members.c;
-      auto v = colval.members.v;
-      acc += __half2float(v) * __half2float(s_x[c]);
-    }
-  } else if (blockDim.x == 128) {
-    constexpr int step = 8;
-    for (int i = s + wid; i < e; i += step) {
-      auto colval = col_vals[i];
-      auto c = get_col(colval);
-      auto v = get_val(colval);
-      acc += __half2float(v) * __half2float(s_x[c]);
-    }
-  } else {
-    int step = blockDim.x / BETA1;
-    for (int i = s + wid; i < e; i += step) {
-      auto colval = col_vals[i];
-      auto c = get_col(colval);
-      auto v = get_val(colval);
-      acc += __half2float(v) * __half2float(s_x[c]);
-    }
+  for (u32 i = s + wid; i < e; i += BLOCK_WIDTH) {
+    ColVal colval{
+        ._ = __ldg(col_vals + i)
+    };
+    auto c = colval.members.c;
+    auto v = colval.members.v;
+    acc += __half2float(v) * __half2float(s_x[c]);
   }
 #endif
 
@@ -518,11 +492,6 @@ int spqr_matvec(
     timer->start();
   }
 
-//   cudaDeviceProp device_properties;
-//   cudaGetDeviceProperties(&device_properties, 0);
-//   std::string gpu_name = device_properties.name;
-  bool is_a100 = true; // gpu_name.find("A100") != std::string::npos;
-
   if (prob_m == 0 || prob_n == 0) {
     return 0;
   }
@@ -542,11 +511,7 @@ int spqr_matvec(
 
 
   if (prob_m % 256 == 0 && prob_n % 256 == 0) {
-    if (is_a100) {
-      CALL_FUSED(spqr_quantized_matvec_fused, 1, 16, 2);
-    } else {
-      CALL_FUSED(spqr_quantized_matvec_fused, 1, 16, 2);
-    }
+    CALL_FUSED(spqr_quantized_matvec_fused, 1, 16, 2);
   } else {
     if (prob_n == 16) {
       CALL_FUSED(spqr_quantized_matvec_fused, 1, 1, 1);
