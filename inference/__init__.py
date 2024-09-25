@@ -398,22 +398,6 @@ def spqr_mul(spqr_device: SPQRModule, x, y, feature_flag: FeatureFlag):
     )
 
 
-def benchmark_ms(f, warmup=1, iter=10):
-    for i in range(warmup + iter):
-        f()
-        # We do not synchronize here in order to hide the kernel launch overhead during benchmarkining as this will also
-        # happen during realistic model inference as many launches are submitted to the kernel queue.
-        if i == warmup - 1:
-            torch.cuda.synchronize()
-            tick = time.time()
-    torch.cuda.synchronize()
-    res = (time.time() - tick) / iter
-    # Make sure there is enough to "cool down" the GPU in between benchmarks to avoid throttling for later runs when
-    # we execute many benchmarks consecutively
-    time.sleep(1.)
-    return res * 1000
-
-
 def torch_mul_timer(deq_w, x, num_runs):
     if len(deq_w.shape) == 1:
         n = x.shape[0]
