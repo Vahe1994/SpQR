@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "bit_array.cuh"
+#include "common.cuh"
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/util/Exception.h>
 #include <cuda_fp16.h>
@@ -378,17 +378,16 @@ void tensor_compress_interleaved(
             to_add++;
           }
         }
-        static constexpr uint64_t FRAG_SIZE = 8ull;
         uint64_t PARTIAL_OFFSET = BITS * (beta2 + 2); // = 54, for example
 
-        uint64_t FRAG_MASK = Bit_t((1ull << FRAG_SIZE) - 1ull);
+        uint64_t FRAG_MASK = Bit_t((1ull << SECOND_ORDER_FRAGMENT_SIZE_BITS) - 1ull);
         
-        uint64_t partial = (v >> (Bit_t((k / (FRAG_SIZE / 4))) * Bit_t(FRAG_SIZE))) & FRAG_MASK;
+        uint64_t partial = (v >> (Bit_t((k / (SECOND_ORDER_FRAGMENT_SIZE_BITS / 4))) * Bit_t(SECOND_ORDER_FRAGMENT_SIZE_BITS))) & FRAG_MASK;
 
         
         tile_array.push(ws, wz, tile, to_add, (partial << PARTIAL_OFFSET));
 
-        sanity |= (partial << (FRAG_SIZE * (k / (FRAG_SIZE / 4))));
+        sanity |= (partial << (SECOND_ORDER_FRAGMENT_SIZE_BITS * (k / (SECOND_ORDER_FRAGMENT_SIZE_BITS / 4))));
       }
 
 #if 1

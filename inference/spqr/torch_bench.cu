@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "bit_array.cuh"
+#include "common.cuh"
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/cuda/Exceptions.h>
 #include <c10/util/Exception.h>

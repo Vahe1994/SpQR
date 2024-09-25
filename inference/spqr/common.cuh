@@ -17,6 +17,8 @@
 #include <cstdio>
 #include <type_traits>
 
+static constexpr uint64_t SECOND_ORDER_FRAGMENT_SIZE_BITS = 8ull;
+
 template <class T> __host__ __device__ constexpr int get_bits() {
   if constexpr (std::is_same_v<T, int> || std::is_same_v<T, unsigned int>) {
     return 32;
