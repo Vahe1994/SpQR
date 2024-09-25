@@ -16,9 +16,20 @@ add_executable(spqr
         spqr/torch_bench.cu
 )
 
+add_library(spqr_lib SHARED
+        spqr/spqr_torch_lib.cpp
+        spqr/spqr_cuda_kernel.cu
+        spqr/torch_bench.cu
+)
+
+
+target_compile_options(spqr_lib PUBLIC $<$<COMPILE_LANGUAGE:CUDA>: --expt-relaxed-constexpr>)
+target_include_directories(spqr_lib PUBLIC spqr cnpy ${TORCH_INCLUDE_DIRS})
+
 target_compile_definitions(spqr PUBLIC PYBIND_SKIP=1)
 target_compile_options(spqr PUBLIC $<$<COMPILE_LANGUAGE:CUDA>: --expt-relaxed-constexpr>)
 target_include_directories(spqr PUBLIC spqr cnpy ${TORCH_INCLUDE_DIRS})
 
 
 target_link_libraries(spqr PUBLIC ${TORCH_LIBRARIES} Python::Python)
+target_link_libraries(spqr_lib PUBLIC ${TORCH_LIBRARIES} Python::Python)

@@ -31,7 +31,8 @@ class Mode(Enum):
 
 
 class LLama:
-    def find_layers_to_quantize(self, mod, compressed_path, parent_module=None, weights_to_quantize=None, layer_id=-1, parent_name=''):
+    def find_layers_to_quantize(self, mod, compressed_path, parent_module=None, weights_to_quantize=None, layer_id=-1,
+                                parent_name=''):
         if weights_to_quantize is None:
             weights_to_quantize = []
         for name, m in mod.named_children():
@@ -124,7 +125,7 @@ class LLama:
 
         self.device = device
         with suspend_nn_inits():
-            config = AutoConfig.from_pretrained(pretrained_model_path)
+            config = AutoConfig.from_pretrained(pretrained_model_path, torchscript=False)
             config.max_position_embeddings = 4096
 
             self.model = AutoModelForCausalLM.from_pretrained(
@@ -143,7 +144,7 @@ class LLama:
 
         self.model = self.model.to(device=self.device, dtype=self.dtype)
 
-        self.tokenizer = LlamaTokenizer.from_pretrained(pretrained_model_path, use_fast=False)
+        self.tokenizer = LlamaTokenizer.from_pretrained(pretrained_model_path, use_fast=False, torchscript=False)
         self.tokenizer.pad_token = self.tokenizer.eos_token
 
     def generate(self, input_str, max_new_tokens):
@@ -159,8 +160,10 @@ class LLama:
             attention_mask = inputs['attention_mask']
 
             start_time = time.time()
+
             outputs = self.model(input_ids=input_ids, attention_mask=attention_mask, cache_position=cache_position,
                                  past_key_values=past_key_values, use_cache=True)
+
             torch.cuda.synchronize()
             end_time = time.time()
             print(f'duration = {end_time - start_time}')

@@ -87,10 +87,11 @@ class SPQRUncompressed:
         self.buff0 = allocate_compressed_buffers(m, n, beta1, beta2, 'cpu')
         spqr_cuda.tensor_compress_interleaved(m, n, bits, W, beta1, beta2, W_s, W_z, W_s_s, W_s_z, W_z_s, W_z_z, self.buff0)
 
+torch.ops.load_library("/mnt/6e3c126c-c6bb-43eb-9d82-1e59b2111688/ecrncevi/SpQR/inference/cmake-build-release/libspqr_lib.so")
 
-class SPQRModule(nn.Module):
-    def __init__(self, spqr_host: SPQRUncompressed, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+class SPQRModule(torch.nn.Module):
+    def __init__(self, spqr_host: SPQRUncompressed):
+        super().__init__()
         self.m = spqr_host.m
         self.n = spqr_host.n
         self.bits = spqr_host.bits
@@ -112,7 +113,7 @@ class SPQRModule(nn.Module):
     def nnz(self):
         return self.col_vals.shape[0]
 
-    def _apply(self, fn, **kwargs):
+    def _apply(self, fn):
         # Apply the function to all parameters and buffers
         super(SPQRModule, self)._apply(fn)
 
@@ -137,6 +138,7 @@ class SPQRModule(nn.Module):
     def sparsity(self) -> float:
         return 1 - self.density
 
+    @torch.jit.export
     def forward(self, x: T) -> T:
         inner_dim = x.shape[1]
         y = torch.zeros((1, inner_dim, self.m), dtype=x.dtype, device=x.device)
@@ -146,7 +148,7 @@ class SPQRModule(nn.Module):
             _x = x[0, i, :].flatten()
             if self.in_perm is not None:
                 _x = _x[self.in_perm]
-            spqr_cuda.spqr_mul(
+            torch.ops.spqr_torch_lib.spqr_mul(
                 self.m,
                 self.n,
                 self.bits,
@@ -159,7 +161,7 @@ class SPQRModule(nn.Module):
                 # TODO: Might case a CPU regression
                 _x,
                 _y,
-                FeatureFlag.SPARSE_FUSED_FP32_ASYNC)
+                273)
             if self.out_perm is not None:
                 out_perm_long = self.out_perm
                 _y = _y[out_perm_long]

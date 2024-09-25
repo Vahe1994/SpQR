@@ -26,11 +26,6 @@
 
 extern "C" __device__ uint32_t __nvvm_get_smem_pointer(void *);
 
-// TODO: Why isn't this already available?
-__device__ __forceinline__ __half operator+(const __half &lh,
-                                            const __half &rh) {
-  return __hadd(lh, rh);
-}
 
 template<class Acc_t> constexpr __device__ __host__ bool is_fp32() {
   if constexpr (std::is_same_v<Acc_t, float> || std::is_same_v<Acc_t, float2>) {
