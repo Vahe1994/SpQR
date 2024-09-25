@@ -33,6 +33,18 @@ class Mode(IntEnum):
 
 
 class LLama:
+    def find_spqr_modules(self, mod, compressed_path, spqr_modules=None, layer_id=-1):
+        if spqr_modules is None:
+            spqr_modules = []
+
+        if isinstance(mod, inference.SPQRModule):
+            spqr_modules.append(mod)
+
+        for name, m in mod.named_children():
+            self.find_spqr_modules(m, compressed_path, spqr_modules, layer_id)
+
+        return spqr_modules
+
     def find_layers_to_quantize(self, mod, compressed_path, parent_module=None, weights_to_quantize=None, layer_id=-1,
                                 parent_name=''):
         if weights_to_quantize is None:
@@ -129,6 +141,9 @@ class LLama:
 
         if flag == Mode.CUDA_PT:
             self.model = torch.load(quantized_model_path)
+            spqr_modules = self.find_spqr_modules(self.model, quantized_model_path, layer_id=-1)
+            for mod in spqr_modules:
+                mod.allocate_output_buffers()
         else:
             with suspend_nn_inits():
                 config = AutoConfig.from_pretrained(pretrained_model_path, torchscript=False)
@@ -167,10 +182,8 @@ class LLama:
             attention_mask = inputs['attention_mask']
 
             start_time = time.time()
-
             outputs = self.model(input_ids=input_ids, attention_mask=attention_mask, cache_position=cache_position,
                                  past_key_values=past_key_values, use_cache=True)
-
             torch.cuda.synchronize()
             end_time = time.time()
             print(f'duration = {end_time - start_time}')

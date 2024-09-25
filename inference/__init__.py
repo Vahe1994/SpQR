@@ -109,6 +109,11 @@ class SPQRModule(torch.nn.Module):
         self.y_single = torch.zeros((1, 1, self.m), dtype=torch.float16, device=self.buff0.device)
         self._y = torch.zeros(self.m, dtype=torch.float16, device=self.buff0.device)
 
+    def allocate_output_buffers(self):
+        self.y = torch.zeros((1, 10, self.m), dtype=torch.float16, device=self.buff0.device)
+        self._y = torch.zeros(self.m, dtype=torch.float16, device=self.buff0.device)
+        self.y_single = torch.zeros((1, 1, self.m), dtype=torch.float16, device=self.buff0.device)
+
     def to_device(self, device: torch.device):
         self.buff0 = self.buff0.to(device=device)
         self.row_offsets = self.row_offsets.to(device=device)
@@ -144,11 +149,6 @@ class SPQRModule(torch.nn.Module):
         return 1 - self.density
 
     def forward(self, x: T) -> T:
-        if not hasattr(self, '_y'):
-            self.y = torch.zeros((1, 10, self.m), dtype=torch.float16, device=self.buff0.device)
-            self._y = torch.zeros(self.m, dtype=torch.float16, device=self.buff0.device)
-            self.y_single = torch.zeros((1, 1, self.m), dtype=torch.float16, device=self.buff0.device)
-
         inner_dim = x.shape[1]
 
         if inner_dim == 10:
@@ -177,8 +177,8 @@ class SPQRModule(torch.nn.Module):
             return self.y[:, :inner_dim, :]
         else:
             _x = x.flatten()
-            # if self.in_perm is not None:
-            #     _x = _x[self.in_perm]
+            if self.in_perm is not None:
+                _x = _x[self.in_perm]
             spqr_cuda.spqr_mul(
                 self.m,
                 self.n,
@@ -190,8 +190,8 @@ class SPQRModule(torch.nn.Module):
                 self.col_vals,
                 self.nnz,
                 # TODO: Might case a CPU regression
-                _x.flatten(),
-                self.y_single.flatten(),
+                _x,
+                self.y_single,
                 FeatureFlag.SPARSE_FUSED_FP32_ASYNC)
             return self.y_single
 
