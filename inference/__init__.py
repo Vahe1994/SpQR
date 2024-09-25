@@ -22,6 +22,9 @@ import spqr_cuda
 
 from torch import Tensor as T, nn
 
+import inference
+
+
 # Utility functions
 
 def list_flatten(W):
@@ -87,8 +90,6 @@ class SPQRUncompressed:
         self.buff0 = allocate_compressed_buffers(m, n, beta1, beta2, 'cpu')
         spqr_cuda.tensor_compress_interleaved(m, n, bits, W, beta1, beta2, W_s, W_z, W_s_s, W_s_z, W_z_s, W_z_z, self.buff0)
 
-torch.ops.load_library("/mnt/6e3c126c-c6bb-43eb-9d82-1e59b2111688/ecrncevi/SpQR/inference/cmake-build-release/libspqr_lib.so")
-
 class SPQRModule(torch.nn.Module):
     def __init__(self, spqr_host: SPQRUncompressed):
         super().__init__()
@@ -148,7 +149,7 @@ class SPQRModule(torch.nn.Module):
             _x = x[0, i, :].flatten()
             if self.in_perm is not None:
                 _x = _x[self.in_perm]
-            torch.ops.spqr_torch_lib.spqr_mul(
+            inference.spqr_mul(
                 self.m,
                 self.n,
                 self.bits,
