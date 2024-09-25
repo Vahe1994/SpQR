@@ -7,7 +7,7 @@ class build_ext_with_compiler_detection(cpp_extension.BuildExtension):
         # self.compiler.linker_so[0] = 'mold'
         super().build_extensions()
 
-ARCH = 86
+ARCH = 80
 
 
 setup(
