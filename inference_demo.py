@@ -143,19 +143,15 @@ def perplexity_eval(model, testenc, randomize, tokenizer, dataset_name, nsamples
 
 if __name__ == "__main__":
     pretrained_model_path = sys.argv[1]
-    uncompressed_model_path = sys.argv[2]
-    compressed_model_path = sys.argv[3]
-    calibration_dataset = sys.argv[4]
-    dev = sys.argv[5]
+    # uncompressed_model_path = sys.argv[2]
+    compressed_model_path = sys.argv[2]
+    mode = sys.argv[3]
+    # calibration_dataset = sys.argv[4]
+    # dev = sys.argv[5]
 
-    configs = [Mode.CUDA]
+    m = Mode(int(mode))
 
     with torch.no_grad():
-        for p in configs:
-            model = LLama(pretrained_model_path, compressed_model_path, p)
-            text = 'The recipe for banana bread is '  # input()
-            s = time.time()
-            generated_text = model.generate(text, max_new_tokens=15)
-            e = time.time()
-            print(f'{generated_text}')
-            print(f'Duration = {e - s}s')
+        model = LLama(pretrained_model_path, compressed_model_path, m)
+        text = 'The recipe for banana bread is '  # input()
+        s = time.time();generated_text = model.generate(text, max_new_tokens=15);e = time.time();print(f'{generated_text}');print(f'Duration = {e - s}s')
