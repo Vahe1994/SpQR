@@ -106,6 +106,7 @@ class SPQRModule(torch.nn.Module):
         self.out_perm = spqr_host.out_perm
 
         self.y = torch.zeros((1, 10, self.m), dtype=torch.float16, device=self.buff0.device)
+        self.y_single = torch.zeros((1, 1, self.m), dtype=torch.float16, device=self.buff0.device)
         self._y = torch.zeros(self.m, dtype=torch.float16, device=self.buff0.device)
 
     def to_device(self, device: torch.device):
@@ -146,11 +147,36 @@ class SPQRModule(torch.nn.Module):
         if not hasattr(self, '_y'):
             self.y = torch.zeros((1, 10, self.m), dtype=torch.float16, device=self.buff0.device)
             self._y = torch.zeros(self.m, dtype=torch.float16, device=self.buff0.device)
+            self.y_single = torch.zeros((1, 1, self.m), dtype=torch.float16, device=self.buff0.device)
 
         inner_dim = x.shape[1]
 
-        for i in range(inner_dim):
-            _x = x[..., i, :].flatten()
+        if inner_dim == 10:
+            for i in range(inner_dim):
+                _x = x[..., i, :].flatten()
+                if self.in_perm is not None:
+                    _x = _x[self.in_perm]
+                spqr_cuda.spqr_mul(
+                    self.m,
+                    self.n,
+                    self.bits,
+                    self.beta1,
+                    self.beta2,
+                    self.buff0,
+                    self.row_offsets,
+                    self.col_vals,
+                    self.nnz,
+                    # TODO: Might case a CPU regression
+                    _x,
+                    self._y,
+                    FeatureFlag.SPARSE_FUSED_FP32)
+                if self.out_perm is not None:
+                    out_perm_long = self.out_perm
+                    self._y = self._y[out_perm_long]
+                self.y[0, i, :] = self._y
+            return self.y[:, :inner_dim, :]
+        else:
+            _x = x.flatten()
             if self.in_perm is not None:
                 _x = _x[self.in_perm]
             spqr_cuda.spqr_mul(
@@ -165,17 +191,9 @@ class SPQRModule(torch.nn.Module):
                 self.nnz,
                 # TODO: Might case a CPU regression
                 _x,
-                self._y,
+                self.y_single.flatten(),
                 FeatureFlag.SPARSE_FUSED_FP32)
-            if self.out_perm is not None:
-                out_perm_long = self.out_perm
-                self._y = self._y[out_perm_long]
-            self.y[0, i, :] = self._y
-
-        # end_time = time.time()
-        # duration = end_time - start_time
-        # print(f'\t\t{duration:.10f}')
-        return self.y[:, :inner_dim, :]
+            return self.y_single
 
 
 # Compression
