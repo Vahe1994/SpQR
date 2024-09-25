@@ -543,7 +543,7 @@ int spqr_matvec(
 
   if (prob_m % 256 == 0 && prob_n % 256 == 0) {
     if (is_a100) {
-      CALL_FUSED(spqr_quantized_matvec_fused, 1, 16, 1);
+      CALL_FUSED(spqr_quantized_matvec_fused, 1, 16, 2);
     } else {
       CALL_FUSED(spqr_quantized_matvec_fused, 1, 16, 2);
     }
