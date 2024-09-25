@@ -177,8 +177,8 @@ class SPQRModule(torch.nn.Module):
             return self.y[:, :inner_dim, :]
         else:
             _x = x.flatten()
-            if self.in_perm is not None:
-                _x = _x[self.in_perm]
+            # if self.in_perm is not None:
+            #     _x = _x[self.in_perm]
             spqr_cuda.spqr_mul(
                 self.m,
                 self.n,
