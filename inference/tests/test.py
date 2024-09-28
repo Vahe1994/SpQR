@@ -52,8 +52,8 @@ class TestSparseFp16DenseOnly(unittest.TestCase):
         print('')
         # Call this once just to trigger the annoying torch sparse warning.
         device = torch.device('cuda:0')
-        for m in [ 256, 512, 4096, 11008, 2**16]:
-            for n in [ 256, 512, 4096, 11008, 2**16]:
+        for m in [16, 256, 512, 4096, 11008, 2**16]:
+            for n in [16, 32, 64, 128, 256, 512, 4096, 11008, 2**16]:
                 for density in [0]:
                     for flag in [
                         inference.FeatureFlag.SPARSE_FUSED_FP32,
