@@ -17,8 +17,8 @@ if __name__ == '__main__':
         np.random.seed(seed)
         torch.random.manual_seed(seed)
 
-        NUM_RUNS = 25
-        WARMUP = 10
+        NUM_RUNS = 15
+        WARMUP = 3
 
         device = torch.device(f'cuda:{sys.argv[2]}')
 
@@ -93,7 +93,7 @@ if __name__ == '__main__':
                 with torch.no_grad():
                     for flag in methods:
                         torch.cuda.empty_cache()
-                        time.sleep(1)
+                        time.sleep(3)
                         print(f'Running {repr(flag)} on {layer_id}.{p}')
 
                         if flag == inference.FeatureFlag.TORCH_FP16:

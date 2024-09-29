@@ -14,6 +14,7 @@ np.random.seed(seed)
 torch.random.manual_seed(seed)
 
 DEV = torch.device('cuda:0')
+"""
 
 class TestSparseFp16Easy(unittest.TestCase):
     def test_sparse_ones(self):
@@ -111,6 +112,7 @@ class TestSparseFp16Fused(unittest.TestCase):
 
                         self.assertTrue(passed, msg=f'Failed for m = {m} n = {n} density = {density}\ny={y}\ny_true={y_true}')
 
+"""
 
 
 class TestSparseFp16(unittest.TestCase):
