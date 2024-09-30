@@ -693,7 +693,7 @@ int spqr_matvec(
   if (prob_m == 32 && prob_n == 16) {
     CALL_FUSED(spqr_quantized_matvec_fused, 1, 1, 1);
   } else if (prob_m % 64 == 0 && prob_n % 256 == 0) {
-    CALL_FUSED(spqr_quantized_matvec_fused, 4, 4, 2);
+    CALL_FUSED(spqr_quantized_matvec_fused, 1, 16, 2);
   } else if (prob_m % 16 == 0 && prob_n % 256 == 0) {
     CALL_FUSED(spqr_quantized_matvec_fused, 1, 16, 2);
   } else if (prob_m % 16 == 0 && prob_n % 128 == 0) {
