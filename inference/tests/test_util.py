@@ -31,7 +31,7 @@ from inference import *
 
 
 def generate_x_fp32(n, upper_bound=3):
-    x_fp32 = ((torch.rand(n) - 0.5) * 2 * upper_bound).int()
+    x_fp32 = ((torch.rand(n) - 0.5) * 4 * upper_bound).int()
     return x_fp32.float()
 
 

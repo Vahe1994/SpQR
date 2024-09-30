@@ -20,6 +20,7 @@
 #include <cuda_runtime.h>
 #include <cuda_fp16.h>
 #include <cuda_pipeline.h>
+#include <ATen/ops/sub.h>
 
 #define DEVICE_INLINE __forceinline__ __device__
 
@@ -85,6 +86,7 @@ template<class Bit_t, class Scalar_t> DEVICE_INLINE Scalar_t dequantize(Bit_t q,
 #define CUINLINE __forceinline__
 
 #define UPDIV(X, Y) (((X) + (Y)-1) / (Y))
+#define MAX(X, Y) ((X) < (Y) ? (Y) : (X))
 
 [[nodiscard]] __device__ __host__ CUINLINE int updiv(int x, int y) {
   return (x + y - 1) / y;
@@ -199,9 +201,9 @@ DEVICE_INLINE half get_val(u32 m) {
     constexpr int BLOCK_HEIGHT = _BLOCK_HEIGHT; \
     constexpr int BLOCK_WIDTH = _BLOCK_WIDTH; \
     size_t smem_size = sizeof(half2) * prob_n / 2;                   \
-    F<3, 16, 16, BLOCK_HEIGHT, BLOCK_WIDTH, float, uint64_t, PIPELINE_DEPTH> \
+    F<3, 16, 16, BLOCK_HEIGHT, BLOCK_WIDTH, uint64_t, PIPELINE_DEPTH> \
             <<<dim3(updiv(prob_m, 16 * BLOCK_HEIGHT), 1, 1), \
-            dim3(__min(updiv(prob_n, 16), BLOCK_WIDTH) * 16, 1, 1), smem_size, \
+            dim3(__min(updiv(prob_n, 16), BLOCK_WIDTH) * 16, __min(updiv(prob_m, 16), BLOCK_HEIGHT), 1), smem_size, \
             stream>>>(prob_m, \
             prob_n, \
             raw_data,                               \
@@ -392,7 +394,7 @@ template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH, clas
 }
 
 
-template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH, class Acc_t, class W_t /* = uint64_t */, int
+template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH, class W_t /* = uint64_t */, int
   PIPELINE_DEPTH> __global__ void spqr_quantized_matvec_fused(
   // W and meta
   unsigned int prob_m,
@@ -418,127 +420,82 @@ template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH, clas
            └─────────────┘ └─┘   └─┘
   */
   static constexpr u32 WARP_SIZE = 32;
+  static constexpr u32 HALF_WARP_SIZE = WARP_SIZE / 2;
+
   static constexpr u32 NUM_HALF_WARPS = BLOCK_HEIGHT * BLOCK_WIDTH;
-  static constexpr u32 THREAD_COUNT = BLOCK_HEIGHT * BLOCK_WIDTH * WARP_SIZE / 2;
+  static constexpr u32 THREAD_COUNT = BLOCK_HEIGHT * BLOCK_WIDTH * HALF_WARP_SIZE;
   static constexpr u32 OUTPUT_SIZE = BETA1 * BLOCK_HEIGHT;
-#if 0
-  extern __shared__ half2 s_x2[];
-  __shared__ half2 s_half2_lut_global[64 * BLOCK_WIDTH];
-  __shared__ Acc_t s_y[BETA1];
-  __shared__ u32 s_row_offsets[BETA1 + 1];
 
-  static constexpr int HALF_WARP_SIZE = 16;
-  auto s_half2_lut = s_half2_lut_global + ((threadIdx.x / HALF_WARP_SIZE) << 6);
-
-#pragma loop unroll
-  for (int i = threadIdx.x % HALF_WARP_SIZE; i < 64; i += HALF_WARP_SIZE) {
-    s_half2_lut[i] = make_half2(
-        __int2half_rd(i & 0b111),
-        __int2half_rd(i >> 3)
-    );
-  }
-
-  const half2 *x2 = reinterpret_cast<const half2 *>(x);
-
-  u32 pipeline_depth{};
-
-  const auto total_threads = blockDim.x;
-  const auto x2_count = prob_n / 2;
-  const auto tid = threadIdx.x;
-  u32 pipeline_id{};
-#else
   extern __shared__ half2 s_x2[];
   __shared__ half2 s_half2_lut_global[64 * NUM_HALF_WARPS];
-  __shared__ Acc_t s_y[OUTPUT_SIZE];
+  __shared__ float s_y[OUTPUT_SIZE];
   __shared__ u32 s_row_offsets[OUTPUT_SIZE + 1];
 
   const u32 thread_xy = threadIdx.x + (threadIdx.y * blockDim.x);
 
-  static constexpr u32 HALF_WARP_SIZE = 16;
-
-  for (u32 i = thread_xy; i < 64 * NUM_HALF_WARPS; i += THREAD_COUNT) {
+  for (int i = thread_xy; i < 64 * NUM_HALF_WARPS; i += THREAD_COUNT) {
     s_half2_lut_global[i] = make_half2(
       __int2half_rd(i & 0b111),
-      __int2half_rd((i >> 3u) & 0b111)
+      __int2half_rd((i >> 3) & 0b111)
     );
   }
 
   auto s_half2_lut = s_half2_lut_global + ((thread_xy / HALF_WARP_SIZE) << 6);
   const half2 *x2 = reinterpret_cast<const half2 *>(x);
 
-  const auto total_threads = blockDim.x;
-  const auto x2_count = prob_n / 2;
-  const auto tid = threadIdx.x;
-#endif
 
+  const auto x2_count = prob_n >> 1;
 
-  if constexpr (std::is_same<Acc_t, float>::value) {
-    if (threadIdx.x < BETA1) {
-      // TOD: Check if this really sets s_y to zero.
-      asm volatile ("cp.async.ca.shared.global [%0], [%0], 4, 0 ;\n" :
-        : "r"(__nvvm_get_smem_pointer(s_y + threadIdx.x))
-      );
-    }
-  } else {
-    if (threadIdx.x < BETA1 / 2) {
-      asm volatile ("cp.async.ca.shared.global [%0], [%0], 4, 0 ;\n" :
-        : "r"(__nvvm_get_smem_pointer(s_y + threadIdx.x))
-      );
-    }
+  if (thread_xy < OUTPUT_SIZE) {
+    // TOD: Check if this really sets s_y to zero.
+    asm volatile ("cp.async.ca.shared.global [%0], [%0], 4, 0 ;\n" :
+      : "r"(__nvvm_get_smem_pointer(s_y + thread_xy))
+    );
   }
+
+  // TODO: Is this correct? Should x/y be swapped? Should threadidx be used here? - Should be correct, now
+  const u32 tile_row_id = blockIdx.x * BLOCK_HEIGHT + threadIdx.y;
 
   // Here we load the row offsets into smem.
-  for (int i = threadIdx.x; i <= BETA1; i += blockDim.x) {
-    __pipeline_memcpy_async(s_row_offsets + i, row_offsets + blockIdx.x * BETA1 + i, sizeof(u32));
+  for (u32 i = thread_xy; i <= OUTPUT_SIZE; i += THREAD_COUNT) {
+    __pipeline_memcpy_async(s_row_offsets + i, row_offsets + blockIdx.x * BLOCK_HEIGHT * BETA1 + i, sizeof(u32));
   }
 
-  u32 idx = tid;
-  u32 pipeline_id{};
-  u32 pipeline_stack_ptr{};
-  for (; pipeline_id < PIPELINE_DEPTH && idx < x2_count; pipeline_id++, idx += THREAD_COUNT) {
+  u32 pipeline_id, pipeline_stack_ptr{};
+  for (pipeline_id = 0; pipeline_id < PIPELINE_DEPTH && (pipeline_id * THREAD_COUNT + thread_xy) < x2_count; pipeline_id
+       ++) {
+    u32 idx = pipeline_id * THREAD_COUNT + thread_xy;
     __pipeline_memcpy_async(s_x2 + idx, x2 + idx, sizeof(half2));
     pipeline_stack_ptr++;
     __pipeline_commit();
   }
 
-
-  const u32 blockId = blockIdx.x;
-
   // Number of SPQR tiles that this CUDA block will process.
-  u32 num_spqr_tiles_per_cuda_block = UPDIV(prob_n, BETA2);
+  u32 num_tiles_per_tile_row = UPDIV(prob_n, BETA2);
 
   // Here is how we organize things here. We have THREAD_COUNT threads in a
   // block in x-dimension. We distribute 1 thread per tile row. Therefore, we
   // have BETA1 threads per tile. For now, a block only spans across 1 dimension
   // of SPQR tiles.
-  constexpr u32 NUM_SPQR_TILES_PER_ITEARTION = THREAD_COUNT / BETA1;
+  constexpr u32 NUM_SPQR_TILES_PER_ITERATION = BLOCK_WIDTH;
+  constexpr u32 WARP_COUNT = UPDIV(BLOCK_WIDTH, 2);
 
-  u32 row_pos = threadIdx.x & 0xF; // threadIdx.x % BETA1;
+  u32 row_pos = thread_xy & 0xF;
   const u32 subtile_id = threadIdx.x / BETA1;
 
-  if (subtile_id >= UPDIV(prob_n, BETA2)) {
-    return;
-  }
-
-  const W_t *local_raw_data =
-      raw_data + blockIdx.x * num_spqr_tiles_per_cuda_block * BETA1 + subtile_id * BETA1 + row_pos;
+  auto raw_data_offset = tile_row_id * prob_n + threadIdx.x;
+  const W_t *local_raw_data = raw_data + raw_data_offset;
 
   constexpr u32 FULL_MASK = 0xffffffff;
   constexpr u32 HALF_MASK = FULL_MASK >> 16u;
 
-  if ((row_pos + blockId * BETA1) >= prob_m) {
-    // TODO: Maybe don't do this, since we need these threads to load x
-    // together? [1]
-    return;
-  } // || (threadIdx.x % BETA1)
-
-
   constexpr static unsigned long long int NUM_USEFUL_BITS = 18ull * static_cast<u64>(BITS);
   constexpr static int OFFSET = BETA1 / SECOND_ORDER_FRAGMENT_SIZE_BITS;
 
-  Acc_t acc{};
-  for (u32 i = subtile_id; i < num_spqr_tiles_per_cuda_block;
-       i += NUM_SPQR_TILES_PER_ITEARTION, local_raw_data += NUM_SPQR_TILES_PER_ITEARTION * BETA1) {
+  float acc{};
+
+  for (u32 i = subtile_id; i < num_tiles_per_tile_row;
+       i += NUM_SPQR_TILES_PER_ITERATION, local_raw_data += NUM_SPQR_TILES_PER_ITERATION * BETA1) {
     auto v = __ldg(local_raw_data);
     RowBits row_bits{
       .mask = v
@@ -547,9 +504,7 @@ template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH, clas
         (row_bits.mask >> NUM_USEFUL_BITS) << (SECOND_ORDER_FRAGMENT_SIZE_BITS * (row_pos / OFFSET));
     SecondOrder _s{.v = recover_second_order(s_order_partial)};
     half2 first_order_quantized = s_half2_lut[row_bits.get_w2(0)];
-    half2 first_order_dequantized = dequantize2(first_order_quantized,
-                                                _s.get_sws2(),
-                                                _s.get_swz2());
+    half2 first_order_dequantized = dequantize2(first_order_quantized, _s.get_sws2(), _s.get_swz2());
 
     half2 ws2 = __half2half2(first_order_dequantized.x);
     half2 wz2 = __half2half2(first_order_dequantized.y);
@@ -564,43 +519,35 @@ template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH, clas
     __syncthreads();
 #pragma unroll
     for (u32 j = 0; j < BETA2 / 2; j++) {
-      if constexpr (std::is_same<Acc_t, float>::value) {
-        half2 q = s_half2_lut[row_bits.get_w2(j + 1)];
-        half2 w = dequantize2(q, ws2, wz2);
-        float2 x_fp32 = __half22float2(s_x2_[j]);
-        float2 w_fp32 = __half22float2(w);
-        acc = fmaf(x_fp32.x, w_fp32.x, acc);
-        acc = fmaf(x_fp32.y, w_fp32.y, acc);
-      } else {
-        int q_x = row_bits.get_w(2 * j);
-        int q_y = row_bits.get_w(2 * j + 1);
-        half2 q = make_half2(__int2half_rd(q_x), __int2half_rd(q_y));
-        half2 w = dequantize2(q, ws2, wz2);
-        acc = __hfma2(s_x2[i * BETA2 / 2 + j], w, acc);
-      }
+      half2 w_q = s_half2_lut[row_bits.get_w2(j + 1)];
+      half2 w = dequantize2(w_q, ws2, wz2);
+      float2 x_fp32 = __half22float2(s_x2_[j]);
+      float2 w_fp32 = __half22float2(w);
+      acc = fmaf(x_fp32.x, w_fp32.x, acc);
+      acc = fmaf(x_fp32.y, w_fp32.y, acc);
     }
 
-    unsigned idx = pipeline_id * total_threads + tid;
-    if (idx < prob_n / 2) {
+    unsigned idx = pipeline_id * THREAD_COUNT + thread_xy;
+    if (idx < x2_count) {
       __pipeline_memcpy_async(s_x2 + idx, x2 + idx, sizeof(half2));
       pipeline_id++;
       pipeline_stack_ptr++;
       __pipeline_commit();
     }
   }
+  __syncthreads();
 
-  auto s_y_scalar = scalarize<Acc_t>(s_y);
+  auto s_y_scalar = scalarize<float>(s_y + threadIdx.y * BETA1);
   auto s_y_vectorized = vectorize(s_y_scalar);
 
-  u32 t = row_pos;
+  u32 t = threadIdx.y * BETA1 + row_pos;
   u32 s = s_row_offsets[t];
   u32 e = s_row_offsets[t + 1];
-  u32 wid = subtile_id;
 
   half *s_x = reinterpret_cast<half *>(s_x2);
 
 #if 1
-  for (u32 i = s + wid; i < e; i += BLOCK_WIDTH) {
+  for (u32 i = s + subtile_id; i < e; i += BLOCK_WIDTH) {
     ColVal colval{
       ._ = __ldg(col_vals + i)
     };
@@ -610,32 +557,38 @@ template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH, clas
   }
 #endif
 
-  auto other = __shfl_down_sync(HALF_MASK, acc, BETA1);
-  auto result = add_and_accum(other, acc);
-  const unsigned int lane_id = threadIdx.x & 0x1F;
-  if constexpr (std::is_same_v<Acc_t, float>) {
-    if (lane_id < BETA1) {
-      atomicAdd(s_y_scalar + lane_id, result);
-    }
-  } else {
-    auto result0 = __shfl_down_sync(0, result, threadIdx.x);
-    auto result1 = __shfl_down_sync(0, result, threadIdx.x + 1);
-    if (lane_id < BETA1 / 2) {
-      atomicAdd(s_y_vectorized + lane_id, make_half2(result0, result1));
-    }
+  __syncthreads();
+
+  if (!(subtile_id & 1 == 0 && threadIdx.x + BETA1 >= blockDim.x)) {
+    auto other = __shfl_down_sync(HALF_MASK, acc, BETA1);
+    acc = add_and_accum(other, acc);
+  }
+
+  // TODO: Double check this
+  auto *s_fp32_buff = reinterpret_cast<float *>(s_half2_lut_global + threadIdx.y * MAX(WARP_SIZE - 1, 1) * BETA1);
+
+  u32 subwarp_id = threadIdx.x / WARP_SIZE;
+  if (subwarp_id >= 1 && threadIdx.x % WARP_SIZE < BETA1) {
+    s_fp32_buff[(subwarp_id - 1) * BETA1 + threadIdx.x % WARP_SIZE] = acc;
   }
 
   __syncthreads();
 
+  if (!subtile_id && threadIdx.x < BETA1) {
+    for (int i = 0; i < WARP_COUNT - 1; i++) {
+      acc += s_fp32_buff[i * BETA1 + threadIdx.x];
+    }
+  }
+
   if (order == nullptr) {
-    if (threadIdx.x < BETA1 / 2) {
-      reinterpret_cast<half2 *>(y_fp16)[blockIdx.x * (BETA1 / 2) +
-                                        threadIdx.x] = __float22half2_rn(s_y_vectorized[threadIdx.x]);
+    if (threadIdx.x < BETA1) {
+      y_fp16[tile_row_id * BETA1 + threadIdx.x] = __float2half(acc);
     }
   } else {
+    // TODO:
     if (threadIdx.x < BETA1) {
-      short row = order[blockIdx.x * BETA1 + threadIdx.x];
-      y_fp16[row] = __float2half(s_y_scalar[threadIdx.x]);
+      short row = order[tile_row_id * BETA1 + threadIdx.x];
+      y_fp16[row] = __float2half_rn(acc);
     }
   }
 }
@@ -730,21 +683,27 @@ int spqr_matvec(
   int ret = 0;
 
 
-  if (dense_only) {
-    if (prob_m % 16 == 0 && prob_n % 256 == 0) {
-      CALL_DENSE(spqr_quantized_matvec_dense, 1, 16, 1);
-    } else {
-      CALL_DENSE(spqr_quantized_matvec_dense, 1, 1, 1);
-    }
+  // if (dense_only) {
+  // if (prob_m % 16 == 0 && prob_n % 256 == 0) {
+  // CALL_DENSE(spqr_quantized_matvec_dense, 1, 16, 1);
+  // } else {
+  // CALL_DENSE(spqr_quantized_matvec_dense, 1, 1, 1);
+  // }
+  // } else {
+  if (prob_m == 32 && prob_n == 16) {
+    CALL_FUSED(spqr_quantized_matvec_fused, 1, 1, 1);
+  } else if (prob_m % 64 == 0 && prob_n % 256 == 0) {
+    CALL_FUSED(spqr_quantized_matvec_fused, 4, 4, 2);
+  } else if (prob_m % 16 == 0 && prob_n % 256 == 0) {
+    CALL_FUSED(spqr_quantized_matvec_fused, 1, 16, 2);
+  } else if (prob_m % 16 == 0 && prob_n % 128 == 0) {
+    CALL_FUSED(spqr_quantized_matvec_fused, 1, 8, 1);
+  } else if (prob_m % 16 == 0 && prob_n % 32 == 0) {
+    CALL_FUSED(spqr_quantized_matvec_fused, 1, 2, 1);
   } else {
-    if (prob_m % 16 == 0 && prob_n % 256 == 0) {
-      CALL_FUSED(spqr_quantized_matvec_fused, 1, 16, 2);
-    } else if (prob_m % 16 == 0 && prob_n % 128 == 0) {
-      CALL_FUSED(spqr_quantized_matvec_fused, 1, 8, 2);
-    } else {
-      CALL_FUSED(spqr_quantized_matvec_fused, 1, 1, 1);
-    }
+    CALL_FUSED(spqr_quantized_matvec_fused, 1, 1, 1);
   }
+  // }
 
   if (!features.flags.is_async) {
     CHECK_CUDA(cudaDeviceSynchronize());
