@@ -245,21 +245,29 @@ template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH, clas
            └─────────────┘ └─┘   └─┘
   */
   static constexpr int WARP_SIZE = 32;
+  static constexpr u32 HALF_WARP_SIZE = WARP_SIZE / 2;
+  constexpr u32 NUM_SPQR_TILES_PER_ITERATION = BLOCK_WIDTH;
+  constexpr u32 WARP_COUNT = UPDIV(BLOCK_WIDTH, 2);
+
+  static constexpr u32 NUM_HALF_WARPS = BLOCK_HEIGHT * BLOCK_WIDTH;
+  static constexpr u32 THREAD_COUNT = BLOCK_HEIGHT * BLOCK_WIDTH * HALF_WARP_SIZE;
+  static constexpr u32 OUTPUT_SIZE = BETA1 * BLOCK_HEIGHT;
 
   extern __shared__ half2 s_x2[];
-  __shared__ half2 s_half2_lut_global[64 * BLOCK_WIDTH];
-  __shared__ Acc_t s_y[BETA1];
+  __shared__ half2 s_half2_lut_global[64 * NUM_HALF_WARPS];
+  __shared__ float s_y[OUTPUT_SIZE];
+  __shared__ u32 s_row_offsets[OUTPUT_SIZE + 1];
 
-  static constexpr int HALF_WARP_SIZE = 16;
-  auto s_half2_lut = s_half2_lut_global + ((threadIdx.x / HALF_WARP_SIZE) << 6);
+  const u32 thread_xy = threadIdx.x + (threadIdx.y * blockDim.x);
 
-#pragma loop unroll
-  for (int i = threadIdx.x % HALF_WARP_SIZE; i < 64; i += HALF_WARP_SIZE) {
-    s_half2_lut[i] = make_half2(
+  for (int i = thread_xy; i < 64 * NUM_HALF_WARPS; i += THREAD_COUNT) {
+    s_half2_lut_global[i] = make_half2(
       __int2half_rd(i & 0b111),
-      __int2half_rd(i >> 3));
+      __int2half_rd((i >> 3) & 0b111)
+    );
   }
 
+  auto s_half2_lut = s_half2_lut_global + ((thread_xy / HALF_WARP_SIZE) << 6);
   const half2 *x2 = reinterpret_cast<const half2 *>(x);
 
 
@@ -279,16 +287,9 @@ template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH, clas
   }
 
   asm volatile ("cp.async.commit_group;");
-  constexpr u32 THREAD_COUNT = BLOCK_WIDTH * BETA1; // = 128 (example)
 
   // Number of SPQR tiles that this CUDA block will process.
   u32 num_spqr_tiles_per_cuda_block = UPDIV(prob_n, BETA2);
-
-  // Here is how we organize things here. We have THREAD_COUNT threads in a
-  // block in x-dimension. We distribute 1 thread per tile row. Therefore, we
-  // have BETA1 threads per tile. For now, a block only spans across 1 dimension
-  // of SPQR tiles.
-  constexpr u32 NUM_SPQR_TILES_PER_ITERATION = THREAD_COUNT / BETA1;
 
   u32 row_pos = threadIdx.x & 0xF; // threadIdx.x % BETA1;
   const u32 subtile_id = threadIdx.x / BETA1;
@@ -360,35 +361,38 @@ template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH, clas
     }
   }
 
-  auto s_y_scalar = scalarize<Acc_t>(s_y);
-  auto s_y_vectorized = vectorize(s_y_scalar);
+  if (!(subtile_id & 1 == 0 && threadIdx.x + BETA1 >= blockDim.x)) {
+    auto other = __shfl_down_sync(HALF_MASK, acc, BETA1);
+    acc = add_and_accum(other, acc);
+  }
 
-  auto other = __shfl_down_sync(HALF_MASK, acc, BETA1);
-  auto result = add_and_accum(other, acc);
-  const unsigned int lane_id = threadIdx.x & 0x1F;
-  if constexpr (std::is_same_v<Acc_t, float>) {
-    if (lane_id < BETA1) {
-      atomicAdd(s_y_scalar + lane_id, result);
-    }
-  } else {
-    auto result0 = __shfl_down_sync(0, result, threadIdx.x);
-    auto result1 = __shfl_down_sync(0, result, threadIdx.x + 1);
-    if (lane_id < BETA1 / 2) {
-      atomicAdd(s_y_vectorized + lane_id, make_half2(result0, result1));
-    }
+  const u32 tile_row_id = blockIdx.x * BLOCK_HEIGHT + threadIdx.y;
+
+  // TODO: Double check this
+  auto *s_fp32_buff = reinterpret_cast<float *>(s_half2_lut_global + threadIdx.y * MAX(WARP_SIZE - 1, 1) * BETA1);
+
+  u32 subwarp_id = threadIdx.x / WARP_SIZE;
+  if (subwarp_id >= 1 && threadIdx.x % WARP_SIZE < BETA1) {
+    s_fp32_buff[(subwarp_id - 1) * BETA1 + threadIdx.x % WARP_SIZE] = acc;
   }
 
   __syncthreads();
 
+  if (!subtile_id && threadIdx.x < BETA1) {
+    for (int i = 0; i < WARP_COUNT - 1; i++) {
+      acc += s_fp32_buff[i * BETA1 + threadIdx.x];
+    }
+  }
+
   if (order == nullptr) {
-    if (threadIdx.x < BETA1 / 2) {
-      reinterpret_cast<half2 *>(y_fp16)[blockIdx.x * (BETA1 / 2) +
-                                        threadIdx.x] = __float22half2_rn(s_y_vectorized[threadIdx.x]);
+    if (threadIdx.x < BETA1) {
+      y_fp16[tile_row_id * BETA1 + threadIdx.x] = __float2half(acc);
     }
   } else {
+    // TODO:
     if (threadIdx.x < BETA1) {
-      short row = order[blockIdx.x * BETA1 + threadIdx.x];
-      y_fp16[row] = __float2half(s_y_scalar[threadIdx.x]);
+      short row = order[tile_row_id * BETA1 + threadIdx.x];
+      y_fp16[row] = __float2half_rn(acc);
     }
   }
 }
@@ -683,27 +687,27 @@ int spqr_matvec(
   int ret = 0;
 
 
-  // if (dense_only) {
-  // if (prob_m % 16 == 0 && prob_n % 256 == 0) {
-  // CALL_DENSE(spqr_quantized_matvec_dense, 1, 16, 1);
-  // } else {
-  // CALL_DENSE(spqr_quantized_matvec_dense, 1, 1, 1);
-  // }
-  // } else {
-  if (prob_m == 32 && prob_n == 16) {
-    CALL_FUSED(spqr_quantized_matvec_fused, 1, 1, 1);
-  } else if (prob_m % 64 == 0 && prob_n % 256 == 0) {
-    CALL_FUSED(spqr_quantized_matvec_fused, 1, 16, 2);
-  } else if (prob_m % 16 == 0 && prob_n % 256 == 0) {
-    CALL_FUSED(spqr_quantized_matvec_fused, 1, 16, 2);
-  } else if (prob_m % 16 == 0 && prob_n % 128 == 0) {
-    CALL_FUSED(spqr_quantized_matvec_fused, 1, 8, 1);
-  } else if (prob_m % 16 == 0 && prob_n % 32 == 0) {
-    CALL_FUSED(spqr_quantized_matvec_fused, 1, 2, 1);
+  if (dense_only) {
+    if (prob_m % 16 == 0 && prob_n % 256 == 0) {
+      CALL_DENSE(spqr_quantized_matvec_dense, 1, 32, 1);
+    } else {
+      CALL_DENSE(spqr_quantized_matvec_dense, 1, 1, 1);
+    }
   } else {
-    CALL_FUSED(spqr_quantized_matvec_fused, 1, 1, 1);
+    if (prob_m == 32 && prob_n == 16) {
+      CALL_FUSED(spqr_quantized_matvec_fused, 1, 1, 1);
+    } else if (prob_m % 64 == 0 && prob_n % 256 == 0) {
+      CALL_FUSED(spqr_quantized_matvec_fused, 1, 16, 2);
+    } else if (prob_m % 16 == 0 && prob_n % 256 == 0) {
+      CALL_FUSED(spqr_quantized_matvec_fused, 1, 16, 2);
+    } else if (prob_m % 16 == 0 && prob_n % 128 == 0) {
+      CALL_FUSED(spqr_quantized_matvec_fused, 1, 8, 1);
+    } else if (prob_m % 16 == 0 && prob_n % 32 == 0) {
+      CALL_FUSED(spqr_quantized_matvec_fused, 1, 2, 1);
+    } else {
+      CALL_FUSED(spqr_quantized_matvec_fused, 1, 1, 1);
+    }
   }
-  // }
 
   if (!features.flags.is_async) {
     CHECK_CUDA(cudaDeviceSynchronize());

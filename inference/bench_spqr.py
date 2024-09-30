@@ -17,8 +17,8 @@ if __name__ == '__main__':
         np.random.seed(seed)
         torch.random.manual_seed(seed)
 
-        NUM_RUNS = 15
-        WARMUP = 3
+        NUM_RUNS = 20
+        WARMUP = 10
 
         device = torch.device(f'cuda:{sys.argv[2]}')
 
