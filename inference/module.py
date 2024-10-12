@@ -142,8 +142,6 @@ class LLama:
         if flag == Mode.CUDA_PT:
             self.model = torch.load(quantized_model_path)
             spqr_modules = self.find_spqr_modules(self.model, quantized_model_path, layer_id=-1)
-            for mod in spqr_modules:
-                mod.allocate_output_buffers()
         else:
             with suspend_nn_inits():
                 config = AutoConfig.from_pretrained(pretrained_model_path, torchscript=False)

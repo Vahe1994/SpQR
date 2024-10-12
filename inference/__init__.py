@@ -20,9 +20,11 @@ import os
 import torch
 import spqr_cuda
 
-from torch import Tensor as T, nn
+from torch import Tensor as T
+torch.set_grad_enabled(False)
 
 import inference
+
 
 
 # Utility functions
@@ -81,14 +83,29 @@ class SPQRUncompressed:
         self.in_perm = in_perm
         self.out_perm = out_perm
 
+        row_offsets_output = self.row_offsets.diff().reshape((-1, 16)).max(axis=1).values * 16
+
+        row_offsets_output = row_offsets_output.cumsum(dim=0)
+        row_offsets_output = torch.cat((torch.tensor([0]), row_offsets_output))
+
         if self.values.shape[0] != 0:
             self.col_vals = values.view(torch.int16).to(torch.int64).bitwise_left_shift(16).bitwise_or(
                 col_ids.view(torch.int16).to(torch.int64)).to(torch.int32)
         else:
             self.col_vals = torch.zeros(0)
 
+        col_val_count = row_offsets_output[-1]
+        self.col_vals_interleaved = torch.zeros((col_val_count), dtype=torch.int32)
+
         self.buff0 = allocate_compressed_buffers(m, n, beta1, beta2, 'cpu')
-        spqr_cuda.tensor_compress_interleaved(m, n, bits, W, beta1, beta2, W_s, W_z, W_s_s, W_s_z, W_z_s, W_z_z, self.buff0)
+        spqr_cuda.tensor_compress_interleaved(m, n, bits, W, beta1, beta2, W_s, W_z, W_s_s, W_s_z, W_z_s, W_z_z,
+                                              self.row_offsets,
+                                              row_offsets_output,
+                                              self.col_vals,
+                                              self.col_vals_interleaved,
+                                              self.buff0)
+        self.row_offsets_interleaved = row_offsets_output
+
 
 class SPQRModule(torch.nn.Module):
     def __init__(self, spqr_host: SPQRUncompressed):
@@ -105,19 +122,15 @@ class SPQRModule(torch.nn.Module):
         self.in_perm = spqr_host.in_perm
         self.out_perm = spqr_host.out_perm
 
-        self.y = torch.zeros((1, 10, self.m), dtype=torch.float16, device=self.buff0.device)
-        self.y_single = torch.zeros((1, 1, self.m), dtype=torch.float16, device=self.buff0.device)
-        self._y = torch.zeros(self.m, dtype=torch.float16, device=self.buff0.device)
-
-    def allocate_output_buffers(self):
-        self.y = torch.zeros((1, 10, self.m), dtype=torch.float16, device=self.buff0.device)
-        self._y = torch.zeros(self.m, dtype=torch.float16, device=self.buff0.device)
-        self.y_single = torch.zeros((1, 1, self.m), dtype=torch.float16, device=self.buff0.device)
+        self.col_vals_interleaved = spqr_host.col_vals_interleaved
+        self.row_offsets_interleaved = spqr_host.row_offsets_interleaved
 
     def to_device(self, device: torch.device):
         self.buff0 = self.buff0.to(device=device)
         self.row_offsets = self.row_offsets.to(device=device)
         self.col_vals = self.col_vals.to(device=device)
+        self.row_offsets_interleaved = self.row_offsets_interleaved.to(device=device)
+        self.col_vals_interleaved = self.col_vals_interleaved.to(device=device)
 
     @property
     def nnz(self):
@@ -138,6 +151,9 @@ class SPQRModule(torch.nn.Module):
         if self.out_perm is not None:
             self.out_perm = fn(self.out_perm)
 
+        self.row_offsets_interleaved = fn(self.row_offsets_interleaved)
+        self.col_vals_interleaved = fn(self.col_vals_interleaved)
+
         return self
 
     @property
@@ -151,37 +167,12 @@ class SPQRModule(torch.nn.Module):
     def forward(self, x: T) -> T:
         inner_dim = x.shape[1]
 
-        if inner_dim == 10:
-            for i in range(inner_dim):
-                _x = x[..., i, :].flatten()
-                if self.in_perm is not None:
-                    _x = _x[self.in_perm]
-                spqr_cuda.spqr_mul(
-                    self.m,
-                    self.n,
-                    self.bits,
-                    self.beta1,
-                    self.beta2,
-                    self.buff0,
-                    self.row_offsets,
-                    self.col_vals,
-                    self.nnz,
-                    # TODO: Might case a CPU regression
-                    _x,
-                    self._y,
-                    FeatureFlag.SPARSE_FUSED_FP32_ASYNC)
-                if self.out_perm is not None:
-                    out_perm_long = self.out_perm
-                    self._y = self._y[out_perm_long]
-                self.y[0, i, :] = self._y
-            return self.y[:, :inner_dim, :]
-        else:
-            _x = x
+        y = torch.empty((inner_dim * self.m), dtype=torch.float16, device=self.buff0.device)
+
+        for i in range(inner_dim):
+            _x = x[..., i, :].flatten()
             if self.in_perm is not None:
-                _x = _x[:, :, self.in_perm]
-
-            self.y_single = torch.empty((1, 1, self.m), dtype=torch.float16, device=self.buff0.device)
-
+                _x = _x[self.in_perm]
             spqr_cuda.spqr_mul(
                 self.m,
                 self.n,
@@ -191,12 +182,14 @@ class SPQRModule(torch.nn.Module):
                 self.buff0,
                 self.row_offsets,
                 self.col_vals,
+                self.row_offsets_interleaved,
+                self.col_vals_interleaved,
                 self.nnz,
-                # TODO: Might case a CPU regression
                 _x,
-                self.y_single,
+                y[(i * self.m):((i + 1) * self.m)],
                 FeatureFlag.SPARSE_FUSED_FP32_ASYNC)
-            return self.y_single
+
+        return y.reshape((1, inner_dim, self.m))
 
 
 # Compression
@@ -372,6 +365,7 @@ class FeatureFlag(IntEnum):
     SPARSE_CUSPARSE_FP16 = SPARSE_CUSPARSE_ALGORITHM | FP16
     SPARSE_FUSED_FP16 = SPARSE_FUSED_ALGORITHM | FP16
     SPARSE_FUSED_FP32 = SPARSE_FUSED_ALGORITHM | FP32
+    SPARSE_FUSED_FP32_EXPERIMENTAL = SPARSE_FUSED_ALGORITHM | FP32 | SPARSE_CUSPARSE_ALGORITHM
     SPARSE_FUSED_FP32_ASYNC = SPARSE_FUSED_ALGORITHM | FP32 | IS_ASYNC
     SPARSE_NAIVE_FP32 = SPARSE_ALGORITHM_NAIVE | FP32
     TORCH_FP16 = TORCH | FP16
@@ -398,6 +392,8 @@ class FeatureFlag(IntEnum):
             return 'Sparse Fused FP16'
         elif self.value == FeatureFlag.SPARSE_FUSED_FP32:
             return 'Sparse Fused FP32'
+        elif self.value == FeatureFlag.SPARSE_FUSED_FP32_EXPERIMENTAL:
+            return 'Sparse Fused FP32 Experimental'
         else:
             raise 'Pretty print not found for value {self.value}'
 
@@ -412,6 +408,8 @@ def spqr_mul(spqr_device: SPQRModule, x, y, feature_flag: FeatureFlag):
         spqr_device.buff0,
         spqr_device.row_offsets,
         spqr_device.col_vals,
+        spqr_device.row_offsets_interleaved,
+        spqr_device.col_vals_interleaved,
         spqr_device.nnz,
         x,
         y,
@@ -454,6 +452,8 @@ def spqr_mul_timer(spqr_device: SPQRModule, x, feature_flag: FeatureFlag, num_ru
             spqr_device.buff0,
             spqr_device.row_offsets,
             spqr_device.col_vals,
+            spqr_device.row_offsets_interleaved,
+            spqr_device.col_vals_interleaved,
             spqr_device.nnz,
             x,
             y,

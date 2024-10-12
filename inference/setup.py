@@ -37,6 +37,7 @@ setup(
                     # https://github.com/pytorch/pytorch/blob/main/torch/utils/cpp_extension.py#L1050C13-L1050C17
                     '-O3',
                     '-std=c++17',
+                    '-lineinfo',
                     f'-arch=sm_{ARCH}',
                     f'-gencode=arch=compute_{ARCH},code=compute_{ARCH}'
                 ]}

@@ -393,13 +393,14 @@ def densities_rows():
             per_layer_figure.update_layout(title=f'Layer {layer_id}', title_x=0.5, xaxis_title='Row index (normalized) log',
                                            yaxis_title='Row density (normalized) log')
             per_layer_figure.update_layout(margin=dict(l=0, r=0, t=30, b=0))
-            per_layer_figure.update_xaxes(type='log')
-            per_layer_figure.update_yaxes(type='log')
+            # per_layer_figure.update_xaxes(type='log')
+            # per_layer_figure.update_yaxes(type='log')
 
             tiles = Tiles(os.path.join(folder, p))
             print(f'{tensor_name} perc rows empty = {tiles.perc_row_empty * 100}%')
             y = tiles.row_nnzs.sort().values.numpy()
             y = y / tiles.n
+            print(((tiles.row_nnzs.reshape((-1, 16)).sum(axis=1) / tiles.n) * 100).int().max())
             layer_count += 1
 
             x_axis = torch.arange(tiles.m) / tiles.m

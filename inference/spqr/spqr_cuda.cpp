@@ -89,6 +89,8 @@ int spqr_matvec(
     void *row_offsets,
     // 32-bit
     void *col_vals,
+    void *row_offsets_interleaved,
+    void *col_vals_interleaved,
     int nnz,
     // 16-bit
     // Input
@@ -259,6 +261,8 @@ void spqr_mul_timer(int m, int n,
                     const torch::Tensor &row_offsets,
     // 32-bit
                     const torch::Tensor &col_val,
+                    const torch::Tensor &row_offsets_interleaved,
+                    const torch::Tensor &col_val_interleaved,
                     int nnz,
     // 16-bit
                     const torch::Tensor &X,
@@ -268,7 +272,10 @@ void spqr_mul_timer(int m, int n,
   int dev = weights.get_device();
   int err = spqr_matvec(bits, m, n, beta1, beta2, weights.data_ptr(),
                         row_offsets.data_ptr(),
-                        col_val.data_ptr(), nnz, X.data_ptr(),
+                        col_val.data_ptr(),
+                        row_offsets_interleaved.data_ptr(),
+                        col_val_interleaved.data_ptr(),
+                        nnz, X.data_ptr(),
                         nullptr, Y.data_ptr(), at::cuda::getCurrentCUDAStream(dev),
                         measurements.data_ptr(), feature_flag);
 }
@@ -284,6 +291,8 @@ void spqr_mul(int m, int n,
               const torch::Tensor &row_offsets,
     // 16-bit
               const torch::Tensor &col_val_ptr,
+              const torch::Tensor &row_offsets_interleaved,
+              const torch::Tensor &col_val_interleaved,
               int nnz,
     // 16-bit
               const torch::Tensor &X, torch::Tensor &Y,
@@ -292,7 +301,10 @@ void spqr_mul(int m, int n,
   // TODO: Propagate error one layer up.
   int err = spqr_matvec(
       bits, m, n, beta1, beta2, buff0.data_ptr(),
-      row_offsets.data_ptr(), col_val_ptr.data_ptr(), nnz,
+      row_offsets.data_ptr(), col_val_ptr.data_ptr(),
+      row_offsets_interleaved.data_ptr(),
+      col_val_interleaved.data_ptr(),
+      nnz,
       X.data_ptr(), nullptr, Y.data_ptr(),
       at::cuda::getCurrentCUDAStream(dev), nullptr, feature_flag);
 }
@@ -302,6 +314,10 @@ void tensor_compress_interleaved(
     const torch::Tensor &W_s, const torch::Tensor &W_z,
     const torch::Tensor &W_s_s, const torch::Tensor &W_s_z,
     const torch::Tensor &W_z_s, const torch::Tensor &W_z_z,
+    const torch::Tensor &row_offsets,
+    const torch::Tensor &row_offsets_output,
+    const torch::Tensor &col_vals,
+    const torch::Tensor &col_vals_interleaved,
     const torch::Tensor &out) {
   TORCH_CHECK(W.dtype() == torch::kChar, "W should be of type char")
   TORCH_CHECK(W_s.dtype() == torch::kChar, "W_s should be of type char")
@@ -312,6 +328,66 @@ void tensor_compress_interleaved(
   TORCH_CHECK(W_z_z.dtype() == torch::kHalf, "W_z_z should be of type half")
 
   char *w = static_cast<char *>(W.data_ptr());
+
+  int *r = static_cast<int *>(row_offsets.data_ptr());
+  int *r_output = static_cast<int *>(row_offsets_output.data_ptr());
+  ColVal *cv  = static_cast<ColVal *>(col_vals.data_ptr());
+  ColVal *cv_interleaved  = static_cast<ColVal *>(col_vals_interleaved.data_ptr());
+
+
+#if 0
+  r_output[0] = 0;
+  int r_id{};
+  int count{};
+  for (int i = 0; i < m; i += beta1) {
+    int its[16];
+    int local_cnt{};
+    for (int j = 0; j < 16; j++) {
+      its[j] = 0;
+    }
+    for (;;) {
+      bool found{};
+      auto old_ptr = cv_interleaved;
+      for (int j = 0; j < beta1 && i + j < m; j++) {
+        local_cnt++;
+        int offset = r[i + j] + its[j];
+        if (offset < r[i + j + 1]) {
+          found = true;
+          its[j]++;
+          cv_interleaved->_ = cv[offset]._;
+          int valid = int(cv_interleaved->members.c < n);
+        }
+        cv_interleaved++;
+        count++;
+      }
+      if (!found) {
+        cv_interleaved = old_ptr;
+        break;
+      }
+    }
+    r_id++;
+    r_output[r_id] = count;
+  }
+#else
+  *r_output = 0;
+  auto cv_interleaved_ptr = cv_interleaved;
+  int count = 0;
+  for (int i = 0; i < m; i += beta1) {
+    auto cv_i_ptr = cv_interleaved_ptr;
+    int _count = 0;
+    for (int j = 0; j < beta1; j++) {
+      for (int k = r[i + j]; k < r[i + j + 1]; k++) {
+        cv_i_ptr->_ = cv[k]._;
+        cv_i_ptr += beta1;
+      }
+      _count = std::max(_count, r[i + j + 1] - r[i + j]);
+      cv_interleaved_ptr++;
+    }
+    count += _count * beta1;
+    *(++r_output) = count;
+  }
+#endif
+
 
   using Bit_t = uint64_t;
 
