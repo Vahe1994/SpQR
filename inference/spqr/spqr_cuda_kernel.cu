@@ -456,6 +456,23 @@ PIPELINE_DEPTH> __global__ void spqr_quantized_matvec_fused_experimental(
     );
   }
 
+#if 0
+  for (int i = thread_xy; i < 64 * NUM_HALF_WARPS; i += THREAD_COUNT) {
+    reinterpret_cast<u32*>(s_half2_lut_global)[i] = (LUT[i & 0b111] | (LUT[(i >> 3) & 0b111]) << 16u);
+subtile_id & (1 == 0) && threadIdx.x + BETA1 >= blockDim.x)) {
+    auto other = __shfl_down_sync
+    auto _gt = make_half2(
+        __int2half_rd(i & 0b111),
+        __int2half_rd((i >> 3) & 0b111)
+    );
+
+    auto gt = *reinterpret_cast<u32*>(&_gt);
+    auto tst = (LUT[i & 0b111] | (LUT[(i >> 3) & 0b111]) << 16u);
+
+    // printf("%u %u\n", gt, tst);
+  }
+#endif
+
   auto s_half2_lut = s_half2_lut_global + ((thread_xy / HALF_WARP_SIZE) << 6);
   const half2 *x2 = reinterpret_cast<const half2 *>(x);
 
@@ -551,11 +568,9 @@ PIPELINE_DEPTH> __global__ void spqr_quantized_matvec_fused_experimental(
       __pipeline_commit();
     }
   }
-  __syncthreads();
 
   u32 s = s_row_offsets[0];
   u32 e = s_row_offsets[1];
-
   half *s_x = reinterpret_cast<half *>(s_x2);
 
   for (u32 i = s + thread_xy; i < e; i += BLOCK_WIDTH * BETA1) {
@@ -564,8 +579,8 @@ PIPELINE_DEPTH> __global__ void spqr_quantized_matvec_fused_experimental(
     };
     auto c = colval.members.c;
     auto v = colval.members.v;
-    acc += __half2float(v) * __half2float(s_x[c]);
 
+    acc += __half2float(v) * __half2float(s_x[c]);
     if (i && !colval._) break;
   }
 

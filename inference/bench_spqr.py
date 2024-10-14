@@ -19,8 +19,8 @@ if __name__ == '__main__':
         np.random.seed(seed)
         torch.random.manual_seed(seed)
 
-        NUM_RUNS = 50
-        WARMUP = 1
+        NUM_RUNS = 200
+        WARMUP = 40
 
         device = torch.device(f'cuda:{sys.argv[2]}')
 
@@ -110,8 +110,7 @@ if __name__ == '__main__':
 
                     if flag == inference.FeatureFlag.DENSE_ONLY_FP16:
                         dense_speed_up = speed_up
-                    elif flag == inference.FeatureFlag.SPARSE_MIXTURE_FP32 or \
-                         flag == inference.FeatureFlag.SPARSE_FUSED_FP32:
+                    elif flag == inference.FeatureFlag.SPARSE_FUSED_FP32_EXPERIMENTAL:
                         baseline_speed_up = speed_up
                         benchmark_results_ms.append(this_algorithm)
                         benchmark_speed_up.append(baseline_speed_up)

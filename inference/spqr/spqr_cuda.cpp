@@ -370,19 +370,30 @@ void tensor_compress_interleaved(
   }
 #else
   *r_output = 0;
+
   auto cv_interleaved_ptr = cv_interleaved;
+
+
+
   int count = 0;
   for (int i = 0; i < m; i += beta1) {
-    auto cv_i_ptr = cv_interleaved_ptr;
+    auto block_interleaved_ptr = cv_interleaved_ptr;
+
     int _count = 0;
     for (int j = 0; j < beta1; j++) {
-      for (int k = r[i + j]; k < r[i + j + 1]; k++) {
-        cv_i_ptr->_ = cv[k]._;
-        cv_i_ptr += beta1;
-      }
       _count = std::max(_count, r[i + j + 1] - r[i + j]);
-      cv_interleaved_ptr++;
     }
+
+    auto row_ptr = block_interleaved_ptr;
+    for (int j = 0; j < beta1; j++) {
+      auto cv_ptr = row_ptr;
+      for (int k = r[i + j]; k < r[i + j + 1]; k++) {
+        cv_ptr->_ = cv[k]._;
+        cv_ptr += beta1;
+      }
+      row_ptr++;
+    }
+    cv_interleaved_ptr += _count * beta1;
     count += _count * beta1;
     *(++r_output) = count;
   }
