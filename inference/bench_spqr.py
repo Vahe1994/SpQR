@@ -20,7 +20,7 @@ if __name__ == '__main__':
         torch.random.manual_seed(seed)
 
         NUM_RUNS = 200
-        WARMUP = 40
+        WARMUP = 20
 
         device = torch.device(f'cuda:{sys.argv[2]}')
 
