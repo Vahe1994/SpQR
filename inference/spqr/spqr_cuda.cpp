@@ -165,14 +165,28 @@ void dequantize_compressed(int m, int n, int bits, int beta1, int beta2,
   }
 
   if (nnz) {
+    int row_offsets_len = row_offsets.sizes()[0];
     int *_row_offsets = row_offsets.data_ptr<int>();
     ColVal *_col_vals = reinterpret_cast<ColVal *>(col_vals.data_ptr());
-    for (int r = 0; r < m; r++) {
-      for (int j = _row_offsets[r]; j < _row_offsets[r + 1]; j++) {
-        auto c = _col_vals[j].members.c;
-        deq_w[r * n + c] = deq_w[r * n + c] + _col_vals[j].members.v;
+
+    if (row_offsets_len == m + 1) {
+      for (int r = 0; r < m; r++) {
+        for (int j = _row_offsets[r]; j < _row_offsets[r + 1]; j++) {
+          auto c = _col_vals[j].members.c;
+          deq_w[r * n + c] = deq_w[r * n + c] + _col_vals[j].members.v;
+        }
+      }
+    } else {
+      for (int r = 0; r < row_offsets_len - 1; r++) {
+        for (int j = _row_offsets[r]; j < _row_offsets[r]; j++) { 
+          auto c = _col_vals[j].members.c;
+          int ptr = (r * 16 + j % 16) * n + c;
+          deq_w[ptr] = deq_w[ptr] + _col_vals[j].members.v;
+        }
       }
     }
+
+
   }
 }
 
@@ -463,8 +477,7 @@ void tensor_compress_interleaved(
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("spqr_mul", &spqr_mul, "SPQR gemv.");
   m.def("spqr_mul_timer", &spqr_mul_timer, "SPQR gemv.");
-  m.def("spqr_dequantize_compressed", &dequantize_compressed,
-        "SPQR dequantize compressed.");
+  m.def("spqr_dequantize_compressed", &dequantize_compressed, "SPQR dequantize compressed.");
   m.def("torch_mul_fp16", &torch_mul_device, "Torch matvec FP16 device.");
   m.def("tensor_compress", &tensor_compress, "Tensor compress.");
   m.def("tensor_compress2", &tensor_compress2, "Tensor compress.");

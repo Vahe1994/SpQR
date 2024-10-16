@@ -98,7 +98,7 @@ class SPQRUncompressed:
         elif sparse_compression_strategy == 1:
             row_offsets_output = self.row_offsets.diff().reshape((-1, 16)).max(axis=1).values * 16
             row_offsets_output = row_offsets_output.cumsum(dim=0)
-            row_offsets_output = torch.cat((torch.tensor([0]), row_offsets_output))
+            row_offsets_output = torch.cat((torch.tensor([0]), row_offsets_output)).to(dtype=torch.int32)
             col_val_count = row_offsets_output[-1]
             col_vals_output = torch.zeros(col_val_count, dtype=torch.int32)
         else:

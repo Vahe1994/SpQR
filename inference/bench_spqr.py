@@ -39,7 +39,7 @@ if __name__ == '__main__':
         folders.sort()
 
         methods = [
-            inference.FeatureFlag.SPARSE_FUSED_FP32_EXPERIMENTAL,
+            # inference.FeatureFlag.SPARSE_FUSED_FP32_EXPERIMENTAL,
             inference.FeatureFlag.SPARSE_FUSED_FP32,
         ]
 
@@ -110,7 +110,7 @@ if __name__ == '__main__':
 
                     if flag == inference.FeatureFlag.DENSE_ONLY_FP16:
                         dense_speed_up = speed_up
-                    elif flag == inference.FeatureFlag.SPARSE_FUSED_FP32_EXPERIMENTAL:
+                    elif flag == inference.FeatureFlag.SPARSE_FUSED_FP32:
                         baseline_speed_up = speed_up
                         benchmark_results_ms.append(this_algorithm)
                         benchmark_speed_up.append(baseline_speed_up)
