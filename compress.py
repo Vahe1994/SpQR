@@ -8,6 +8,7 @@ import inference
 import modelutils
 from inference import SPQRUncompressed, list_flatten
 
+sparse_compression_strategy = int(sys.argv[3])
 
 class ModelArgs:
     bits: int
@@ -58,7 +59,8 @@ def load_uncompressed_spqr_tensor(p: str, model_args: ModelArgs) -> SPQRUncompre
         row_offsets=outliers_matrix.crow_indices().int(),
         col_ids=col_ids,
         values=values,
-        in_perm=perm.long()
+        in_perm=perm.long(),
+        sparse_compression_strategy=sparse_compression_strategy
     )
 
 

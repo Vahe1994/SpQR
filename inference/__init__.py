@@ -39,6 +39,7 @@ def list_flatten(W):
 def updiv(x, y): return (x + y - 1) // y
 
 
+
 # Data structures
 class SPQRUncompressed:
     m: int
@@ -64,7 +65,7 @@ class SPQRUncompressed:
         return self.col_vals.shape[0]
 
     def __init__(self, m, n, bits, W, beta1, beta2, W_s, W_z, W_s_s, W_s_z, W_z_s, W_z_z, row_offsets, col_ids, values,
-                 in_perm=None, out_perm=None):
+                 in_perm=None, out_perm=None, sparse_compression_strategy: int = 0):
         self.m = m
         self.n = n
         self.bits = bits
@@ -82,11 +83,8 @@ class SPQRUncompressed:
         self.values = values
         self.in_perm = in_perm
         self.out_perm = out_perm
+        self.buff0 = allocate_compressed_buffers(m, n, beta1, beta2,  self.W.device)
 
-        row_offsets_output = self.row_offsets.diff().reshape((-1, 16)).max(axis=1).values * 16
-
-        row_offsets_output = row_offsets_output.cumsum(dim=0)
-        row_offsets_output = torch.cat((torch.tensor([0]), row_offsets_output))
 
         if self.values.shape[0] != 0:
             self.col_vals = values.view(torch.int16).to(torch.int64).bitwise_left_shift(16).bitwise_or(
@@ -94,17 +92,27 @@ class SPQRUncompressed:
         else:
             self.col_vals = torch.zeros(0)
 
-        col_val_count = row_offsets_output[-1]
-        self.col_vals_interleaved = torch.zeros((col_val_count), dtype=torch.int32)
+        if sparse_compression_strategy == 0:
+            row_offsets_output = self.row_offsets
+            col_vals_output = self.col_vals
+        elif sparse_compression_strategy == 1:
+            row_offsets_output = self.row_offsets.diff().reshape((-1, 16)).max(axis=1).values * 16
+            row_offsets_output = row_offsets_output.cumsum(dim=0)
+            row_offsets_output = torch.cat((torch.tensor([0]), row_offsets_output))
+            col_val_count = row_offsets_output[-1]
+            col_vals_output = torch.zeros(col_val_count, dtype=torch.int32)
+        else:
+            raise 'Invalid sparse compression strategy requested.'
 
-        self.buff0 = allocate_compressed_buffers(m, n, beta1, beta2, 'cpu')
         spqr_cuda.tensor_compress_interleaved(m, n, bits, W, beta1, beta2, W_s, W_z, W_s_s, W_s_z, W_z_s, W_z_z,
                                               self.row_offsets,
                                               row_offsets_output,
                                               self.col_vals,
-                                              self.col_vals_interleaved,
-                                              self.buff0)
-        self.row_offsets_interleaved = row_offsets_output
+                                              col_vals_output,
+                                              self.buff0,
+                                              sparse_compression_strategy)
+        self.row_offsets = row_offsets_output
+        self.col_vals = col_vals_output
 
 
 class SPQRModule(torch.nn.Module):
@@ -122,15 +130,11 @@ class SPQRModule(torch.nn.Module):
         self.in_perm = spqr_host.in_perm
         self.out_perm = spqr_host.out_perm
 
-        self.col_vals_interleaved = spqr_host.col_vals_interleaved
-        self.row_offsets_interleaved = spqr_host.row_offsets_interleaved
 
     def to_device(self, device: torch.device):
         self.buff0 = self.buff0.to(device=device)
         self.row_offsets = self.row_offsets.to(device=device)
         self.col_vals = self.col_vals.to(device=device)
-        self.row_offsets_interleaved = self.row_offsets_interleaved.to(device=device)
-        self.col_vals_interleaved = self.col_vals_interleaved.to(device=device)
 
     @property
     def nnz(self):
@@ -151,8 +155,6 @@ class SPQRModule(torch.nn.Module):
         if self.out_perm is not None:
             self.out_perm = fn(self.out_perm)
 
-        self.row_offsets_interleaved = fn(self.row_offsets_interleaved)
-        self.col_vals_interleaved = fn(self.col_vals_interleaved)
 
         return self
 
@@ -182,12 +184,10 @@ class SPQRModule(torch.nn.Module):
                 self.buff0,
                 self.row_offsets,
                 self.col_vals,
-                self.row_offsets_interleaved,
-                self.col_vals_interleaved,
                 self.nnz,
                 _x,
                 y[(i * self.m):((i + 1) * self.m)],
-                FeatureFlag.SPARSE_FUSED_FP32_EXPERIMENTAL)
+                FeatureFlag.SPARSE_FUSED_FP32_ASYNC)
 
         return y.reshape((1, inner_dim, self.m))
 
@@ -365,7 +365,6 @@ class FeatureFlag(IntEnum):
     SPARSE_CUSPARSE_FP16 = SPARSE_CUSPARSE_ALGORITHM | FP16
     SPARSE_FUSED_FP16 = SPARSE_FUSED_ALGORITHM | FP16
     SPARSE_FUSED_FP32 = SPARSE_FUSED_ALGORITHM | FP32
-    SPARSE_FUSED_FP32_EXPERIMENTAL = SPARSE_FUSED_ALGORITHM | FP32 | SPARSE_CUSPARSE_ALGORITHM
     SPARSE_FUSED_FP32_ASYNC = SPARSE_FUSED_ALGORITHM | FP32 | IS_ASYNC
     SPARSE_NAIVE_FP32 = SPARSE_ALGORITHM_NAIVE | FP32
     TORCH_FP16 = TORCH | FP16
@@ -408,8 +407,6 @@ def spqr_mul(spqr_device: SPQRModule, x, y, feature_flag: FeatureFlag):
         spqr_device.buff0,
         spqr_device.row_offsets,
         spqr_device.col_vals,
-        spqr_device.row_offsets_interleaved,
-        spqr_device.col_vals_interleaved,
         spqr_device.nnz,
         x,
         y,
@@ -452,8 +449,6 @@ def spqr_mul_timer(spqr_device: SPQRModule, x, feature_flag: FeatureFlag, num_ru
             spqr_device.buff0,
             spqr_device.row_offsets,
             spqr_device.col_vals,
-            spqr_device.row_offsets_interleaved,
-            spqr_device.col_vals_interleaved,
             spqr_device.nnz,
             x,
             y,

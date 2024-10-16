@@ -205,12 +205,10 @@ DEVICE_INLINE half get_val(u32 m) {
             dim3(__min(updiv(prob_n, 16), BLOCK_WIDTH) * 16, __min(updiv(prob_m, 16), BLOCK_HEIGHT), 1), smem_size, \
             stream>>>(prob_m, \
             prob_n, \
-            raw_data,                               \
+            raw_data_ptr,                               \
             X_ptr, \
             row_offsets_ptr, \
             col_vals_ptr, \
-            row_offsets_interleaved_ptr, \
-            col_vals_interleaved_ptr, \
             order_ptr, \
             y_ptr);
 
@@ -409,7 +407,7 @@ __device__ __forceinline__ uint32_t __ld_stream(const uint32_t *ptr) {
 }
 
 template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH, class W_t /* = uint64_t */, int
-PIPELINE_DEPTH> __global__ void spqr_quantized_matvec_fused_experimental(
+PIPELINE_DEPTH> __global__ void spqr_quantized_matvec_fused_csr_modified(
     // W and meta
     unsigned int prob_m,
     unsigned int prob_n,
@@ -417,8 +415,6 @@ PIPELINE_DEPTH> __global__ void spqr_quantized_matvec_fused_experimental(
     const W_t *__restrict__ raw_data,
     const half *__restrict__ x,
     // Outliers
-    const int *__restrict__ row_offsets,
-    const u32 *__restrict__ col_vals,
     const int *__restrict__ row_offsets_interleaved,
     const u32 *__restrict__ col_vals_interleaved,
     const short *__restrict__ order,
@@ -628,7 +624,7 @@ subtile_id & (1 == 0) && threadIdx.x + BETA1 >= blockDim.x)) {
 }
 
 template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH, class W_t /* = uint64_t */, int
-PIPELINE_DEPTH> __global__ void spqr_quantized_matvec_fused(
+PIPELINE_DEPTH> __global__ void spqr_quantized_matvec_fused_csr(
     // W and meta
     unsigned int prob_m,
     unsigned int prob_n,
@@ -638,8 +634,6 @@ PIPELINE_DEPTH> __global__ void spqr_quantized_matvec_fused(
     // Outliers
     const int *__restrict__ row_offsets,
     const u32 *__restrict__ col_vals,
-    const int *__restrict__ row_offsets_interleaved,
-    const u32 *__restrict__ col_vals_interleaved,
     const short *__restrict__ order,
     // Output
     half *__restrict__ y_fp16) {
@@ -887,13 +881,12 @@ int spqr_matvec(
     // Quantization
     int beta1,
     int beta2,
-    const void *_raw_data,
+    const void *raw_data,
     // 32-bit
+    int row_offsets_len,
     void *row_offsets,
     // 16-bit
     void *col_vals,
-    void *row_offsets_interleaved,
-    void *col_vals_interleaved,
     int nnz,
     // 16-bit
     // Input
@@ -916,43 +909,38 @@ int spqr_matvec(
 
   Features features{._ = feature_flag};
 
-  bool dense_only = (nnz == 0) | features.flags.dense_only;
-
-  const uint64_t *raw_data = (const uint64_t *) _raw_data;
+  const uint64_t *raw_data_ptr = (const uint64_t *) raw_data;
   const half *X_ptr = (const half *) X;
   const int *row_offsets_ptr = (const int *) row_offsets;
   half *y_ptr = (half *) y;
   const auto *col_vals_ptr = (const u32 *) col_vals;
   const short *order_ptr = (const short *) order;
 
-  const auto *col_vals_interleaved_ptr = (const u32 *) col_vals_interleaved;
-  const auto *row_offsets_interleaved_ptr = (const int *) row_offsets_interleaved;
-
   int ret = 0;
 
-  if (features.flags.cusparse) {
+  if (prob_m + 1 != row_offsets_len) {
     if (prob_m % 16 == 0 && prob_n % 256 == 0) {
-      CALL_FUSED(spqr_quantized_matvec_fused_experimental, 1, 16, 2);
+      CALL_FUSED(spqr_quantized_matvec_fused_csr_modified, 1, 16, 2);
     } else if (prob_m % 16 == 0 && prob_n % 128 == 0) {
-      CALL_FUSED(spqr_quantized_matvec_fused_experimental, 1, 8, 2);
+      CALL_FUSED(spqr_quantized_matvec_fused_csr_modified, 1, 8, 2);
     } else if (prob_m % 16 == 0 && prob_n % 64 == 0) {
-      CALL_FUSED(spqr_quantized_matvec_fused_experimental, 1, 4, 1);
+      CALL_FUSED(spqr_quantized_matvec_fused_csr_modified, 1, 4, 1);
     } else if (prob_m % 16 == 0 && prob_n % 32 == 0) {
-      CALL_FUSED(spqr_quantized_matvec_fused_experimental, 1, 2, 1);
+      CALL_FUSED(spqr_quantized_matvec_fused_csr_modified, 1, 2, 1);
     } else {
-      CALL_FUSED(spqr_quantized_matvec_fused_experimental, 1, 1, 1);
+      CALL_FUSED(spqr_quantized_matvec_fused_csr_modified, 1, 1, 1);
     }
   } else {
     if (prob_m % 16 == 0 && prob_n % 256 == 0) {
-      CALL_FUSED(spqr_quantized_matvec_fused, 1, 16, 2);
+      CALL_FUSED(spqr_quantized_matvec_fused_csr, 1, 16, 2);
     } else if (prob_m % 16 == 0 && prob_n % 128 == 0) {
-      CALL_FUSED(spqr_quantized_matvec_fused, 1, 8, 2);
+      CALL_FUSED(spqr_quantized_matvec_fused_csr, 1, 8, 2);
     } else if (prob_m % 16 == 0 && prob_n % 64 == 0) {
-      CALL_FUSED(spqr_quantized_matvec_fused, 1, 4, 1);
+      CALL_FUSED(spqr_quantized_matvec_fused_csr, 1, 4, 1);
     } else if (prob_m % 16 == 0 && prob_n % 32 == 0) {
-      CALL_FUSED(spqr_quantized_matvec_fused, 1, 2, 1);
+      CALL_FUSED(spqr_quantized_matvec_fused_csr, 1, 2, 1);
     } else {
-      CALL_FUSED(spqr_quantized_matvec_fused, 1, 1, 1);
+      CALL_FUSED(spqr_quantized_matvec_fused_csr, 1, 1, 1);
     }
 
   }

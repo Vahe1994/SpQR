@@ -1,10 +1,6 @@
 import sys
-from enum import IntEnum
 
-import torch
-import inference
 import numpy as np
-import pandas as pd
 import plotly.graph_objects as go
 
 from scipy.stats import gmean
@@ -15,22 +11,6 @@ def prettify_tensor_name(p: str):
     p = f'{p.upper()[0]}{p[1:]}'
     return p
 
-
-import pandas as pd
-
-import pandas as pd
-
-import pandas as pd
-
-import pandas as pd
-
-import pandas as pd
-
-import pandas as pd
-import pyperclip
-
-import pandas as pd
-import pyperclip
 
 import pandas as pd
 import pyperclip
@@ -99,7 +79,6 @@ def dump_table(cols, t):
 
     t = t.drop(['M', 'N', 'Tensor Name'], axis=1)
 
-
     print(generate_latex_booktabs_grouped_table_vertical(t))
 
     return t
@@ -114,7 +93,6 @@ if __name__ == '__main__':
     cols = results.keys()
     group_labels = cols.to_list()[5:]
     torch_key = group_labels[0]
-
 
     speedup = (results[torch_key] / results[group_labels[1]]).to_numpy()
     print(f'Geomean speed-up = {gmean(speedup)}X')
@@ -134,16 +112,9 @@ if __name__ == '__main__':
     x = np.arange(num_tests)
     num_groups = len(group_labels)
 
-
     fig = go.Figure()
 
-
-
     data = dump_table(cols, results)
-
-
-
-
 
     fig = go.Figure()
     for i, g in enumerate(group_labels):

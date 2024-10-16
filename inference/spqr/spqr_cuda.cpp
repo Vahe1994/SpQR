@@ -85,12 +85,11 @@ int spqr_matvec(
     int bits, int prob_m, int prob_n,
     // Quantization
     int beta1, int beta2,
-    const void *buff0,
+    const void *raw_data,
+    int row_offsets_len,
     void *row_offsets,
     // 32-bit
     void *col_vals,
-    void *row_offsets_interleaved,
-    void *col_vals_interleaved,
     int nnz,
     // 16-bit
     // Input
@@ -261,8 +260,6 @@ void spqr_mul_timer(int m, int n,
                     const torch::Tensor &row_offsets,
     // 32-bit
                     const torch::Tensor &col_val,
-                    const torch::Tensor &row_offsets_interleaved,
-                    const torch::Tensor &col_val_interleaved,
                     int nnz,
     // 16-bit
                     const torch::Tensor &X,
@@ -270,11 +267,14 @@ void spqr_mul_timer(int m, int n,
                     torch::Tensor &measurements,
                     uint32_t feature_flag) {
   int dev = weights.get_device();
+
+  // Choose which algorithm to use
+  int row_offsets_len = row_offsets.sizes()[0];
+
   int err = spqr_matvec(bits, m, n, beta1, beta2, weights.data_ptr(),
+                        row_offsets_len,
                         row_offsets.data_ptr(),
                         col_val.data_ptr(),
-                        row_offsets_interleaved.data_ptr(),
-                        col_val_interleaved.data_ptr(),
                         nnz, X.data_ptr(),
                         nullptr, Y.data_ptr(), at::cuda::getCurrentCUDAStream(dev),
                         measurements.data_ptr(), feature_flag);
@@ -291,23 +291,27 @@ void spqr_mul(int m, int n,
               const torch::Tensor &row_offsets,
     // 16-bit
               const torch::Tensor &col_val_ptr,
-              const torch::Tensor &row_offsets_interleaved,
-              const torch::Tensor &col_val_interleaved,
               int nnz,
     // 16-bit
               const torch::Tensor &X, torch::Tensor &Y,
               uint32_t feature_flag = 0) {
   int dev = buff0.get_device();
+  // Choose which algorithm to use
+  int row_offsets_len = row_offsets.sizes()[0];
   // TODO: Propagate error one layer up.
   int err = spqr_matvec(
       bits, m, n, beta1, beta2, buff0.data_ptr(),
+      row_offsets_len,
       row_offsets.data_ptr(), col_val_ptr.data_ptr(),
-      row_offsets_interleaved.data_ptr(),
-      col_val_interleaved.data_ptr(),
       nnz,
       X.data_ptr(), nullptr, Y.data_ptr(),
       at::cuda::getCurrentCUDAStream(dev), nullptr, feature_flag);
 }
+
+enum class SparseCompressionStrategy {
+  CSR = 0,
+  CSR_2 = 1
+};
 
 void tensor_compress_interleaved(
     int m, int n, int bits, const torch::Tensor &W, int beta1, int beta2,
@@ -318,7 +322,8 @@ void tensor_compress_interleaved(
     const torch::Tensor &row_offsets_output,
     const torch::Tensor &col_vals,
     const torch::Tensor &col_vals_interleaved,
-    const torch::Tensor &out) {
+    const torch::Tensor &out,
+    const int sparse_strategy_compression) {
   TORCH_CHECK(W.dtype() == torch::kChar, "W should be of type char")
   TORCH_CHECK(W_s.dtype() == torch::kChar, "W_s should be of type char")
   TORCH_CHECK(W_z.dtype() == torch::kChar, "W_z should be of type char")
@@ -328,76 +333,38 @@ void tensor_compress_interleaved(
   TORCH_CHECK(W_z_z.dtype() == torch::kHalf, "W_z_z should be of type half")
 
   char *w = static_cast<char *>(W.data_ptr());
-
   int *r = static_cast<int *>(row_offsets.data_ptr());
-  int *r_output = static_cast<int *>(row_offsets_output.data_ptr());
   ColVal *cv  = static_cast<ColVal *>(col_vals.data_ptr());
-  ColVal *cv_interleaved  = static_cast<ColVal *>(col_vals_interleaved.data_ptr());
 
 
-#if 0
-  r_output[0] = 0;
-  int r_id{};
-  int count{};
-  for (int i = 0; i < m; i += beta1) {
-    int its[16];
-    int local_cnt{};
-    for (int j = 0; j < 16; j++) {
-      its[j] = 0;
-    }
-    for (;;) {
-      bool found{};
-      auto old_ptr = cv_interleaved;
-      for (int j = 0; j < beta1 && i + j < m; j++) {
-        local_cnt++;
-        int offset = r[i + j] + its[j];
-        if (offset < r[i + j + 1]) {
-          found = true;
-          its[j]++;
-          cv_interleaved->_ = cv[offset]._;
-          int valid = int(cv_interleaved->members.c < n);
+  if (sparse_strategy_compression == 1) {
+    int *r_output = static_cast<int *>(row_offsets_output.data_ptr());
+    ColVal *cv_interleaved = static_cast<ColVal *>(col_vals_interleaved.data_ptr());
+    *r_output = 0;
+    auto cv_interleaved_ptr = cv_interleaved;
+    int count = 0;
+    for (int i = 0; i < m; i += beta1) {
+      auto block_interleaved_ptr = cv_interleaved_ptr;
+
+      int _count = 0;
+      for (int j = 0; j < beta1; j++) {
+        _count = std::max(_count, r[i + j + 1] - r[i + j]);
+      }
+
+      auto row_ptr = block_interleaved_ptr;
+      for (int j = 0; j < beta1; j++) {
+        auto cv_ptr = row_ptr;
+        for (int k = r[i + j]; k < r[i + j + 1]; k++) {
+          cv_ptr->_ = cv[k]._;
+          cv_ptr += beta1;
         }
-        cv_interleaved++;
-        count++;
+        row_ptr++;
       }
-      if (!found) {
-        cv_interleaved = old_ptr;
-        break;
-      }
+      cv_interleaved_ptr += _count * beta1;
+      count += _count * beta1;
+      *(++r_output) = count;
     }
-    r_id++;
-    r_output[r_id] = count;
   }
-#else
-  *r_output = 0;
-
-  auto cv_interleaved_ptr = cv_interleaved;
-
-
-
-  int count = 0;
-  for (int i = 0; i < m; i += beta1) {
-    auto block_interleaved_ptr = cv_interleaved_ptr;
-
-    int _count = 0;
-    for (int j = 0; j < beta1; j++) {
-      _count = std::max(_count, r[i + j + 1] - r[i + j]);
-    }
-
-    auto row_ptr = block_interleaved_ptr;
-    for (int j = 0; j < beta1; j++) {
-      auto cv_ptr = row_ptr;
-      for (int k = r[i + j]; k < r[i + j + 1]; k++) {
-        cv_ptr->_ = cv[k]._;
-        cv_ptr += beta1;
-      }
-      row_ptr++;
-    }
-    cv_interleaved_ptr += _count * beta1;
-    count += _count * beta1;
-    *(++r_output) = count;
-  }
-#endif
 
 
   using Bit_t = uint64_t;

@@ -24,7 +24,7 @@ int spqr_matvec(
     int bits, int prob_m, int prob_n,
     // Quantization
     int beta1, int beta2,
-    const void *buff0,
+    const void *raw_data,
     void *row_offsets,
     // 32-bit
     void *col_vals,
