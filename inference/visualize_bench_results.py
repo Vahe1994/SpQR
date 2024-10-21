@@ -112,9 +112,55 @@ if __name__ == '__main__':
     x = np.arange(num_tests)
     num_groups = len(group_labels)
 
-    fig = go.Figure()
 
     data = dump_table(cols, results)
+
+    groups = data.groupby(by=[data.columns[-1]])
+    for g in groups:
+        name = g[0][0]
+        fig = go.Figure()
+
+        g[1]['Layer'] = g[1]['Layer'].astype(int)
+        g = g[1].sort_values(by='Layer')
+
+        c = g.columns.to_list()
+
+        x_axis = g['Layer'].astype(int).to_list()
+        fig.update_layout(yaxis_range=[0, g[c[2]].to_list()[0] * 1.1])
+
+        fig.update_layout(title=f'{name}, {gpu_name}', title_x=0.5, xaxis_title='Layer', yaxis_title='Duration (ms)')
+        point_labels = g[c[2]].astype(str).to_list()
+        algo0 = g[c[2]].to_list()
+        algo1 = g[c[4]].to_list()
+        fig.add_trace(go.Scatter(x=x_axis, y=algo0, name=c[2], mode='lines+markers'))
+        fig.add_trace(go.Scatter(x=x_axis, y=algo1, name=c[4], mode='lines+markers'))
+        fig.update_layout(annotations=[
+            go.layout.Annotation(x=x,
+                                 y=y,
+                                 xref="x",
+                                 yref="y",
+                                 text=str(y),
+                                 align='center',
+                                 showarrow=False,
+                                 yanchor='bottom',
+                                 textangle=45) for x, y in zip(x_axis + x_axis, algo0 + algo1)])
+
+        fig.update_traces(textposition="bottom right")
+
+        fig.update_layout(legend=dict(
+            yanchor="bottom",
+            y=0.01,
+            xanchor="left",
+            x=0.01
+        ))
+
+        fig.update_layout(
+            margin=dict(l=20, r=20, t=40, b=20),
+        )
+
+        fig.write_image(f'report/{gpu_name}_{name}.svg')
+
+
 
     fig = go.Figure()
     for i, g in enumerate(group_labels):

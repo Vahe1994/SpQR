@@ -154,4 +154,6 @@ if __name__ == "__main__":
     with torch.no_grad():
         model = LLama(pretrained_model_path, compressed_model_path, m)
         text = 'The recipe for banana bread is '  # input()
-        s = time.time();generated_text = model.generate(text, max_new_tokens=15);e = time.time();print(f'{generated_text}');print(f'Duration = {e - s}s')
+        s = time.time();
+        generated_text = model.generate(text, max_new_tokens=15);
+        e = time.time();print(f'{generated_text}');print(f'Duration = {e - s}s')
