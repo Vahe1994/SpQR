@@ -520,20 +520,22 @@ subtile_id & (1 == 0) && threadIdx.x + BETA1 >= blockDim.x)) {
   __syncthreads();
 
 
+  constexpr int RATE = 4;
+  using Load_t = uint64_t;
   u32 i = subtile_id, pipeline_id{};
   const W_t *local_raw_data = raw_data + raw_data_offset;
 
-  for (u32 x2_id = thread_xy, it = 0; it < UPDIV(prob_n / 2, BLOCK_HEIGHT * BLOCK_WIDTH * HALF_WARP_SIZE); it++) {
+  for (u32 x2_id = thread_xy, it = 0; it < UPDIV(prob_n / RATE, BLOCK_HEIGHT * BLOCK_WIDTH * HALF_WARP_SIZE); it++) {
     u32 idx = pipeline_id * THREAD_COUNT + thread_xy;
 
     RowBits row_bits{};
     half2 ws2{};
     half2 wz2{};
 
-    bool p = idx < x2_count;
+    bool p = idx < (prob_n / (RATE));
 
     if (p) {
-      s_x2[idx] = x2[idx];
+      reinterpret_cast<Load_t*>(s_x2)[idx] = reinterpret_cast<const Load_t*>(x2)[idx];
     }
 
     auto v = *local_raw_data;
@@ -756,17 +758,20 @@ PIPELINE_DEPTH> __global__ void spqr_quantized_matvec_fused_csr(
   u32 i = subtile_id, pipeline_id{};
   const W_t *local_raw_data = raw_data + raw_data_offset;
 
-  for (u32 x2_id = thread_xy, it = 0; it < UPDIV(prob_n / 2, BLOCK_HEIGHT * BLOCK_WIDTH * HALF_WARP_SIZE); it++) {
+  constexpr int RATE = 4;
+  using Load_t = uint64_t;
+
+  for (u32 x2_id = thread_xy, it = 0; it < UPDIV(prob_n / RATE, BLOCK_HEIGHT * BLOCK_WIDTH * HALF_WARP_SIZE); it++) {
     u32 idx = pipeline_id * THREAD_COUNT + thread_xy;
 
     RowBits row_bits{};
     half2 ws2{};
     half2 wz2{};
 
-    bool p = idx < x2_count;
+    bool p = idx < (prob_n / (RATE));
 
     if (p) {
-      s_x2[idx] = x2[idx];
+      reinterpret_cast<Load_t*>(s_x2)[idx] = reinterpret_cast<const Load_t*>(x2)[idx];
     }
 
     auto v = *local_raw_data;
@@ -843,11 +848,8 @@ PIPELINE_DEPTH> __global__ void spqr_quantized_matvec_fused_csr(
   }
 
   __syncthreads();
-
-  if (!(subtile_id & 1 == 0 && threadIdx.x + BETA1 >= blockDim.x)) {
-    auto other = __shfl_down_sync(HALF_MASK, acc, BETA1);
-    acc = add_and_accum(other, acc);
-  }
+  auto other = __shfl_down_sync(HALF_MASK, acc, BETA1);
+  acc = add_and_accum(other, acc);
 
   // TODO: Double check this
   auto *s_fp32_buff = reinterpret_cast<float *>(s_half2_lut_global + threadIdx.y * MAX(WARP_SIZE - 1, 1) * BETA1);

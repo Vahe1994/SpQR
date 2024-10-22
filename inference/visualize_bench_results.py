@@ -131,19 +131,22 @@ if __name__ == '__main__':
         fig.update_layout(title=f'{name}, {gpu_name}', title_x=0.5, xaxis_title='Layer', yaxis_title='Duration (ms)')
         point_labels = g[c[2]].astype(str).to_list()
         algo0 = g[c[2]].to_list()
-        algo1 = g[c[4]].to_list()
+
         fig.add_trace(go.Scatter(x=x_axis, y=algo0, name=c[2], mode='lines+markers'))
-        fig.add_trace(go.Scatter(x=x_axis, y=algo1, name=c[4], mode='lines+markers'))
-        fig.update_layout(annotations=[
-            go.layout.Annotation(x=x,
-                                 y=y,
-                                 xref="x",
-                                 yref="y",
-                                 text=str(y),
-                                 align='center',
-                                 showarrow=False,
-                                 yanchor='bottom',
-                                 textangle=45) for x, y in zip(x_axis + x_axis, algo0 + algo1)])
+        for algorithm_name in [c[3], c[4]]:
+            runs = g[algorithm_name]
+            algo1 = runs.to_list()
+            fig.add_trace(go.Scatter(x=x_axis, y=algo1, name=algorithm_name, mode='lines+markers'))
+            fig.update_layout(annotations=[
+                go.layout.Annotation(x=x,
+                                     y=y,
+                                     xref="x",
+                                     yref="y",
+                                     text=str(y),
+                                     align='center',
+                                     showarrow=False,
+                                     yanchor='bottom',
+                                     textangle=45) for x, y in zip(x_axis + x_axis, algo0 + algo1)])
 
         fig.update_traces(textposition="bottom right")
 

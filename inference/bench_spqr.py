@@ -14,12 +14,13 @@ if __name__ == '__main__':
 
     with open(sys.argv[3], 'w') as f:
         base_path = sys.argv[1]
+        base_path_modified_csr = f'{sys.argv[1]}_modified_csr'
 
         seed = 1
         np.random.seed(seed)
         torch.random.manual_seed(seed)
 
-        NUM_RUNS = 100
+        NUM_RUNS = 2000
         WARMUP = 10
 
         device = torch.device(f'cuda:{sys.argv[2]}')
@@ -36,10 +37,10 @@ if __name__ == '__main__':
 
 
         folders = os.listdir(base_path)
+        folders_modified_csr = os.listdir(base_path_modified_csr)
         folders.sort()
 
         methods = [
-            # inference.FeatureFlag.SPARSE_FUSED_FP32_EXPERIMENTAL,
             inference.FeatureFlag.SPARSE_FUSED_FP32,
         ]
 
@@ -48,6 +49,7 @@ if __name__ == '__main__':
         for method in [inference.FeatureFlag.TORCH_FP16] + methods:
             f.write(f';{method.pretty()} (ms)')
 
+        f.write(f';{method.pretty()} Modified CSR (ms)')
 
         f.write('\n')
 
@@ -56,12 +58,15 @@ if __name__ == '__main__':
 
         for layer_id in folders:
             folder = os.path.join(base_path, layer_id)
+            folders_modified_csr = os.path.join(base_path_modified_csr, layer_id)
             if not os.path.isdir(folder):
                 continue
-            for p in os.listdir(folder):
+            for p, p_modified_csr in zip(os.listdir(folder), os.listdir(folders_modified_csr)):
                 tensor_path = os.path.join(folder, p)
+                tensor_path_modified_csr = os.path.join(folder, p_modified_csr)
 
-                spqr_module: inference.SPQRModule                                = inference.load_compressed_tensor(tensor_path)
+                spqr_module: inference.SPQRModule = inference.load_compressed_tensor(tensor_path)
+                spqr_module_modified_csr: inference.SPQRModule = inference.load_compressed_tensor(tensor_path_modified_csr)
 
                 m = spqr_module.m
                 n = spqr_module.n
@@ -71,7 +76,9 @@ if __name__ == '__main__':
                 deq_w_dense = inference.spqr_dequantize_dense_compressed(spqr_module)
 
                 spqr_module.to_device(device)
+                spqr_module_modified_csr.to_device(device)
                 spqr_module_device = spqr_module
+                spqr_module_device_modified_csr = spqr_module_modified_csr
 
                 x_fp32 = test_util.generate_x_fp32(n)
                 x_fp16_device = x_fp32.cuda(device=device).half()
@@ -94,26 +101,31 @@ if __name__ == '__main__':
 
                 for flag in methods:
                     print(f'Running {repr(flag)} on {layer_id}.{p}')
-                    
 
                     y, spqr_runs = inference.spqr_mul_timer(spqr_module_device, x_fp16_device, flag, NUM_RUNS)
-
                     spqr_runs = spqr_runs[WARMUP:]
                     this_algorithm = spqr_runs.min()
 
+                    torch.cuda.empty_cache()
+                    time.sleep(1)
+
+                    y, spqr_runs_modified_csr = inference.spqr_mul_timer(spqr_module_device, x_fp16_device, flag, NUM_RUNS)
+                    spqr_runs_modified_csr = spqr_runs_modified_csr[WARMUP:]
+                    this_algorithm_modified_csr = spqr_runs_modified_csr.min()
 
                     speed_up = torch_run / this_algorithm
+                    speed_up_modified_csr = torch_run / this_algorithm_modified_csr
+
                     print(
                         f'\t{repr(flag)} running {this_algorithm} ms {speed_up :.2f}X speed-up vs torch {torch_run} ms')
+                    print(
+                        f'\t{repr(flag)} modified csr running {this_algorithm_modified_csr} ms {speed_up_modified_csr :.2f}X speed-up vs torch {torch_run} ms')
 
-                    f.write(f';{this_algorithm:.4f}')
+                    f.write(f';{this_algorithm:.4f};{this_algorithm_modified_csr:.4f}')
 
-                    if flag == inference.FeatureFlag.DENSE_ONLY_FP16:
-                        dense_speed_up = speed_up
-                    elif flag == inference.FeatureFlag.SPARSE_FUSED_FP32:
-                        baseline_speed_up = speed_up
-                        benchmark_results_ms.append(this_algorithm)
-                        benchmark_speed_up.append(baseline_speed_up)
+                    baseline_speed_up = max(speed_up, speed_up_modified_csr)
+                    benchmark_results_ms.append(min(this_algorithm, this_algorithm_modified_csr))
+                    benchmark_speed_up.append(baseline_speed_up)
 
                     if flag == inference.FeatureFlag.DENSE_ONLY_FP16 or flag == inference.FeatureFlag.DENSE_ONLY_FP32:
                         assert (torch.allclose(y, y_true_dense, atol=1e-1, rtol=1e-1))
