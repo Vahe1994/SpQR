@@ -164,6 +164,7 @@ void dequantize_compressed(int m, int n, int bits, int beta1, int beta2,
     }
   }
 
+
   if (nnz) {
     int row_offsets_len = row_offsets.sizes()[0];
     int *_row_offsets = row_offsets.data_ptr<int>();
@@ -178,15 +179,13 @@ void dequantize_compressed(int m, int n, int bits, int beta1, int beta2,
       }
     } else {
       for (int r = 0; r < row_offsets_len - 1; r++) {
-        for (int j = _row_offsets[r]; j < _row_offsets[r]; j++) { 
+        for (int j = _row_offsets[r]; j < _row_offsets[r + 1]; j++) {
           auto c = _col_vals[j].members.c;
           int ptr = (r * 16 + j % 16) * n + c;
           deq_w[ptr] = deq_w[ptr] + _col_vals[j].members.v;
         }
       }
     }
-
-
   }
 }
 

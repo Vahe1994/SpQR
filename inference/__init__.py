@@ -187,7 +187,7 @@ class SPQRModule(torch.nn.Module):
                 self.nnz,
                 _x,
                 y[(i * self.m):((i + 1) * self.m)],
-                FeatureFlag.SPARSE_FUSED_FP32_ASYNC)
+                FeatureFlag.SPARSE_FUSED_FP32)
 
         return y.reshape((1, inner_dim, self.m))
 

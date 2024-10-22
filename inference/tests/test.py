@@ -29,7 +29,7 @@ class TestSparseFp16Easy(unittest.TestCase):
                         print(f'Running m = {m} n = {n}')
                         # Generate test case
                         x_fp32 = test_util.generate_x_fp32(n) * 0 + 1
-                        spqr_module, spqr_module_device = test_util.create_ones(m, n, device)
+                        spqr_module, spqr_module_device = test_util.create_ones(m, n, device, compression_strategy=0)
 
                         x_fp16_device = x_fp32.cuda(device=device).half()
 
@@ -85,30 +85,31 @@ class TestSparseFp16Fused(unittest.TestCase):
         for m in [16, 32, 64, 128, 256, 512, 4096, 11008]:
             for n in [16, 32, 64, 128, 256, 512, 4096, 11008]:
                 for density in [0, 0.01, 0.05, 0.5, 0.9]:
-                    for flag in [
-                        inference.FeatureFlag.SPARSE_FUSED_FP32,
-                    ]:
-                        # Generate test case
-                        x_fp32 = test_util.generate_x_fp32(n)
-                        # x_fp32 = inference.generate_x_fp32(n) * 0 + 1
-                        spqr_module, spqr_module_device = test_util.create_random(m, n, density, device)
-                        # spqr_module, spqr_module_device = inference.create_ones_random_2nd_order(m, n, density, device)
-                        # spqr_module, spqr_module_device = inference.create_ones(m, n, device)
+                    for compression_strategy in [0, 1]:
+                        for flag in [
+                            inference.FeatureFlag.SPARSE_FUSED_FP32,
+                        ]:
+                            # Generate test case
+                            x_fp32 = test_util.generate_x_fp32(n)
+                            # x_fp32 = inference.generate_x_fp32(n) * 0 + 1
+                            spqr_module, spqr_module_device = test_util.create_random(m, n, density, device, sparse_compression_strategy=compression_strategy)
+                            # spqr_module, spqr_module_device = inference.create_ones_random_2nd_order(m, n, density, device)
+                            # spqr_module, spqr_module_device = inference.create_ones(m, n, device)
 
-                        x_fp16_device = x_fp32.cuda(device=device).half()
+                            x_fp16_device = x_fp32.cuda(device=device).half()
 
-                        deq_w = inference.spqr_dequantize_compressed(spqr_module).to(device)
-                        deq_w_dense = inference.spqr_dequantize_dense_compressed(spqr_module).to(device)
+                            deq_w = inference.spqr_dequantize_compressed(spqr_module).to(device)
+                            deq_w_dense = inference.spqr_dequantize_dense_compressed(spqr_module).to(device)
 
-                        y_true, _ = inference.torch_mul_timer(deq_w, x_fp16_device, 1)
-                        y_true_dense, _ = inference.torch_mul_timer(deq_w, x_fp16_device, 1)
-                        y = torch.zeros(m, dtype=torch.half, device=device)
+                            y_true, _ = inference.torch_mul_timer(deq_w, x_fp16_device, 1)
+                            y_true_dense, _ = inference.torch_mul_timer(deq_w, x_fp16_device, 1)
+                            y = torch.zeros(m, dtype=torch.half, device=device)
 
-                        inference.spqr_mul(spqr_module_device, x_fp16_device, y, flag)
+                            inference.spqr_mul(spqr_module_device, x_fp16_device, y, flag)
 
-                        passed = torch.equal(y, y_true)
+                            passed = torch.equal(y, y_true)
 
-                        self.assertTrue(passed, msg=f'Failed for m = {m} n = {n} density = {density}\ny={y}\ny_true={y_true}')
+                            self.assertTrue(passed, msg=f'Failed for m = {m} n = {n} density = {density} compression_strategy = {compression_strategy}\ny={y}\ny_true={y_true}')
 
 
 if __name__ == '__main__':

@@ -34,8 +34,8 @@ template<class Acc_t> constexpr __device__ __host__ bool is_fp32() {
   return false;
 }
 
-DEVICE_INLINE uint64_t recover_second_order(uint64_t val) {
-  constexpr unsigned int FULL_MASK = 0xffffffffu;
+DEVICE_INLINE uint64_t recover_second_order_sync(uint64_t val) {
+  unsigned int FULL_MASK = 0xffffffffu;
   val |= __shfl_xor_sync(FULL_MASK, val, 2);
   val |= __shfl_xor_sync(FULL_MASK, val, 4);
   val |= __shfl_xor_sync(FULL_MASK, val, 8);
@@ -324,7 +324,7 @@ PIPELINE_DEPTH> __global__ void spqr_quantized_matvec_dense(
     };
     uint64_t s_order_partial =
         (row_bits.mask >> NUM_USEFUL_BITS) << (SECOND_ORDER_FRAGMENT_SIZE_BITS * (row_pos / OFFSET));
-    SecondOrder _s{.v = recover_second_order(s_order_partial)};
+    SecondOrder _s{.v = recover_second_order_sync(s_order_partial)};
 
 
     half2 first_order_quantized = s_half2_lut[row_bits.get_w2(0)];
@@ -489,15 +489,8 @@ subtile_id & (1 == 0) && threadIdx.x + BETA1 >= blockDim.x)) {
   for (u32 i = thread_xy; i < 2; i += THREAD_COUNT) {
     __pipeline_memcpy_async(s_row_offsets + i, row_offsets_interleaved + blockIdx.x + i, sizeof(u32));
   }
+  __pipeline_commit();
 
-  u32 pipeline_id, pipeline_stack_ptr{};
-  for (pipeline_id = 0; pipeline_id < PIPELINE_DEPTH && (pipeline_id * THREAD_COUNT + thread_xy) < x2_count; pipeline_id
-      ++) {
-    u32 idx = pipeline_id * THREAD_COUNT + thread_xy;
-    __pipeline_memcpy_async(s_x2 + idx, x2 + idx, sizeof(half2));
-    pipeline_stack_ptr++;
-    __pipeline_commit();
-  }
 
   // Number of SPQR tiles that this CUDA block will process.
   u32 num_tiles_per_tile_row = UPDIV(prob_n, BETA2);
@@ -513,7 +506,6 @@ subtile_id & (1 == 0) && threadIdx.x + BETA1 >= blockDim.x)) {
   const u32 subtile_id = threadIdx.x / BETA1;
 
   auto raw_data_offset = tile_row_id * prob_n + threadIdx.x;
-  const W_t *local_raw_data = raw_data + raw_data_offset;
 
   constexpr u32 FULL_MASK = 0xffffffff;
   constexpr u32 HALF_MASK = FULL_MASK >> 16u;
@@ -523,29 +515,42 @@ subtile_id & (1 == 0) && threadIdx.x + BETA1 >= blockDim.x)) {
 
   float acc{};
 
-  for (u32 i = subtile_id; i < num_tiles_per_tile_row;
-       i += NUM_SPQR_TILES_PER_ITERATION, local_raw_data += NUM_SPQR_TILES_PER_ITERATION * BETA1) {
-    auto v = __ldg(local_raw_data);
-    RowBits row_bits{
-        .mask = v
-    };
+  __pipeline_wait_prior(0);
+
+  __syncthreads();
+
+
+  u32 i = subtile_id, pipeline_id{};
+  const W_t *local_raw_data = raw_data + raw_data_offset;
+
+  for (u32 x2_id = thread_xy, it = 0; it < UPDIV(prob_n / 2, BLOCK_HEIGHT * BLOCK_WIDTH * HALF_WARP_SIZE); it++) {
+    u32 idx = pipeline_id * THREAD_COUNT + thread_xy;
+
+    RowBits row_bits{};
+    half2 ws2{};
+    half2 wz2{};
+
+    bool p = idx < x2_count;
+
+    if (p) {
+      s_x2[idx] = x2[idx];
+    }
+
+    auto v = *local_raw_data;
+    row_bits.mask = v;
     uint64_t s_order_partial =
         (row_bits.mask >> NUM_USEFUL_BITS) << (SECOND_ORDER_FRAGMENT_SIZE_BITS * (row_pos / OFFSET));
-    SecondOrder _s{.v = recover_second_order(s_order_partial)};
+    SecondOrder _s{.v = recover_second_order_sync(s_order_partial)};
     half2 first_order_quantized = s_half2_lut[row_bits.get_w2(0)];
     half2 first_order_dequantized = dequantize2(first_order_quantized, _s.get_sws2(), _s.get_swz2());
 
-    half2 ws2 = __half2half2(first_order_dequantized.x);
-    half2 wz2 = __half2half2(first_order_dequantized.y);
+    ws2 = __half2half2(first_order_dequantized.x);
+    wz2 = __half2half2(first_order_dequantized.y);
 
     const auto s_x2_ = s_x2 + i * (BETA2 >> 1);
 
-    if (pipeline_stack_ptr > 0) {
-      __pipeline_wait_prior(pipeline_stack_ptr - 1);
-      pipeline_stack_ptr--;
-    }
-
     __syncthreads();
+
 #pragma unroll
     for (u32 j = 0; j < BETA2 / 2; j++) {
       half2 w_q = s_half2_lut[row_bits.get_w2(j + 1)];
@@ -555,39 +560,67 @@ subtile_id & (1 == 0) && threadIdx.x + BETA1 >= blockDim.x)) {
       acc = fmaf(x_fp32.x, w_fp32.x, acc);
       acc = fmaf(x_fp32.y, w_fp32.y, acc);
     }
+    i += NUM_SPQR_TILES_PER_ITERATION;
+    local_raw_data += NUM_SPQR_TILES_PER_ITERATION * BETA1;
+    x2_id += NUM_SPQR_TILES_PER_ITERATION * BETA1;
+    pipeline_id++;
+  }
 
-    unsigned idx = pipeline_id * THREAD_COUNT + thread_xy;
-    if (idx < x2_count) {
-      __pipeline_memcpy_async(s_x2 + idx, x2 + idx, sizeof(half2));
-      pipeline_id++;
-      pipeline_stack_ptr++;
-      __pipeline_commit();
+  for (; i < num_tiles_per_tile_row; i += NUM_SPQR_TILES_PER_ITERATION, local_raw_data +=
+                                                                            NUM_SPQR_TILES_PER_ITERATION * BETA1) {
+    auto v = *local_raw_data;
+    RowBits row_bits{
+        .mask = v
+    };
+    uint64_t s_order_partial =
+        (row_bits.mask >> NUM_USEFUL_BITS) << (SECOND_ORDER_FRAGMENT_SIZE_BITS * (row_pos / OFFSET));
+    SecondOrder _s{.v = recover_second_order_sync(s_order_partial)};
+    half2 first_order_quantized = s_half2_lut[row_bits.get_w2(0)];
+    half2 first_order_dequantized = dequantize2(first_order_quantized, _s.get_sws2(), _s.get_swz2());
+
+    half2 ws2 = __half2half2(first_order_dequantized.x);
+    half2 wz2 = __half2half2(first_order_dequantized.y);
+
+    const auto s_x2_ = s_x2 + i * (BETA2 >> 1);
+
+#pragma unroll
+    for (u32 j = 0; j < BETA2 / 2; j++) {
+      half2 w_q = s_half2_lut[row_bits.get_w2(j + 1)];
+      half2 w = dequantize2(w_q, ws2, wz2);
+      float2 x_fp32 = __half22float2(s_x2_[j]);
+      float2 w_fp32 = __half22float2(w);
+      acc = fmaf(x_fp32.x, w_fp32.x, acc);
+      acc = fmaf(x_fp32.y, w_fp32.y, acc);
     }
   }
 
   u32 s = s_row_offsets[0];
   u32 e = s_row_offsets[1];
-  half *s_x = reinterpret_cast<half *>(s_x2);
 
+  if (e - s) {
+    half *s_x = reinterpret_cast<half *>(s_x2);
 
-  if (s + thread_xy < e) {
-    ColVal colval{ ._ = col_vals_interleaved[s + thread_xy] };
-    auto c = colval.members.c;
-    auto v = colval.members.v;
-    acc += __half2float(v) * __half2float(s_x[c]);
+    if (s + thread_xy < e) {
+      ColVal colval{._ = col_vals_interleaved[s + thread_xy]};
+      auto c = colval.members.c;
+      auto v = colval.members.v;
+      acc += __half2float(v) * __half2float(s_x[c]);
+    }
+
+    for (u32 i = s + thread_xy + BLOCK_WIDTH * BETA1; i < e; i += BLOCK_WIDTH * BETA1) {
+      ColVal colval{
+          ._ = col_vals_interleaved[i]
+      };
+
+      if (!colval._) break;
+
+      auto c = colval.members.c;
+      auto v = colval.members.v;
+      acc += __half2float(v) * __half2float(s_x[c]);
+    }
   }
 
-  for (u32 i = s + thread_xy + BLOCK_WIDTH * BETA1; i < e; i += BLOCK_WIDTH * BETA1) {
-    ColVal colval{
-        ._ = col_vals_interleaved[i]
-    };
-
-    if (!colval._) break;
-
-    auto c = colval.members.c;
-    auto v = colval.members.v;
-    acc += __half2float(v) * __half2float(s_x[c]);
-  }
+  __syncthreads();
 
   if (!(subtile_id & 1 == 0 && threadIdx.x + BETA1 >= blockDim.x)) {
     auto other = __shfl_down_sync(HALF_MASK, acc, BETA1);
@@ -689,15 +722,8 @@ PIPELINE_DEPTH> __global__ void spqr_quantized_matvec_fused_csr(
   for (u32 i = thread_xy; i <= OUTPUT_SIZE; i += THREAD_COUNT) {
     __pipeline_memcpy_async(s_row_offsets + i, row_offsets + blockIdx.x * BLOCK_HEIGHT * BETA1 + i, sizeof(u32));
   }
+  __pipeline_commit();
 
-  u32 pipeline_id, pipeline_stack_ptr{};
-  for (pipeline_id = 0; pipeline_id < PIPELINE_DEPTH && (pipeline_id * THREAD_COUNT + thread_xy) < x2_count; pipeline_id
-      ++) {
-    u32 idx = pipeline_id * THREAD_COUNT + thread_xy;
-    __pipeline_memcpy_async(s_x2 + idx, x2 + idx, sizeof(half2));
-    pipeline_stack_ptr++;
-    __pipeline_commit();
-  }
 
   // Number of SPQR tiles that this CUDA block will process.
   u32 num_tiles_per_tile_row = UPDIV(prob_n, BETA2);
@@ -713,7 +739,6 @@ PIPELINE_DEPTH> __global__ void spqr_quantized_matvec_fused_csr(
   const u32 subtile_id = threadIdx.x / BETA1;
 
   auto raw_data_offset = tile_row_id * prob_n + threadIdx.x;
-  const W_t *local_raw_data = raw_data + raw_data_offset;
 
   constexpr u32 FULL_MASK = 0xffffffff;
   constexpr u32 HALF_MASK = FULL_MASK >> 16u;
@@ -723,29 +748,42 @@ PIPELINE_DEPTH> __global__ void spqr_quantized_matvec_fused_csr(
 
   float acc{};
 
-  for (u32 i = subtile_id; i < num_tiles_per_tile_row;
-       i += NUM_SPQR_TILES_PER_ITERATION, local_raw_data += NUM_SPQR_TILES_PER_ITERATION * BETA1) {
-    auto v = __ldg(local_raw_data);
-    RowBits row_bits{
-        .mask = v
-    };
+  __pipeline_wait_prior(0);
+
+  __syncthreads();
+
+
+  u32 i = subtile_id, pipeline_id{};
+  const W_t *local_raw_data = raw_data + raw_data_offset;
+
+  for (u32 x2_id = thread_xy, it = 0; it < UPDIV(prob_n / 2, BLOCK_HEIGHT * BLOCK_WIDTH * HALF_WARP_SIZE); it++) {
+    u32 idx = pipeline_id * THREAD_COUNT + thread_xy;
+
+    RowBits row_bits{};
+    half2 ws2{};
+    half2 wz2{};
+
+    bool p = idx < x2_count;
+
+    if (p) {
+      s_x2[idx] = x2[idx];
+    }
+
+    auto v = *local_raw_data;
+    row_bits.mask = v;
     uint64_t s_order_partial =
         (row_bits.mask >> NUM_USEFUL_BITS) << (SECOND_ORDER_FRAGMENT_SIZE_BITS * (row_pos / OFFSET));
-    SecondOrder _s{.v = recover_second_order(s_order_partial)};
+    SecondOrder _s{.v = recover_second_order_sync(s_order_partial)};
     half2 first_order_quantized = s_half2_lut[row_bits.get_w2(0)];
     half2 first_order_dequantized = dequantize2(first_order_quantized, _s.get_sws2(), _s.get_swz2());
 
-    half2 ws2 = __half2half2(first_order_dequantized.x);
-    half2 wz2 = __half2half2(first_order_dequantized.y);
+    ws2 = __half2half2(first_order_dequantized.x);
+    wz2 = __half2half2(first_order_dequantized.y);
 
     const auto s_x2_ = s_x2 + i * (BETA2 >> 1);
 
-    if (pipeline_stack_ptr > 0) {
-      __pipeline_wait_prior(pipeline_stack_ptr - 1);
-      pipeline_stack_ptr--;
-    }
-
     __syncthreads();
+
 #pragma unroll
     for (u32 j = 0; j < BETA2 / 2; j++) {
       half2 w_q = s_half2_lut[row_bits.get_w2(j + 1)];
@@ -755,28 +793,40 @@ PIPELINE_DEPTH> __global__ void spqr_quantized_matvec_fused_csr(
       acc = fmaf(x_fp32.x, w_fp32.x, acc);
       acc = fmaf(x_fp32.y, w_fp32.y, acc);
     }
+    i += NUM_SPQR_TILES_PER_ITERATION;
+    local_raw_data += NUM_SPQR_TILES_PER_ITERATION * BETA1;
+    x2_id += NUM_SPQR_TILES_PER_ITERATION * BETA1;
+    pipeline_id++;
+  }
 
-    unsigned idx = pipeline_id * THREAD_COUNT + thread_xy;
-    if (idx < x2_count) {
-      __pipeline_memcpy_async(s_x2 + idx, x2 + idx, sizeof(half2));
-      pipeline_id++;
-      pipeline_stack_ptr++;
-      __pipeline_commit();
+  for (; i < num_tiles_per_tile_row; i += NUM_SPQR_TILES_PER_ITERATION, local_raw_data +=
+                                                                            NUM_SPQR_TILES_PER_ITERATION * BETA1) {
+    auto v = *local_raw_data;
+    RowBits row_bits{
+        .mask = v
+    };
+    uint64_t s_order_partial =
+        (row_bits.mask >> NUM_USEFUL_BITS) << (SECOND_ORDER_FRAGMENT_SIZE_BITS * (row_pos / OFFSET));
+    SecondOrder _s{.v = recover_second_order_sync(s_order_partial)};
+    half2 first_order_quantized = s_half2_lut[row_bits.get_w2(0)];
+    half2 first_order_dequantized = dequantize2(first_order_quantized, _s.get_sws2(), _s.get_swz2());
+
+    half2 ws2 = __half2half2(first_order_dequantized.x);
+    half2 wz2 = __half2half2(first_order_dequantized.y);
+
+    const auto s_x2_ = s_x2 + i * (BETA2 >> 1);
+
+#pragma unroll
+    for (u32 j = 0; j < BETA2 / 2; j++) {
+      half2 w_q = s_half2_lut[row_bits.get_w2(j + 1)];
+      half2 w = dequantize2(w_q, ws2, wz2);
+      float2 x_fp32 = __half22float2(s_x2_[j]);
+      float2 w_fp32 = __half22float2(w);
+      acc = fmaf(x_fp32.x, w_fp32.x, acc);
+      acc = fmaf(x_fp32.y, w_fp32.y, acc);
     }
   }
-  __syncthreads();
 
-  auto s_y_scalar = scalarize<float>(s_y + threadIdx.y * BETA1);
-  auto s_y_vectorized = vectorize(s_y_scalar);
-
-#if 0
-  u32 s = s_row_offsets[0];
-  u32 e = s_row_offsets[BETA1];
-
-  half *s_x = reinterpret_cast<half *>(s_x2);
-
-  for (u32 i = s + threadIdx.x; i < e; i += BLOCK_WIDTH * BETA1) {
-#else
   u32 t = threadIdx.y * BETA1 + row_pos;
   u32 s = s_row_offsets[t];
   u32 e = s_row_offsets[t + 1];
@@ -784,8 +834,6 @@ PIPELINE_DEPTH> __global__ void spqr_quantized_matvec_fused_csr(
   half *s_x = reinterpret_cast<half *>(s_x2);
 
   for (u32 i = s + subtile_id; i < e; i += BLOCK_WIDTH) {
-#endif
-
     ColVal colval{
         ._ = __ldg(col_vals + i)
     };
@@ -922,7 +970,7 @@ int spqr_matvec(
     if (prob_m % 16 == 0 && prob_n % 256 == 0) {
       CALL_FUSED(spqr_quantized_matvec_fused_csr_modified, 1, 16, 1);
     } else if (prob_m % 16 == 0 && prob_n % 128 == 0) {
-      CALL_FUSED(spqr_quantized_matvec_fused_csr_modified, 1, 8, 2);
+      CALL_FUSED(spqr_quantized_matvec_fused_csr_modified, 1, 8, 1);
     } else if (prob_m % 16 == 0 && prob_n % 64 == 0) {
       CALL_FUSED(spqr_quantized_matvec_fused_csr_modified, 1, 4, 1);
     } else if (prob_m % 16 == 0 && prob_n % 32 == 0) {
@@ -932,7 +980,7 @@ int spqr_matvec(
     }
   } else {
     if (prob_m % 16 == 0 && prob_n % 512 == 0) {
-      CALL_FUSED(spqr_quantized_matvec_fused_csr, 1, 32, 1);
+      CALL_FUSED(spqr_quantized_matvec_fused_csr, 1, 16, 1);
     } else if (prob_m % 16 == 0 && prob_n % 256 == 0) {
       CALL_FUSED(spqr_quantized_matvec_fused_csr, 1, 16, 1);
     } else if (prob_m % 16 == 0 && prob_n % 128 == 0) {

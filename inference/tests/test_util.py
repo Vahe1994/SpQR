@@ -51,7 +51,8 @@ def generate_x_int32(n):
     return x_int32
 
 
-def create_random(m, n, density, device: torch.device, bits=3, beta1=16, beta2=16) -> Tuple[SPQRModule, SPQRModule]:
+def create_random(m, n, density, device: torch.device, bits=3, beta1=16, beta2=16,
+                  sparse_compression_strategy=0) -> Tuple[SPQRModule, SPQRModule]:
     W_quantized = generate_3bit(m * n)
     W = W_quantized.char()
 
@@ -90,7 +91,8 @@ def create_random(m, n, density, device: torch.device, bits=3, beta1=16, beta2=1
         W_z_z=W_z_z,
         row_offsets=row_offsets,
         col_ids=col_ids,
-        values=values)
+        values=values,
+        sparse_compression_strategy=sparse_compression_strategy)
 
     spqr_module = SPQRModule(spqr_host)
     spqr_module_device = SPQRModule(spqr_host)
@@ -355,7 +357,7 @@ def random_csr_host(m, n, density):
         r._nnz()
 
 
-def create_ones(m, n, device: torch.device, bits=3, beta1=16, beta2=16) -> Tuple[SPQRModule, SPQRModule]:
+def create_ones(m, n, device: torch.device, bits=3, beta1=16, beta2=16, compression_strategy=0) -> Tuple[SPQRModule, SPQRModule]:
     W = torch.ones(m * n).char()
 
     num_second_order_groups = updiv(m, beta1) * updiv(n, beta2)
@@ -387,7 +389,8 @@ def create_ones(m, n, device: torch.device, bits=3, beta1=16, beta2=16) -> Tuple
         W_z_z=W_z_z,
         row_offsets=row_offsets,
         col_ids=col_ids,
-        values=values)
+        values=values,
+        sparse_compression_strategy=compression_strategy)
 
     spqr_module = SPQRModule(spqr_host)
     spqr_module_device = SPQRModule(spqr_host)

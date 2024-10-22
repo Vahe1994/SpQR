@@ -19,8 +19,8 @@ if __name__ == '__main__':
         np.random.seed(seed)
         torch.random.manual_seed(seed)
 
-        NUM_RUNS = 200
-        WARMUP = 20
+        NUM_RUNS = 100
+        WARMUP = 10
 
         device = torch.device(f'cuda:{sys.argv[2]}')
 
@@ -61,7 +61,7 @@ if __name__ == '__main__':
             for p in os.listdir(folder):
                 tensor_path = os.path.join(folder, p)
 
-                spqr_module: inference.SPQRModule = inference.load_compressed_tensor(tensor_path)
+                spqr_module: inference.SPQRModule                                = inference.load_compressed_tensor(tensor_path)
 
                 m = spqr_module.m
                 n = spqr_module.n
@@ -104,7 +104,7 @@ if __name__ == '__main__':
 
                     speed_up = torch_run / this_algorithm
                     print(
-                        f'\t{repr(flag)} running {this_algorithm} ms {speed_up :.2f}X speed-up')
+                        f'\t{repr(flag)} running {this_algorithm} ms {speed_up :.2f}X speed-up vs torch {torch_run} ms')
 
                     f.write(f';{this_algorithm:.4f}')
 
