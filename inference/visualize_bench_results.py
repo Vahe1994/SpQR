@@ -112,7 +112,6 @@ if __name__ == '__main__':
     x = np.arange(num_tests)
     num_groups = len(group_labels)
 
-
     data = dump_table(cols, results)
 
     groups = data.groupby(by=[data.columns[-1]])
@@ -133,26 +132,50 @@ if __name__ == '__main__':
         algo0 = g[c[2]].to_list()
 
         fig.add_trace(go.Scatter(x=x_axis, y=algo0, name=c[2], mode='lines+markers'))
+        algos = []
         for algorithm_name in [c[3], c[4]]:
             runs = g[algorithm_name]
             algo1 = runs.to_list()
+            algos += [algo1]
             fig.add_trace(go.Scatter(x=x_axis, y=algo1, name=algorithm_name, mode='lines+markers'))
-            fig.update_layout(annotations=[
-                go.layout.Annotation(x=x,
-                                     y=y,
-                                     xref="x",
-                                     yref="y",
-                                     text=str(y),
-                                     align='center',
-                                     showarrow=False,
-                                     yanchor='bottom',
-                                     textangle=45) for x, y in zip(x_axis + x_axis, algo0 + algo1)])
+
+        fig.update_layout(annotations=[go.layout.Annotation(x=x,
+                                                            y=y,
+                                                            xref="x",
+                                                            yref="y",
+                                                            text=str(y),
+                                                            align='center',
+                                                            showarrow=False,
+                                                            yanchor='bottom',
+                                                            font=dict(color="blue"),
+                                                            textangle=45) for x, y in zip(x_axis, algo0)] +
+                                      [go.layout.Annotation(x=x,
+                                                            y=y,
+                                                            xref="x",
+                                                            yref="y",
+                                                            text=str(y),
+                                                            align='center',
+                                                            showarrow=False,
+                                                            yanchor='bottom',
+                                                            font=dict(color="red"),
+                                                            textangle=45) for x, y in zip(x_axis, algos[0])] +
+                                      [go.layout.Annotation(x=x,
+                                                            y=y,
+                                                            xref="x",
+                                                            yref="y",
+                                                            text=str(y),
+                                                            align='center',
+                                                            showarrow=False,
+                                                            yanchor='top',
+                                                            font=dict(color="green"),
+                                                            textangle=45) for x, y in zip(x_axis, algos[1])]
+                          )
 
         fig.update_traces(textposition="bottom right")
 
         fig.update_layout(legend=dict(
             yanchor="bottom",
-            y=0.01,
+            y=0.5,
             xanchor="left",
             x=0.01
         ))
@@ -162,8 +185,6 @@ if __name__ == '__main__':
         )
 
         fig.write_image(f'report/{gpu_name}_{name}.svg')
-
-
 
     fig = go.Figure()
     for i, g in enumerate(group_labels):

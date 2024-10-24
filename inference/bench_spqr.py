@@ -87,9 +87,6 @@ if __name__ == '__main__':
 
                 deq_w_device_dense = deq_w_dense.to(device).half().flatten()
 
-                y_true, _ = inference.torch_mul_timer(deq_w_device, x_fp16_device, 1)
-                y_true_dense, _ = inference.torch_mul_timer(deq_w_device_dense, x_fp16_device, 1)
-
                 dense_speed_up = 0
                 baseline_speed_up = 0
 
