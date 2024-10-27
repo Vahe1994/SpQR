@@ -303,6 +303,19 @@ class Tiles:
         self.tile_row_count = self.tile_row_offsets.shape[0] - 1
 
 
+
+class Sparisty:
+    def __init__(self, p):
+        t = torch.load(p, map_location='cpu')
+        self.m = t['weight_shape'][0]
+        self.n = t['weight_shape'][1]
+        outliers_matrix = t['outliers_matrix']
+        outliers_matrix = outliers_matrix.to_sparse_csr()
+        self.row_offsets = outliers_matrix.crow_indices().int()
+        self.row_nnzs = self.row_offsets.diff()
+        self.nnz = self.row_nnzs.sum()
+
+
 def prettify_layer_name(p: str):
     return p.replace('self_attn.', '').replace('mlp.', '').replace('_proj', '').upper()
 
@@ -374,7 +387,7 @@ def densities_tile():
     fig.write_image(f'report/layer_aggregate.png', scale=4)
 
 
-def densities_rows():
+def densities_rows_log_index():
     base_path = sys.argv[1]
     folders = os.listdir(base_path)
 
@@ -408,6 +421,94 @@ def densities_rows():
 
             per_layer_figure.write_image(f'report/rows/layer{layer_id:02}.png')
         per_layer_figure.show()
+
+def densities_rows():
+    base_path = sys.argv[1]
+    folders = os.listdir(base_path)
+
+    folders.sort()
+
+    for l_id, layer_id in enumerate(folders):
+        folder = os.path.join(base_path, layer_id)
+        if not os.path.isdir(folder):
+            continue
+        layer_count = 0
+
+        per_layer_figure = go.Figure()
+
+        for p in os.listdir(folder):
+            tensor_name = prettify_layer_name(p)
+            per_layer_figure.update_layout(title=f'Layer {layer_id}', title_x=0.5, xaxis_title='Row index',
+                                           yaxis_title='Row density')
+            per_layer_figure.update_layout(margin=dict(l=0, r=0, t=30, b=0))
+            # per_layer_figure.update_xaxes(type='log')
+            # per_layer_figure.update_yaxes(type='log')
+
+            tiles = Tiles(os.path.join(folder, p))
+            print(f'{tensor_name} perc rows empty = {tiles.perc_row_empty * 100}%')
+            y = tiles.row_nnzs.sort().values.numpy()
+            y = y / tiles.n
+            print(((tiles.row_nnzs.reshape((-1, 16)).sum(axis=1) / tiles.n) * 100).int().max())
+            layer_count += 1
+
+            x_axis = torch.arange(tiles.m) / tiles.m
+            per_layer_figure.add_trace(go.Line(x=x_axis, y=y, name=tensor_name))
+
+            per_layer_figure.write_image(f'report/rows/layer{layer_id:02}.png')
+        per_layer_figure.show()
+
+def densities_rows_imbalance():
+    base_path = sys.argv[1]
+    folders = os.listdir(base_path)
+
+    folders.sort()
+
+    res = {}
+
+    for l_id, layer_id in enumerate(folders):
+        folder = os.path.join(base_path, layer_id)
+        if not os.path.isdir(folder):
+            continue
+        layer_count = 0
+
+
+        for p in os.listdir(folder):
+            tensor_name = prettify_layer_name(p)
+
+            sparsity = Sparisty(os.path.join(folder, p))
+            print(f'{tensor_name}')
+            nnzs = sparsity.row_nnzs.numpy()
+            y_groups = nnzs.reshape((-1, 16))
+
+            y_max = y_groups.max(axis=1)
+
+            repeated = np.repeat(y_max, 16)
+            valid = repeated != 0
+
+            v = (repeated[valid] - nnzs[valid]).mean()
+
+            if not tensor_name in res.keys():
+                res[tensor_name] = np.array([v], dtype=np.float64)
+            else:
+                res[tensor_name] = np.append(res[tensor_name], v)
+            layer_count += 1
+
+    layer_ids = np.arange(res['K'].shape[0])
+
+    per_layer_figure = go.Figure()
+
+    for t, v in res.items():
+        per_layer_figure.add_trace(go.Scatter(x=layer_ids, y=v, name=t, mode='lines'))
+
+    per_layer_figure.update_layout(title=f'Std Devs', title_x=0.5, xaxis_title='Layer Id',
+                                   yaxis_title='Std Dev (Normalized)')
+    per_layer_figure.update_layout(margin=dict(l=0, r=0, t=30, b=0))
+    # per_layer_figure.update_xaxes(type='log')
+    # per_layer_figure.update_yaxes(type='log')
+
+    # per_layer_figure.add_trace(go.Line(x=x_axis, y=y, name=tensor_name))
+    # per_layer_figure.write_image(f'report/rows_imbalance/layer{layer_id:02}.png')
+    per_layer_figure.show()
 
 
 if __name__ == '__main__':

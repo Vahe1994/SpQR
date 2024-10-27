@@ -94,8 +94,14 @@ if __name__ == '__main__':
     group_labels = cols.to_list()[5:]
     torch_key = group_labels[0]
 
-    speedup = (results[torch_key] / results[group_labels[1]]).to_numpy()
-    print(f'Geomean speed-up = {gmean(speedup)}X')
+    speedup0 = (results[torch_key] / results[group_labels[1]]).to_numpy()
+    speedup1 = (results[torch_key] / results[group_labels[2]]).to_numpy()
+    speedup_worst = np.minimum(speedup0, speedup1)
+    speedup_best = np.maximum(speedup0, speedup1)
+    print(f'Geomean speed-up {group_labels[1]} = {gmean(speedup0)}X')
+    print(f'Geomean speed-up {group_labels[2]} = {gmean(speedup1)}X')
+    print(f'Geomean speed-up worst case = {gmean(speedup_worst)}X')
+    print(f'Geomean speed-up best case = {gmean(speedup_best)}X')
 
     # speedup = (results[torch_key] / results[group_labels[2]]).to_numpy()
     # print(f'Geomean speed-up (dense only) = {gmean(speedup)}X')
@@ -148,7 +154,7 @@ if __name__ == '__main__':
                                                             showarrow=False,
                                                             yanchor='bottom',
                                                             font=dict(color="blue"),
-                                                            textangle=45) for x, y in zip(x_axis, algo0)] +
+                                                            textangle=90) for x, y in zip(x_axis, algo0)] +
                                       [go.layout.Annotation(x=x,
                                                             y=y,
                                                             xref="x",
@@ -158,7 +164,8 @@ if __name__ == '__main__':
                                                             showarrow=False,
                                                             yanchor='bottom',
                                                             font=dict(color="red"),
-                                                            textangle=45) for x, y in zip(x_axis, algos[0])] +
+                                                            textangle=90) for x, y in zip(x_axis, algos[0])]
+                                      +
                                       [go.layout.Annotation(x=x,
                                                             y=y,
                                                             xref="x",
@@ -168,7 +175,7 @@ if __name__ == '__main__':
                                                             showarrow=False,
                                                             yanchor='top',
                                                             font=dict(color="green"),
-                                                            textangle=45) for x, y in zip(x_axis, algos[1])]
+                                                            textangle=90) for x, y in zip(x_axis, algos[1])]
                           )
 
         fig.update_traces(textposition="bottom right")

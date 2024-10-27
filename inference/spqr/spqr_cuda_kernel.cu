@@ -56,11 +56,11 @@ union RowBits {
     uint64_t w: 48;
   };
 
-  __device__ __forceinline__ u16 get_w(int i) const {
+  __device__ __forceinline__ u16 get_w(u32 i) const {
     return (w >> (i * 3u)) & ((1u << 3u) - 1u);
   }
 
-  __device__ __forceinline__ u32 get_w2(int i) const {
+  __device__ __forceinline__ u32 get_w2(u32 i) const {
     return (mask >> (i * 6u)) & ((1u << 6u) - 1u);
   }
 };
@@ -439,29 +439,29 @@ subtile_id & (1 == 0) && threadIdx.x + BETA1 >= blockDim.x)) {
 
   u32 s = s_row_offsets[0];
   u32 e = s_row_offsets[1];
-
-  if (e - s) {
-    half *s_x = reinterpret_cast<half *>(s_x2);
-
-    if (s + thread_xy < e) {
-      ColVal colval{._ = col_vals_interleaved[s + thread_xy]};
-      auto c = colval.members.c;
-      auto v = colval.members.v;
-      acc += __half2float(v) * __half2float(s_x[c]);
-    }
-
-    for (u32 i = s + thread_xy + BLOCK_WIDTH * BETA1; i < e; i += BLOCK_WIDTH * BETA1) {
-      ColVal colval{
-          ._ = col_vals_interleaved[i]
-      };
-
-      if (!colval._) break;
-
-      auto c = colval.members.c;
-      auto v = colval.members.v;
-      acc += __half2float(v) * __half2float(s_x[c]);
-    }
-  }
+  //
+  // if (e - s) {
+  //   half *s_x = reinterpret_cast<half *>(s_x2);
+  //
+  //   if (s + thread_xy < e) {
+  //     ColVal colval{._ = col_vals_interleaved[s + thread_xy]};
+  //     auto c = colval.members.c;
+  //     auto v = colval.members.v;
+  //     acc += __half2float(v) * __half2float(s_x[c]);
+  //   }
+  //
+  //   for (u32 i = s + thread_xy + BLOCK_WIDTH * BETA1; i < e; i += BLOCK_WIDTH * BETA1) {
+  //     ColVal colval{
+  //         ._ = col_vals_interleaved[i]
+  //     };
+  //
+  //     if (!colval._) break;
+  //
+  //     auto c = colval.members.c;
+  //     auto v = colval.members.v;
+  //     acc += __half2float(v) * __half2float(s_x[c]);
+  //   }
+  // }
 
   __syncthreads();
 
@@ -654,7 +654,7 @@ PIPELINE_DEPTH> __global__ void spqr_quantized_matvec_fused_csr(
 
 #pragma unroll
     for (u32 j = 0; j < BETA2 / 2; j++) {
-      half2 w_q = s_half2_lut[row_bits.get_w2(j + 1)];
+      half2 w_q = s_half2_lut[row_bits.get_w2(j + 1u)];
       half2 w = dequantize2(w_q, ws2, wz2);
       float2 x_fp32 = __half22float2(s_x2_[j]);
       float2 w_fp32 = __half22float2(w);
