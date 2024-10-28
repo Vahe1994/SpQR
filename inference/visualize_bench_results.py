@@ -145,6 +145,10 @@ if __name__ == '__main__':
             algos += [algo1]
             fig.add_trace(go.Scatter(x=x_axis, y=algo1, name=algorithm_name, mode='lines+markers'))
 
+        y_min = np.array(algos[0] + algos[1]).min()
+        y_max = np.array(algos[0] + algos[1]).max()
+
+
         fig.update_layout(annotations=[go.layout.Annotation(x=x,
                                                             y=y,
                                                             xref="x",
@@ -154,28 +158,27 @@ if __name__ == '__main__':
                                                             showarrow=False,
                                                             yanchor='bottom',
                                                             font=dict(color="blue"),
-                                                            textangle=90) for x, y in zip(x_axis, algo0)] +
+                                                            textangle=45) for x, y in zip(x_axis, algo0)] +
                                       [go.layout.Annotation(x=x,
-                                                            y=y,
+                                                            y=y_max,
                                                             xref="x",
                                                             yref="y",
-                                                            text=str(y),
+                                                            text=f'{y0}',
                                                             align='center',
                                                             showarrow=False,
                                                             yanchor='bottom',
-                                                            font=dict(color="red"),
-                                                            textangle=90) for x, y in zip(x_axis, algos[0])]
-                                      +
+                                                            font=dict(color="red" if y0 >= y1 else "green"),
+                                                            textangle=45) for x, y0, y1 in zip(x_axis, algos[0], algos[1])] +
                                       [go.layout.Annotation(x=x,
-                                                            y=y,
+                                                            y=y_min,
                                                             xref="x",
                                                             yref="y",
-                                                            text=str(y),
+                                                            text=f'{min(y0, y1)}',
                                                             align='center',
                                                             showarrow=False,
                                                             yanchor='top',
-                                                            font=dict(color="green"),
-                                                            textangle=90) for x, y in zip(x_axis, algos[1])]
+                                                            font=dict(color="red" if y0 < y1 else "green"),
+                                                            textangle=45) for x, y0, y1 in zip(x_axis, algos[0], algos[1])]
                           )
 
         fig.update_traces(textposition="bottom right")
