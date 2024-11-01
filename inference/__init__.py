@@ -21,11 +21,16 @@ import torch
 import spqr_cuda
 
 from torch import Tensor as T
+
+from inference.mul_ops import call_spqr_mul
+
 torch.set_grad_enabled(False)
 
 import inference
 
 
+
+torch.ops.import_module("inference.mul_ops")
 
 # Utility functions
 
@@ -166,6 +171,7 @@ class SPQRModule(torch.nn.Module):
     def sparsity(self) -> float:
         return 1 - self.density
 
+    @torch.no_grad()
     def forward(self, x: T) -> T:
         inner_dim = x.shape[1]
 
@@ -175,7 +181,8 @@ class SPQRModule(torch.nn.Module):
             _x = x[..., i, :].flatten()
             if self.in_perm is not None:
                 _x = _x[self.in_perm]
-            spqr_cuda.spqr_mul(
+            _y = y[(i * self.m):((i + 1) * self.m)]
+            call_spqr_mul(
                 self.m,
                 self.n,
                 self.bits,
@@ -186,8 +193,9 @@ class SPQRModule(torch.nn.Module):
                 self.col_vals,
                 self.nnz,
                 _x,
-                y[(i * self.m):((i + 1) * self.m)],
-                FeatureFlag.SPARSE_FUSED_FP32)
+                257 | (0b1 << 4),
+                _y,
+                _y)
 
         return y.reshape((1, inner_dim, self.m))
 

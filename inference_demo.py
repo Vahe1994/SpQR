@@ -9,6 +9,8 @@ from tqdm import trange
 from inference.module import LLama, Mode
 from modelutils import get_lm_logits
 
+torch.autograd.set_grad_enabled(False)
+
 torch.set_printoptions(sci_mode=False)
 
 try:
@@ -141,6 +143,26 @@ def perplexity_eval(model, testenc, randomize, tokenizer, dataset_name, nsamples
     print(f"\n{dataset_name} perplexity = {ppl.item():.4f}\n")
 
 
+def old():
+    pretrained_model_path = sys.argv[1]
+    # uncompressed_model_path = sys.argv[2]
+    compressed_model_path = sys.argv[2]
+    mode = sys.argv[3]
+    # calibration_dataset = sys.argv[4]
+    # dev = sys.argv[5]
+
+    m = Mode(int(mode))
+
+    with torch.no_grad():
+        model = LLama(pretrained_model_path, compressed_model_path, m)
+        text = 'The recipe for banana bread is '  # input()
+        s = time.time();
+        generated_text = model.generate(text, max_new_tokens=45);
+        e = time.time();
+        print(f'{generated_text}');
+        print(f'Duration = {e - s}s')
+
+
 if __name__ == "__main__":
     pretrained_model_path = sys.argv[1]
     # uncompressed_model_path = sys.argv[2]
@@ -155,5 +177,7 @@ if __name__ == "__main__":
         model = LLama(pretrained_model_path, compressed_model_path, m)
         text = 'The recipe for banana bread is '  # input()
         s = time.time();
-        generated_text = model.generate(text, max_new_tokens=15);
-        e = time.time();print(f'{generated_text}');print(f'Duration = {e - s}s')
+        generated_text = model.generate(text, max_new_tokens=128);
+        e = time.time();
+        print(f'{generated_text}');
+        print(f'Duration = {e - s}s')

@@ -708,7 +708,7 @@ PIPELINE_DEPTH> __global__ void spqr_quantized_matvec_fused_csr(
     // TODO:
     if (threadIdx.x < BETA1) {
       short row = order[tile_row_id * BETA1 + threadIdx.x];
-      y_fp16[row] = __float2half_rn(acc);
+      y_fp16[row] =  __float2half_rn(acc);
     }
   }
 }

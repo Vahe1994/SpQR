@@ -4,8 +4,9 @@ from enum import Enum, IntEnum
 
 import torch
 import torch.nn as nn
+from torch.nn.attention import SDPBackend
 from tqdm import tqdm, trange
-from transformers import AutoModelForCausalLM, DynamicCache, LlamaTokenizer, AutoConfig
+from transformers import AutoModelForCausalLM, DynamicCache, LlamaTokenizer, AutoConfig, StaticCache, PretrainedConfig
 
 import inference
 from modelutils import suspend_nn_inits, get_layers, find_sublayers, \
@@ -30,6 +31,19 @@ class Mode(IntEnum):
     CPU_DEQUANTIZE_ORIGINAL = 5
     CUDA_PT = 6
     CUDA_DENSE = 7
+
+
+def decode_one_tokens(model, cur_token, input_pos, cache_position, past_key_values):
+    logits = model(
+        cur_token,
+        position_ids=input_pos,
+        cache_position=cache_position,
+        past_key_values=past_key_values,
+        return_dict=False,
+        use_cache=True
+    )[0]
+    new_token = torch.argmax(logits[:, -1], dim=-1)[:, None]
+    return new_token
 
 
 class LLama:
@@ -139,21 +153,24 @@ class LLama:
 
         self.device = device
 
+        self.torchscript = False
+
         if flag == Mode.CUDA_PT:
             self.model = torch.load(quantized_model_path)
             spqr_modules = self.find_spqr_modules(self.model, quantized_model_path, layer_id=-1)
         else:
             with suspend_nn_inits():
-                config = AutoConfig.from_pretrained(pretrained_model_path, torchscript=False)
-                config.max_position_embeddings = 4096
+                with torch.no_grad():
+                    config = AutoConfig.from_pretrained(pretrained_model_path, torchscript=self.torchscript,
+                                                        return_dict=True)
+                    config.max_position_embeddings = 4096
 
-                self.model = AutoModelForCausalLM.from_pretrained(
-                    pretrained_model_name_or_path=pretrained_model_path,
-                    trust_remote_code=True,
-                    torch_dtype=torch.half,
-                    config=config
-                )
-
+                    self.model = AutoModelForCausalLM.from_pretrained(
+                        pretrained_model_name_or_path=pretrained_model_path,
+                        trust_remote_code=True,
+                        torch_dtype=torch.half,
+                        config=config
+                    )
 
         self.device = device
 
@@ -162,37 +179,102 @@ class LLama:
         elif flag != Mode.CPU and flag != Mode.CUDA_PT and flag != Mode.CUDA_DENSE:
             self.model = self.linear_to_spqr(self.model, quantized_model_path, self.device)
 
+        # self.model =
         self.model = self.model.to(device=self.device, dtype=self.dtype)
+        # self.model = torch.compile(self.model.to(device=self.device, dtype=self.dtype), backend='cudagraphs')
+        # self.model = torch.compile(self.model.to(device=self.device, dtype=self.dtype), backend='cudagraphs')
+        # self.model = torch.compile(self.model.to(device=self.device, dtype=self.dtype))
 
-        self.tokenizer = LlamaTokenizer.from_pretrained(pretrained_model_path, use_fast=False, torchscript=False)
+        self.tokenizer = LlamaTokenizer.from_pretrained(pretrained_model_path, use_fast=False,
+                                                        torchscript=self.torchscript)
         self.tokenizer.pad_token = self.tokenizer.eos_token
 
+        self.model.eval()
+
     def generate(self, input_str, max_new_tokens):
-        past_key_values = DynamicCache()
+
+        # self.model.generation_config.cache_implementation = "static"
+
+        # self.model.forward = torch.compile(self.model.forward, backend="cudagraphs", fullgraph=False)
+
         inputs = self.tokenizer(input_str, return_tensors="pt").to(device=self.device)
 
-        generated_ids = inputs.input_ids
+        input_ids = inputs.input_ids
+        total_batch_duration = None
+        seq_len = input_ids.shape[1]
 
-        cache_position = torch.arange(inputs.input_ids.shape[1], dtype=torch.int64, device=self.device)
+        cache_position = torch.arange(seq_len, dtype=torch.int64, device=self.device)
+        generated_ids = torch.zeros(1, seq_len + max_new_tokens * 2, dtype=torch.int, device=self.device)
+        generated_ids[:, cache_position] = input_ids.to("cuda").to(torch.int)
 
-        for _ in range(max_new_tokens):
-            input_ids = inputs['input_ids']
-            attention_mask = inputs['attention_mask']
+        past_key_values = StaticCache(self.model.config,
+                                      1,
+                                      seq_len + max_new_tokens * 2 + 1,
+                                      device=self.device,
+                                      dtype=torch.float16)
+        # self.model = torch.jit.script(self.model)
 
-            dev = input_ids.device
+        logits = self.model(
+            input_ids, cache_position=cache_position, past_key_values=past_key_values, return_dict=False, use_cache=True
+        )[0]
+        next_token = torch.argmax(logits[:, [-1]], dim=-1).to(torch.int)
+        generated_ids[:, [seq_len]] = next_token
 
-            start_time = time.time()
-            outputs = self.model(input_ids=input_ids, attention_mask=attention_mask, cache_position=cache_position,
-                                 past_key_values=past_key_values, use_cache=True)
-            torch.cuda.synchronize(dev)
-            end_time = time.time()
-            print(f'duration = {end_time - start_time}')
+        torch._dynamo.config.capture_scalar_outputs = True
 
-            next_token_ids = outputs.logits[:, -1:].argmax(-1)
-            generated_ids = torch.cat([generated_ids, next_token_ids], dim=-1)
+        with torch.no_grad():
+            # Compile the CUDA graph
+            decode_one_tokens_compiled = torch.compile(decode_one_tokens, mode='reduce-overhead', fullgraph=False)
 
-            attention_mask = torch.cat([attention_mask, attention_mask.new_ones((attention_mask.shape[0], 1))], dim=-1)
-            inputs = {"input_ids": next_token_ids, "attention_mask": attention_mask}
+            # Generate tokens one by one
+            cache_position = torch.tensor([seq_len + 1], device="cuda")
+            for _ in range(1, max_new_tokens):
+                # with torch.nn.attention.sdpa_kernel([SDPBackend.MATH]):
+                with torch.backends.cuda.sdp_kernel(enable_flash=False, enable_mem_efficient=False, enable_math=True):
+                    start_time = time.time()
+                    next_token = decode_one_tokens_compiled(self.model, next_token.clone(), None, cache_position, past_key_values)
+                    generated_ids[:, cache_position] = next_token.int()
+                    end_time = time.time()
+                    print(f'duration = {end_time - start_time}')
 
-            cache_position = cache_position[-1:] + 1  # add one more position for the next token
-        return self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
+                cache_position += 1
+                # print(self.tokenizer.decode(generated_ids[0]))
+
+        return self.tokenizer.decode(generated_ids[0])
+        #
+        # for _ in range(max_new_tokens - 1):
+        #     input_ids = inputs['input_ids']
+        #     attention_mask = inputs['attention_mask']
+        #
+        #     dev = input_ids.device
+        #
+        #     start_time = time.time()
+        #     outputs = self.model(input_ids=input_ids, attention_mask=attention_mask, cache_position=cache_position,
+        #                          past_key_values=past_key_values, use_cache=True, return_dict=False)
+        #     # kwarg_inputs = {'input_ids': input_ids, 'attention_mask': attention_mask, 'cache_position': cache_position,
+        #     #                 'past_key_values': past_key_values, 'use_cache': True, 'return_dict': True}
+        #     # outputs = torch.jit.trace(self.model.forward, example_kwarg_inputs=kwarg_inputs)
+        #     # outputs = self.model(input_ids=input_ids, example_kwarg_inputs=kwarg_inputs)
+        #     torch.cuda.synchronize(dev)
+        #     end_time = time.time()
+        #     batch_duration = end_time - start_time
+        #     print(f'duration = {batch_duration}')
+        #
+        #     if total_batch_duration is None:
+        #         total_batch_duration = 0
+        #     else:
+        #         total_batch_duration += batch_duration
+        #
+        #     if self.torchscript:
+        #         next_token_ids = outputs[0][:, -1:].argmax(-1)
+        #     else:
+        #         next_token_ids = outputs.logits[:, -1:].argmax(-1)
+        #
+        #     generated_ids = torch.cat([generated_ids, next_token_ids], dim=-1)
+        #
+        #     attention_mask = torch.cat([attention_mask, attention_mask.new_ones((attention_mask.shape[0], 1))], dim=-1)
+        #     inputs = {"input_ids": next_token_ids, "attention_mask": attention_mask}
+        #
+        #     cache_position = cache_position[-1:] + 1  # add one more position for the next token
+        # print(f'Batches duration = {total_batch_duration}')
+        # return self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]

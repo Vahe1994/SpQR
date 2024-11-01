@@ -25,6 +25,8 @@ int spqr_matvec(
     // Quantization
     int beta1, int beta2,
     const void *raw_data,
+    // 32-bit
+    int row_offsets_len,
     void *row_offsets,
     // 32-bit
     void *col_vals,
@@ -40,29 +42,53 @@ int spqr_matvec(
     void *measurements = nullptr,
     uint32_t feature_flag = 0);
 
-
 void spqr_mul(int64_t m,
-              int64_t n,
-              int64_t bits,
-              int64_t beta1, int64_t beta2,
-              const torch::Tensor &buff0,
-              const torch::Tensor &row_offsets,
-              const torch::Tensor &col_val_ptr,
-              int64_t nnz,
-              const torch::Tensor &X,
-              torch::Tensor &Y,
-              int64_t _feature_flag = 0) {
+                 int64_t n,
+                 int64_t bits,
+                 int64_t beta1, int64_t beta2,
+                 const torch::Tensor &buff0,
+                 const torch::Tensor &row_offsets,
+                 const torch::Tensor &col_val_ptr,
+                 int64_t nnz,
+                 const torch::Tensor &X,
+                 int64_t _feature_flag,
+                 const torch::Tensor &Y,
+                 torch::Tensor &out) {
   uint32_t feature_flag = static_cast<uint32_t>(_feature_flag);
   int dev = buff0.get_device();
+
+  // Choose which algorithm to use
+  int row_offsets_len = row_offsets.sizes()[0];
+
   // TODO: Propagate error one layer up.
   int err = spqr_matvec(
       bits, m, n, beta1, beta2, buff0.data_ptr(),
-      row_offsets.data_ptr(), col_val_ptr.data_ptr(), nnz,
-      X.data_ptr(), nullptr, Y.data_ptr(),
+      row_offsets_len, row_offsets.data_ptr(), col_val_ptr.data_ptr(), nnz,
+      X.data_ptr(), nullptr, out.data_ptr(),
       at::cuda::getCurrentCUDAStream(dev), nullptr, feature_flag);
 }
 
-// We need this to have a valid CMake configuration which is useful for IDE support during kernel development.
-TORCH_LIBRARY(spqr_torch_lib, m) {
-  m.def("spqr_mul", &spqr_mul);
+
+void spqr_mul_meta(int64_t m,
+                      int64_t n,
+                      int64_t bits,
+                      int64_t beta1, int64_t beta2,
+                      const torch::Tensor &buff0,
+                      const torch::Tensor &row_offsets,
+                      const torch::Tensor &col_val_ptr,
+                      int64_t nnz,
+                      const torch::Tensor &X,
+                      int64_t _feature_flag,
+                      const torch::Tensor &Y,
+                      torch::Tensor &out) {
 }
+
+
+
+PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+  m.def(
+      "spqr_mul",
+      &spqr_mul,
+      "");
+}
+
