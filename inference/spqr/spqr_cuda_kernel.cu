@@ -296,23 +296,17 @@ PIPELINE_DEPTH> __global__ void spqr_quantized_matvec_fused_csr_modified(
 
   const u32 thread_xy = threadIdx.x + (threadIdx.y * blockDim.x);
 
-  const auto v = make_half2(__int2half_rd(thread_xy & 0b111), __int2half_rd((thread_xy >> 3) & 0b111));
+  if constexpr (THREAD_COUNT >= 64) {
+    const auto v = make_half2(__int2half_rd(thread_xy & 0b111), __int2half_rd((thread_xy >> 3) & 0b111));
 #pragma unroll
-  for (int i = thread_xy; i < 64 * NUM_HALF_WARPS; i += THREAD_COUNT) { s_half2_lut_global[i] = v; }
-#if 0
-  for (int i = thread_xy; i < 64 * NUM_HALF_WARPS; i += THREAD_COUNT) {
-    reinterpret_cast<u32*>(s_half2_lut_global)[i] = (LUT[i & 0b111] | (LUT[(i >> 3) & 0b111]) << 16u);
-subtile_id & (1 == 0) && threadIdx.x + BETA1 >= blockDim.x)) {
-    auto other = __shfl_down_sync
-    auto _gt = make_half2(
-        __int2half_rd(i & 0b111),
-        __int2half_rd((i >> 3) & 0b111)
-    );
-
-    auto gt = *reinterpret_cast<u32*>(&_gt);
-    auto tst = (LUT[i & 0b111] | (LUT[(i >> 3) & 0b111]) << 16u);
+    for (int i = thread_xy; i < 64 * NUM_HALF_WARPS; i += THREAD_COUNT) { s_half2_lut_global[i] = v; }
+  } else {
+#pragma unroll
+    for (int i = thread_xy; i < 64 * NUM_HALF_WARPS; i += THREAD_COUNT) {
+    const auto v = make_half2(__int2half_rd(i & 0b111), __int2half_rd((i >> 3) & 0b111));
+      s_half2_lut_global[i] = v;
+    }
   }
-#endif
 
   auto s_half2_lut = s_half2_lut_global + ((thread_xy / HALF_WARP_SIZE) << 6);
   const half2 *x2 = reinterpret_cast<const half2 *>(x);
@@ -537,9 +531,17 @@ PIPELINE_DEPTH> __global__ void spqr_quantized_matvec_fused_csr(
 
   const u32 thread_xy = threadIdx.x + (threadIdx.y * blockDim.x);
 
-  const auto v = make_half2(__int2half_rd(thread_xy & 0b111), __int2half_rd((thread_xy >> 3) & 0b111));
+  if constexpr (THREAD_COUNT >= 64) {
+    const auto v = make_half2(__int2half_rd(thread_xy & 0b111), __int2half_rd((thread_xy >> 3) & 0b111));
 #pragma unroll
-  for (int i = thread_xy; i < 64 * NUM_HALF_WARPS; i += THREAD_COUNT) { s_half2_lut_global[i] = v; }
+    for (int i = thread_xy; i < 64 * NUM_HALF_WARPS; i += THREAD_COUNT) { s_half2_lut_global[i] = v; }
+  } else {
+#pragma unroll
+    for (int i = thread_xy; i < 64 * NUM_HALF_WARPS; i += THREAD_COUNT) {
+    const auto v = make_half2(__int2half_rd(i & 0b111), __int2half_rd((i >> 3) & 0b111));
+      s_half2_lut_global[i] = v;
+    }
+  }
 
   auto s_half2_lut = s_half2_lut_global + ((thread_xy / HALF_WARP_SIZE) << 6);
   const half2 *x2 = reinterpret_cast<const half2 *>(x);
@@ -580,8 +582,8 @@ PIPELINE_DEPTH> __global__ void spqr_quantized_matvec_fused_csr(
 
   float acc{};
 
+  cp_async_wait_all();
   __syncthreads();
-
 
   u32 i = subtile_id, pipeline_id{};
   const W_t *local_raw_data = raw_data + raw_data_offset;

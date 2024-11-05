@@ -48,8 +48,7 @@ def get_model(model_path, load_quantized=None, dtype="auto"):
                 torch_dtype=dtype,
                 # local_files_only=True
             )
-    # model.seqlen = 2048
-    model.seqlen = 4096
+    model.seqlen = 2048
 
     print("Model loaded sucessfully ...")
 

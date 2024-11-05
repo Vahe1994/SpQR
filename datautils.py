@@ -13,35 +13,6 @@ def set_seed(seed):
     torch.random.manual_seed(seed)
 
 
-def tokenize(text, model_path):
-    """
-    Loads and prepares data for a Transformers model.
-    Args:
-        name (str): The name of the dataset to load.
-        This can be one of 'wikitext2', 'c4', 'ptb' for datasets loaded from Huggingface datasets,
-        'pajama' or 'refinedweb' for pre-tokenized datasets in folder `data` or 'none' for cases
-        where a dataset is not needed, like RTN. It can also accept data path to custom file.
-        nsamples (int, optional): The number of samples to load from the dataset. Defaults to 128.
-        seed (int, optional): The random seed value for data shuffling and splitting. Defaults to 0.
-        seqlen (int, optional): The maximum sequence length for input tokenization. Defaults to 2048.
-        model_path (str, optional): The path to the pretrained model weights or full model name.
-            used to detect llama to call proper tokenizer.
-            see https://github.com/huggingface/transformers/issues/22222#issuecomment-1488578722 for reasons.
-        eval_mode (bool, optional). defines slice selection for 'wikitext2', 'c4', 'ptb' datasets.
-        leave False for train slice.
-    Returns:
-        data (torch.utils.data.DataLoader or iterable): Data iterable for the dataset.
-    Note:
-        the popular decapoda-research Llama models have errors in tokenizer config, specifically
-        incorrect token ids for BOS, EOS. This gets corrected to ensure compatibility with transformers
-        of versions 4.29 and above.
-    """
-    tokenizer = LlamaTokenizer.from_pretrained(model_path, use_fast=False)
-    testenc = tokenizer(text, return_tensors="pt")
-    return testenc
-
-
-
 def get_wikitext2(nsamples, seqlen, tokenizer, eval_mode=False):
     if not eval_mode:
         traindata = load_dataset("wikitext", "wikitext-2-raw-v1", split="train")

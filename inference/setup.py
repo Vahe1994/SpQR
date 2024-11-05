@@ -11,7 +11,7 @@ ARCH = 86
 
 
 setup(
-    name='inference',
+    name='spqr',
     version='0.1.1',
     author='elvircrn',
     author_email='elvircrn@gmail.com',
@@ -35,8 +35,9 @@ setup(
             ],
                 'nvcc': [
                     # https://github.com/pytorch/pytorch/blob/main/torch/utils/cpp_extension.py#L1050C13-L1050C17
-                    '-O2',
+                    '-O3',
                     '-std=c++17',
+                    '-lineinfo',
                     f'-arch=sm_{ARCH}',
                     f'-gencode=arch=compute_{ARCH},code=compute_{ARCH}'
                 ]}

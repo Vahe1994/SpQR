@@ -41,12 +41,12 @@ if __name__ == '__main__':
         folders.sort()
 
         methods = [
-            inference.FeatureFlag.SPARSE_FUSED_FP32,
+            inference.FeatureFlags.SPARSE_FUSED_FP32,
         ]
 
         f.write('Layer;Tensor Name;M;N;Sparsity (%)')
 
-        for method in [inference.FeatureFlag.TORCH_FP16] + methods:
+        for method in [inference.FeatureFlags.TORCH_FP16] + methods:
             f.write(f';{method.pretty()} (ms)')
 
         f.write(f';{method.pretty()} Modified CSR (ms)')
@@ -65,15 +65,14 @@ if __name__ == '__main__':
                 tensor_path = os.path.join(folder, p)
                 tensor_path_modified_csr = os.path.join(folder, p_modified_csr)
 
-                spqr_module: inference.SPQRModule = inference.load_compressed_tensor(tensor_path)
-                spqr_module_modified_csr: inference.SPQRModule = inference.load_compressed_tensor(tensor_path_modified_csr)
+                spqr_module = inference.load_compressed_tensor(tensor_path)
+                spqr_module_modified_csr = inference.load_compressed_tensor(tensor_path_modified_csr)
 
                 m = spqr_module.m
                 n = spqr_module.n
                 print(f'Running {m} x {n}')
 
-                deq_w = inference.spqr_dequantize_compressed(spqr_module)
-                deq_w_dense = inference.spqr_dequantize_dense_compressed(spqr_module)
+                deq_w = spqr_module.dequantize()
 
                 spqr_module.to_device(device)
                 spqr_module_modified_csr.to_device(device)
@@ -84,8 +83,6 @@ if __name__ == '__main__':
                 x_fp16_device = x_fp32.cuda(device=device).half()
 
                 deq_w_device = deq_w.to(device).half().flatten()
-
-                deq_w_device_dense = deq_w_dense.to(device).half().flatten()
 
                 dense_speed_up = 0
                 baseline_speed_up = 0
@@ -124,8 +121,6 @@ if __name__ == '__main__':
                     benchmark_results_ms.append(min(this_algorithm, this_algorithm_modified_csr))
                     benchmark_speed_up.append(baseline_speed_up)
 
-                    if flag == inference.FeatureFlag.DENSE_ONLY_FP16 or flag == inference.FeatureFlag.DENSE_ONLY_FP32:
-                        assert (torch.allclose(y, y_true_dense, atol=1e-1, rtol=1e-1))
 
                 f.write('\n')
                 f.flush()

@@ -1,12 +1,11 @@
 import os
 import time
-from enum import Enum, IntEnum
+from enum import IntEnum
 
 import torch
 import torch.nn as nn
-from torch.nn.attention import SDPBackend
 from tqdm import tqdm, trange
-from transformers import AutoModelForCausalLM, DynamicCache, LlamaTokenizer, AutoConfig, StaticCache, PretrainedConfig
+from transformers import AutoModelForCausalLM, LlamaTokenizer, AutoConfig, StaticCache
 
 import inference
 from modelutils import suspend_nn_inits, get_layers, find_sublayers, \
@@ -100,7 +99,7 @@ class LLama:
             spqr_module: inference.SPQRModule = inference.load_compressed_tensor(p)
             if self.flag == Mode.CPU_DEQUANTIZE:
                 ln = nn.Linear(in_features=spqr_module.n, out_features=spqr_module.m, dtype=torch.float32)
-                ln.weight = torch.nn.Parameter(inference.spqr_dequantize_compressed(spqr_module).float(),
+                ln.weight = torch.nn.Parameter(inference.dequantize(spqr_module).float(),
                                                requires_grad=False)
                 setattr(mod, name, ln)
             elif self.flag == Mode.CUDA:
@@ -161,6 +160,7 @@ class LLama:
         else:
             with suspend_nn_inits():
                 with torch.no_grad():
+
                     config = AutoConfig.from_pretrained(pretrained_model_path, torchscript=self.torchscript,
                                                         return_dict=True)
                     config.max_position_embeddings = 4096
