@@ -1,8 +1,3 @@
 #!/bin/bash
-
-export NCU_EXPORT_PATH=
-export NCU_PATH=
-export COMMAND=
-
-CUDA_VISIBLE_DEVICES=0 $NCU_PATH --import-source yes --export $NCU_EXPORT_PATH --force-overwrite --section ComputeWorkloadAnalysis --section InstructionStats --section LaunchStats --section MemoryWorkloadAnalysis --section MemoryWorkloadAnalysis_Chart --section MemoryWorkloadAnalysis_Tables --section Nvlink --section Nvlink_Tables --section Nvlink_Topology --section Occupancy --section SchedulerStats --section SourceCounters --section SpeedOfLight --section SpeedOfLight_HierarchicalDoubleRooflineChart --section SpeedOfLight_HierarchicalHalfRooflineChart --section SpeedOfLight_HierarchicalSingleRooflineChart --section SpeedOfLight_HierarchicalTensorRooflineChart --section SpeedOfLight_RooflineChart --section WarpStateStats $COMMAND
+CUDA_VISIBLE_DEVICES=0  /usr/lib/nsight-compute/target/linux-desktop-glibc_2_11_3-x64/ncu --import-source yes --export /home/elvircrn/CLionProjects/spqr_kernel/spqr_profile_baseline.ncu --force-overwrite --section ComputeWorkloadAnalysis --section InstructionStats --section LaunchStats --section MemoryWorkloadAnalysis --section MemoryWorkloadAnalysis_Chart --section MemoryWorkloadAnalysis_Tables --section Nvlink --section Nvlink_Tables --section Nvlink_Topology --section Occupancy --section SchedulerStats --section SourceCounters --section SpeedOfLight --section SpeedOfLight_HierarchicalDoubleRooflineChart --section SpeedOfLight_HierarchicalHalfRooflineChart --section SpeedOfLight_HierarchicalSingleRooflineChart --section SpeedOfLight_HierarchicalTensorRooflineChart --section SpeedOfLight_RooflineChart --section WarpStateStats /home/elvircrn/.venv/bin/python3 /mnt/6e3c126c-c6bb-43eb-9d82-1e59b2111688/ecrncevi/SpQR/inference/bench_spqr.py /home/elvircrn/CLionProjects/spqr_kernel/data/output_identity_compressed 0 /mnt/6e3c126c-c6bb-43eb-9d82-1e59b2111688/ecrncevi/SpQR/inference/report/woah.csv
 
