@@ -110,8 +110,8 @@ if __name__ == '__main__':
                 tensor_path = os.path.join(folder, p)
                 tensor_path_modified_csr = os.path.join(folder, p_modified_csr)
 
-                spqr_module = inference.load_compressed_tensor(tensor_path)
-                spqr_module_modified_csr = inference.load_compressed_tensor(tensor_path_modified_csr)
+                spqr_module = torch.load(tensor_path)
+                spqr_module_modified_csr = torch.load(tensor_path_modified_csr)
 
                 m = spqr_module.m
                 n = spqr_module.n

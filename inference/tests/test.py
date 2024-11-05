@@ -14,6 +14,22 @@ torch.random.manual_seed(seed)
 
 DEV = torch.device('cuda:0')
 
+def spqr_mul(spqr_device: inference.QuantizedLinear, x, y, feature_flag: inference.FeatureFlags):
+    spqr_cuda.spqr_mul(
+        spqr_device.m,
+        spqr_device.n,
+        spqr_device.bits,
+        spqr_device.beta1,
+        spqr_device.beta2,
+        spqr_device.buff0,
+        spqr_device.row_offsets,
+        spqr_device.col_vals,
+        spqr_device.nnz,
+        x,
+        y,
+        int(feature_flag)
+    )
+
 
 def torch_mul(deq_w, x):
     runs = torch.empty(1).cpu().float()
@@ -55,7 +71,7 @@ class TestSparseFp16Easy(unittest.TestCase):
                         y_true = torch_mul(deq_w, x_fp16_device)
                         y = torch.zeros(m, dtype=torch.half, device=device)
 
-                        inference.spqr_mul(spqr_module_device, x_fp16_device, y, flag)
+                        spqr_mul(spqr_module_device, x_fp16_device, y, flag)
 
                         passed = torch.equal(y, y_true)
 
@@ -84,7 +100,7 @@ class TestSparseFp16DenseOnly(unittest.TestCase):
                             y_true = torch_mul(deq_w, x_fp16_device)
                             y = torch.zeros(m, dtype=torch.half, device=device)
 
-                            inference.spqr_mul(quantized_linear, x_fp16_device, y, flag)
+                            spqr_mul(quantized_linear, x_fp16_device, y, flag)
 
                             passed = torch.equal(y, y_true)
 
@@ -116,7 +132,7 @@ class TestSparseFp16Fused(unittest.TestCase):
                             y_true = torch_mul(deq_w, x_fp16_device)
                             y = torch.zeros(m, dtype=torch.half, device=device)
 
-                            inference.spqr_mul(spqr_module_device, x_fp16_device, y, flag)
+                            spqr_mul(spqr_module_device, x_fp16_device, y, flag)
 
                             passed = torch.equal(y, y_true)
 

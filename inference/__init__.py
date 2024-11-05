@@ -88,7 +88,19 @@ class QuantizedLinear(torch.nn.Module):
         @param bits: Size of the weights and first order data quantization.
         @param beta1: Tile width.
         @param beta2: Tile height (see SpQR publication for more details).
-        @param dense_weights: The weights, first and second order data is stored in buff0.
+        @param dense_weights: The weights, first and second order data is stored in buff0. A single row tile
+        looks is stored in a 64-bit chunk as follows:
+
+                   |  w_s  | w_z | w_0 | ... | w_15 | c_0 | unused
+        bits(64):      3      3     3           3      8      2
+
+        w_s - first order quantized row scale
+        w_z - first order quantized row zero-point.
+
+        w_i - i-th quantized weight
+
+        c_0 - partial 8-bit chunk of the second order which the kernel recovers via warp shuffle reduction opeartion.
+
         @param row_offsets: int32 CSR Row offsets if row_offsets.shape[0] == m + 1. PTCSR row offsets otherwise.
         @param col_vals: int32 | values | column id | buffer.
                                  16-bit    16-bit
@@ -258,7 +270,6 @@ class QuantizedLinear(torch.nn.Module):
 
         return y.reshape((1, inner_dim, self.m))
 
-
 def flatten_tensor(W):
     """
     @return: Utility function: flattens the input tensor.
@@ -298,30 +309,5 @@ class FeatureFlags(IntEnum):
         elif self.value == FeatureFlags.SPARSE_FUSED_FP32:
             return 'Sparse Fused FP32'
         else:
-            raise 'Pretty print not found for value {self.value}'
+            raise 'Prettify not found for value {self.value}'
 
-
-def spqr_mul(spqr_device: QuantizedLinear, x, y, feature_flag: FeatureFlags):
-    spqr_cuda.spqr_mul(
-        spqr_device.m,
-        spqr_device.n,
-        spqr_device.bits,
-        spqr_device.beta1,
-        spqr_device.beta2,
-        spqr_device.buff0,
-        spqr_device.row_offsets,
-        spqr_device.col_vals,
-        spqr_device.nnz,
-        x,
-        y,
-        int(feature_flag)
-    )
-
-
-def write_tensor(spqr_module: QuantizedLinear, path: str):
-    torch.save(spqr_module, path)
-
-
-def load_compressed_tensor(p: str) -> QuantizedLinear:
-    spqr_module = torch.load(p)
-    return spqr_module
