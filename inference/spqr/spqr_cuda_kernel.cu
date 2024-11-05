@@ -15,7 +15,6 @@
  */
 
 #include "common.cuh"
-#include <ATen/cuda/Exceptions.h>
 
 #include <cuda_runtime.h>
 #include <cuda_fp16.h>
@@ -90,36 +89,6 @@ template<class Bit_t, class Scalar_t> DEVICE_INLINE Scalar_t dequantize(Bit_t q,
 [[nodiscard]] __device__ __host__ CUINLINE int updiv(int x, int y) {
   return (x + y - 1) / y;
 }
-
-struct Timer {
-  cudaEvent_t ce_start{}, ce_stop{};
-  cudaStream_t stream;
-
-  void start() { AT_CUDA_CHECK(cudaEventRecord(ce_start, stream)); }
-
-  float end() {
-    float time;
-    AT_CUDA_CHECK(cudaEventRecord(ce_stop, 0));
-    AT_CUDA_CHECK(cudaEventSynchronize(ce_stop));
-    AT_CUDA_CHECK(cudaEventElapsedTime(&time, ce_start, ce_stop));
-    // Returns ms
-    return time;
-  }
-
-  Timer(cudaStream_t stream) : stream(stream) {
-    AT_CUDA_CHECK(cudaEventCreate(&ce_start));
-    AT_CUDA_CHECK(cudaEventCreate(&ce_stop));
-  }
-
-  Timer(Timer &&timer) = delete;
-
-  Timer(const Timer &timer) = delete;
-
-  ~Timer() {
-    AT_CUDA_CHECK(cudaEventDestroy(ce_start));
-    AT_CUDA_CHECK(cudaEventDestroy(ce_stop));
-  }
-};
 
 
 template<typename T> __device__ T _debug_halfs(T v) {
@@ -719,25 +688,6 @@ template<class T> const T &__min(const T &a, const T &b) {
   return (b < a) ? b : a;
 }
 
-#define CHECK_CUDA(func)                                                       \
-  {                                                                            \
-    cudaError_t status = (func);                                               \
-    if (status != cudaSuccess) {                                               \
-      printf("CUDA API failed at line %d with error: %s (%d)\n", __LINE__,     \
-             cudaGetErrorString(status), status);                              \
-      return EXIT_FAILURE;                                                     \
-    }                                                                          \
-  }
-
-#define CHECK_CUSPARSE(func)                                                   \
-  {                                                                            \
-    cusparseStatus_t status = (func);                                          \
-    if (status != CUSPARSE_STATUS_SUCCESS) {                                   \
-      printf("CUSPARSE API failed at line %d with error: %s (%d)\n", __LINE__, \
-             cusparseGetErrorString(status), status);                          \
-      return EXIT_FAILURE;                                                     \
-    }                                                                          \
-  }
 
 union Features {
   uint32_t _;

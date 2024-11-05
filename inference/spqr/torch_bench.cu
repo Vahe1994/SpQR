@@ -17,16 +17,12 @@
 #include "common.cuh"
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/cuda/Exceptions.h>
-#include <c10/util/Exception.h>
 #include <torch/python.h>
 #include <torch/torch.h>
 
 #include <cuda_runtime.h>
 
-#include <cuda_fp16.h>
 #include <cusparse.h>
-
-#include <vector>
 
 namespace torch_test {
 
@@ -38,45 +34,6 @@ using u32 = unsigned int;
 using u16 = unsigned short;
 
 __device__ __host__ CUINLINE int updiv(int x, int y) { return (x + y - 1) / y; }
-
-#define CHECK_CUDA(func)                                                       \
-  {                                                                            \
-    cudaError_t status = (func);                                               \
-    if (status != cudaSuccess) {                                               \
-      printf("CUDA API failed at line %d with error: %s (%d)\n", __LINE__,     \
-             cudaGetErrorString(status), status);                              \
-      return EXIT_FAILURE;                                                     \
-    }                                                                          \
-  }
-
-struct _Timer {
-  cudaEvent_t ce_start{}, ce_stop{};
-  cudaStream_t stream;
-
-  void start() { AT_CUDA_CHECK(cudaEventRecord(ce_start, stream)); }
-
-  float end() {
-    float time;
-    AT_CUDA_CHECK(cudaEventRecord(ce_stop, stream));
-    AT_CUDA_CHECK(cudaEventSynchronize(ce_stop));
-    AT_CUDA_CHECK(cudaEventElapsedTime(&time, ce_start, ce_stop));
-    // Returns ms
-    return time;
-  }
-
-  _Timer(cudaStream_t stream) : stream(stream) {
-    AT_CUDA_CHECK(cudaEventCreate(&ce_start));
-    AT_CUDA_CHECK(cudaEventCreate(&ce_stop));
-  }
-
-  _Timer(_Timer &&timer) = delete;
-  _Timer(const _Timer &timer) = delete;
-
-  ~_Timer() {
-    AT_CUDA_CHECK(cudaEventDestroy(ce_start));
-    AT_CUDA_CHECK(cudaEventDestroy(ce_stop));
-  }
-};
 
 int torch_matvec(int m, int n, void *dequantized_w, void *X, void *y,
                  void *measurements, cudaStream_t stream) {
@@ -95,9 +52,9 @@ int torch_matvec(int m, int n, void *dequantized_w, void *X, void *y,
   torch::Tensor result_tensor = torch::from_blob(
       y, {m}, torch::TensorOptions().dtype(torch::kHalf).device(torch::kCUDA));
 
-  _Timer *timer;
+  Timer *timer;
   if (measurements) {
-    timer = new _Timer(stream);
+    timer = new Timer(stream);
     timer->start();
   }
 

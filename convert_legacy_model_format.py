@@ -126,11 +126,12 @@ if __name__ == '__main__':
     parser.add_argument("--save_per_layer", type=str, required=False,
                         help="Save the converted quantized model per layer here - useful for benchmarking individual layers")
 
-    args = parser.parse_args()
+    args, leftovers = parser.parse_known_args()
+    if args.save_pt is not None:
+        os.makedirs(args.save_pt, exist_ok=True)
 
-    for output_dir in [os.path.dirname(args.save_pt), args.save_per_layer]:
-        if output_dir is not None:
-            os.makedirs(output_dir, exist_ok=True)
+    if args.save_per_layer is not None:
+        os.makedirs(args.save_per_layer, exist_ok=True)
 
     layers = os.listdir(args.legacy_model_path)
 

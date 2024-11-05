@@ -1,6 +1,6 @@
 import numpy as np
-import spqr_cuda
 import torch
+import spqr_cuda
 import time
 import os
 import sys
@@ -60,7 +60,7 @@ if __name__ == '__main__':
 
     with open(sys.argv[3], 'w') as f:
         base_path = sys.argv[1]
-        base_path_modified_csr = f'{sys.argv[1]}_modified_csr'
+        base_path_modified_csr = f'{sys.argv[1]}_ptcsr'
 
         seed = 1
         np.random.seed(seed)
