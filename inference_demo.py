@@ -1,4 +1,3 @@
-import sys
 import time
 from enum import IntEnum
 from typing import Tuple
@@ -70,8 +69,6 @@ class LLama:
 
         self.model.eval()
 
-        self.device = device
-
         if backend is None:
             self.model = self.model.to(device=self.device, dtype=self.dtype)
         else:
@@ -135,19 +132,19 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(add_help=True)
 
     parser.add_argument(
-        "pretrained_model_path",
+        "--pretrained_model_path",
         type=str,
         help="Path to the model to the pretrained model",
     )
     parser.add_argument(
-        "compressed_model_path",
+        "--compressed_model_path",
         type=str,
         help="Path to the compressed .pt model",
     )
     parser.add_argument(
-        "execution_mode",
-        type=int,
+        "--execution_mode",
         choices=[0, 1],
+        required=True,
         help="If set to 0, will evaluate the dense pretrained model. "
              "If set to 1, will evaluate the spqr-quantized model",
     )

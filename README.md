@@ -140,7 +140,47 @@ SpQR matvec. The file `inference_demo.py` contains a demo of this functionality
 by running end-to-end model inference. Below is an example of how to launch it.
 
 ```bash
-python inference_demo.py  ...
+usage: inference_demo.py [-h] [--pretrained_model_path PRETRAINED_MODEL_PATH] [--compressed_model_path COMPRESSED_MODEL_PATH] --execution_mode {0,1}
+
+options:
+  -h, --help            show this help message and exit
+  --pretrained_model_path PRETRAINED_MODEL_PATH
+                        Path to the model to the pretrained model
+  --compressed_model_path COMPRESSED_MODEL_PATH
+                        Path to the compressed .pt model
+  --execution_mode {0,1}
+                        If set to 0, will evaluate the dense pretrained model. If set to 1, will evaluate the spqr-quantized model
+```
+
+This script also reports the mean and median time of the forward() passes and the total inference execution time. 
+
+# Pre-Requisites for Running the Conversion Scripts, Tests and Benchmarks
+
+In order to run the benchmark and test suite you need to build the sources used by these scripts.
+You can do so by running the following command:
+
+```bash
+/bin/bash scripts/build.sh 
+```
+
+which simply runs the `setup.py` script.
+
+# Benchmarks (matvec kernel)
+
+In order to run the matvec benchmark suite, one should run:
+
+```bash
+python3 bench_spqr.py <path_to_tensor_storage>
+```
+
+Make sure that the `<path_to_data>` points to a folder containing quantized matrices produced by the `convert_legacy_model_format.py` script.
+
+# Tests
+
+In order to run the unittest, simply execute:
+
+```bash
+python3 tests/test.py
 ```
 
 
@@ -154,37 +194,4 @@ python inference_demo.py  ...
       archivePrefix={arXiv},
       primaryClass={cs.CL}
 }
-```
-
-# Building the Repository
-
-You can build this repository by running the following command:
-
-```bash
-/bin/bash scripts/build.sh 
-```
-
-# Conversion Script
-
-In order the SpMV performance of tensors from a model produced by the SpQR algorithm, run:
-
-```bash
-python3 compress.py <path_to_spqr_model_output> <compressed_model_path>
-```
-
-# Running the Benchmark
-
-In order to run the benchmark suite, one should run:
-
-```bash
-python3 bench_spqr.py <path_to_data>
-```
-
-Make sure that the `<path_to_data>` points to a folder containing quantized matrices produced by the `convert.py` script.
-
-# Tests
-
-
-```bash
-python3 tests/test.py
 ```
