@@ -402,29 +402,29 @@ PIPELINE_DEPTH> __global__ void spqr_quantized_matvec_fused_csr_modified(
 
   u32 s = s_row_offsets[0];
   u32 e = s_row_offsets[1];
-  //
-  // if (e - s) {
-  //   half *s_x = reinterpret_cast<half *>(s_x2);
-  //
-  //   if (s + thread_xy < e) {
-  //     ColVal colval{._ = col_vals_interleaved[s + thread_xy]};
-  //     auto c = colval.members.c;
-  //     auto v = colval.members.v;
-  //     acc += __half2float(v) * __half2float(s_x[c]);
-  //   }
-  //
-  //   for (u32 i = s + thread_xy + BLOCK_WIDTH * BETA1; i < e; i += BLOCK_WIDTH * BETA1) {
-  //     ColVal colval{
-  //         ._ = col_vals_interleaved[i]
-  //     };
-  //
-  //     if (!colval._) break;
-  //
-  //     auto c = colval.members.c;
-  //     auto v = colval.members.v;
-  //     acc += __half2float(v) * __half2float(s_x[c]);
-  //   }
-  // }
+
+  if (e - s) {
+    half *s_x = reinterpret_cast<half *>(s_x2);
+
+    if (s + thread_xy < e) {
+      ColVal colval{._ = col_vals_interleaved[s + thread_xy]};
+      auto c = colval.members.c;
+      auto v = colval.members.v;
+      acc += __half2float(v) * __half2float(s_x[c]);
+    }
+
+    for (u32 i = s + thread_xy + BLOCK_WIDTH * BETA1; i < e; i += BLOCK_WIDTH * BETA1) {
+      ColVal colval{
+          ._ = col_vals_interleaved[i]
+      };
+
+      if (!colval._) break;
+
+      auto c = colval.members.c;
+      auto v = colval.members.v;
+      acc += __half2float(v) * __half2float(s_x[c]);
+    }
+  }
 
   __syncthreads();
 
