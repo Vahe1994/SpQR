@@ -2,6 +2,7 @@ import unittest
 
 import numpy as np
 import torch
+import spqr_cuda
 
 import test_util
 import inference
@@ -12,6 +13,24 @@ np.random.seed(seed)
 torch.random.manual_seed(seed)
 
 DEV = torch.device('cuda:0')
+
+
+def torch_mul(deq_w, x):
+    runs = torch.empty(1).cpu().float()
+
+    if len(deq_w.shape) == 1:
+        n = x.shape[0]
+        m = deq_w.shape[0] // n
+    else:
+        m, n = deq_w.shape
+
+    assert (n == x.shape[0])
+
+    y = torch.zeros(m, dtype=x.dtype, device=x.device)
+
+    spqr_cuda.torch_mul_fp16(m, n, deq_w, x, y, runs[0])
+
+    return y
 
 
 class TestSparseFp16Easy(unittest.TestCase):
@@ -31,9 +50,9 @@ class TestSparseFp16Easy(unittest.TestCase):
 
                         x_fp16_device = x_fp32.cuda(device=device).half()
 
-                        deq_w = inference.dequantize(spqr_module).to(device)
+                        deq_w = spqr_module.dequantize().to(device)
 
-                        y_true, _ = inference.torch_mul_timer(deq_w, x_fp16_device, 1)
+                        y_true = torch_mul(deq_w, x_fp16_device)
                         y = torch.zeros(m, dtype=torch.half, device=device)
 
                         inference.spqr_mul(spqr_module_device, x_fp16_device, y, flag)
@@ -51,7 +70,9 @@ class TestSparseFp16DenseOnly(unittest.TestCase):
         device = torch.device('cuda:0')
         for m in [16, 32, 64, 128, 256]:
             for n in [16, 32, 64, 128, 256, 512, 4096, 11008]:
-                for create_matrix in [test_util.create_ones, test_util.create_random_weights_ones, test_util.create_random_first_order_ones, test_util.create_random_second_order_ones, test_util.create_random]:
+                for create_matrix in [test_util.create_ones, test_util.create_random_weights_ones,
+                                      test_util.create_random_first_order_ones,
+                                      test_util.create_random_second_order_ones, test_util.create_random]:
                     for create_x in [test_util.create_x_zeros, test_util.create_x_ones, test_util.create_x_random]:
                         for flag in [inference.FeatureFlags.SPARSE_FUSED_FP32]:
                             # Generate test case
@@ -60,7 +81,7 @@ class TestSparseFp16DenseOnly(unittest.TestCase):
 
                             deq_w = spqr_module.dequantize().to(device)
 
-                            y_true, _ = inference.torch_mul_timer(deq_w, x_fp16_device, 1)
+                            y_true = torch_mul(deq_w, x_fp16_device)
                             y = torch.zeros(m, dtype=torch.half, device=device)
 
                             inference.spqr_mul(quantized_linear, x_fp16_device, y, flag)
@@ -90,10 +111,9 @@ class TestSparseFp16Fused(unittest.TestCase):
 
                             x_fp16_device = x_fp32.cuda(device=device).half()
 
-                            deq_w = spqr_module.dequantize_dense_only().to(device)
+                            deq_w = spqr_module.dequantize().to(device)
 
-                            y_true, _ = inference.torch_mul_timer(deq_w, x_fp16_device, 1)
-                            y_true_dense, _ = inference.torch_mul_timer(deq_w, x_fp16_device, 1)
+                            y_true = torch_mul(deq_w, x_fp16_device)
                             y = torch.zeros(m, dtype=torch.half, device=device)
 
                             inference.spqr_mul(spqr_module_device, x_fp16_device, y, flag)
