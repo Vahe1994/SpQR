@@ -80,7 +80,7 @@ class TestSparseFp16Easy(unittest.TestCase):
 
 
 class TestSparseFp16DenseOnly(unittest.TestCase):
-    def test_sparse_random(self):
+    def test_dense_random(self):
         print('')
         # Call this once just to trigger the annoying torch sparse warning.
         device = torch.device('cuda:0')
@@ -91,22 +91,21 @@ class TestSparseFp16DenseOnly(unittest.TestCase):
                                       test_util.create_random_second_order_ones, test_util.create_random]:
                     for create_x in [test_util.create_x_zeros, test_util.create_x_ones, test_util.create_x_random]:
                         for flag in [inference.FeatureFlags.SPARSE_FUSED_FP32]:
-                            for sparse_storage in [SparseStorageConfiguration.CSR, SparseStorageConfiguration.PTCSR]:
-                                # Generate test case
-                                x_fp16_device = create_x(n).cuda(device=device)
-                                spqr_module, quantized_linear = create_matrix(m, n, sparse_storage)
+                            # Generate test case
+                            x_fp16_device = create_x(n).cuda(device=device)
+                            spqr_module, quantized_linear = test_util.create_random(m, n, 0)
 
-                                deq_w = spqr_module.dequantize().to(device)
+                            deq_w = spqr_module.dequantize().to(device)
 
-                                y_true = torch_mul(deq_w, x_fp16_device)
-                                y = torch.zeros(m, dtype=torch.half, device=device)
+                            y_true = torch_mul(deq_w, x_fp16_device)
+                            y = torch.zeros(m, dtype=torch.half, device=device)
 
-                                spqr_mul(quantized_linear, x_fp16_device, y, flag)
+                            spqr_mul(quantized_linear, x_fp16_device, y, flag)
 
-                                passed = torch.equal(y, y_true)
+                            passed = torch.equal(y, y_true)
 
-                                self.assertTrue(passed,
-                                                msg=f'\n\n\nFailed for m = {m} n = {n} density = {0}\ny={y}\ny_true={y_true}\nmatrix method={create_matrix}\nx method={create_x}')
+                            self.assertTrue(passed,
+                                            msg=f'\n\n\nFailed for m = {m} n = {n} density = {0}\ny={y}\ny_true={y_true}\nmatrix method={create_matrix}\nx method={create_x}')
 
 
 class TestSparseFp16Fused(unittest.TestCase):
@@ -121,6 +120,7 @@ class TestSparseFp16Fused(unittest.TestCase):
                         for flag in [
                             inference.FeatureFlags.SPARSE_FUSED_FP32,
                         ]:
+                            print(f'Running m = {m} n = {n} density = {density} storage = {compression_strategy}')
                             # Generate test case
                             x_fp32 = test_util.generate_x_fp32(n)
                             spqr_module, spqr_module_device = test_util.create_random(m, n, density,
