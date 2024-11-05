@@ -81,41 +81,41 @@ class MatrixBuilder:
 
 def create_spqr_quantized_matrix(m: int,
                                  n: int,
-                                 weight_strategy: int = None,
-                                 first_strategy: int = None,
-                                 second_order_strategy: torch.float16 = None,
+                                 weight_init_strategy: int = None,
+                                 first_order_init_strategy: int = None,
+                                 second_order_init_strategy: torch.float16 = None,
                                  density: float = 0.,
                                  sparse_storage: SparseStorageConfiguration = SparseStorageConfiguration.CSR,
                                  in_perm=None) -> Tuple[QuantizedLinear, QuantizedLinear]:
     beta1, beta2 = 16, 16
 
-    if weight_strategy is None:
+    if weight_init_strategy is None:
         W_quantized = generate_3bit(m * n)
         W = W_quantized.char()
     else:
-        W = (torch.ones(m * n) * weight_strategy).char()
+        W = (torch.ones(m * n) * weight_init_strategy).char()
 
     num_first_order_groups = updiv(n, beta2) * m
     num_second_order_groups = updiv(m, beta1) * updiv(n, beta2)
 
-    if first_strategy is None:
+    if first_order_init_strategy is None:
         W_s_raw = generate_3bit(num_first_order_groups)
         W_z_raw = generate_3bit(num_first_order_groups)
         W_s = W_s_raw.char()
         W_z = W_z_raw.char()
     else:
-        W_s = (torch.ones(m * n) * first_strategy).char()
+        W_s = (torch.ones(m * n) * first_order_init_strategy).char()
         W_z = torch.zeros(m * n).char()
 
-    if second_order_strategy is None:
+    if second_order_init_strategy is None:
         W_s_s = generate_x_fp32(num_second_order_groups).half()
         W_s_z = generate_x_fp32(num_second_order_groups).half()
         W_z_s = generate_x_fp32(num_second_order_groups).half()
         W_z_z = generate_x_fp32(num_second_order_groups).half()
     else:
-        W_s_s = torch.ones(num_second_order_groups).half() * second_order_strategy
+        W_s_s = torch.ones(num_second_order_groups).half() * second_order_init_strategy
         W_s_z = torch.zeros(num_second_order_groups).half()
-        W_z_s = torch.ones(num_second_order_groups).half() * second_order_strategy
+        W_z_s = torch.ones(num_second_order_groups).half() * second_order_init_strategy
         W_z_z = torch.zeros(num_second_order_groups).half()
 
     if density == 0:
