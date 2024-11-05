@@ -140,7 +140,7 @@ SpQR matvec. The file `inference_demo.py` contains a demo of this functionality
 by running end-to-end model inference. Below is an example of how to launch it.
 
 ```bash
-python inference_demo.py
+python inference_demo.py  ...
 ```
 
 
@@ -156,14 +156,12 @@ python inference_demo.py
 }
 ```
 
-
-
 # Building the Repository
 
 You can build this repository by running the following command:
 
 ```bash
-/bin/bash scripts/build.sh
+/bin/bash scripts/build.sh 
 ```
 
 # Conversion Script

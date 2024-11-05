@@ -8,6 +8,8 @@ CUDA_KERNEL = load(
     name="spqr_torch_lib",
     sources=[os.path.join(CUDA_FOLDER, "spqr_torch_lib.cpp"),
              os.path.join(CUDA_FOLDER, "spqr_cuda_kernel.cu")],
+    extra_cuda_cflags=['-O3', '-arch=native']
+
 )
 
 torch.library.define(

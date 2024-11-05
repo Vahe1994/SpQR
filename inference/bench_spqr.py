@@ -1,4 +1,5 @@
 import numpy as np
+import spqr_cuda
 import torch
 import time
 import os
@@ -8,6 +9,51 @@ import inference
 import tests.test_util as test_util
 
 from scipy.stats import gmean
+
+
+def spqr_mul_timer(spqr_device: inference.QuantizedLinear, x, feature_flag: inference.FeatureFlags, num_runs):
+    runs = torch.empty(num_runs).cpu().float()
+    y = torch.zeros(spqr_device.m, dtype=x.dtype, device=x.device)
+
+    for i in range(num_runs):
+        y = torch.zeros_like(y)
+        spqr_cuda.spqr_mul_timer(
+            spqr_device.m,
+            spqr_device.n,
+            spqr_device.bits,
+            spqr_device.beta1,
+            spqr_device.beta2,
+            spqr_device.buff0,
+            spqr_device.row_offsets,
+            spqr_device.col_vals,
+            spqr_device.nnz,
+            x,
+            y,
+            runs[i],
+            feature_flag)
+
+    return y, runs
+
+
+def torch_mul_timer(deq_w, x, num_runs):
+    if len(deq_w.shape) == 1:
+        n = x.shape[0]
+        m = deq_w.shape[0] // n
+    else:
+        m, n = deq_w.shape
+
+    assert (n == x.shape[0])
+
+    runs = torch.empty(num_runs).cpu().float()
+
+    y = torch.zeros(m, dtype=x.dtype, device=x.device)
+
+    for i in range(num_runs):
+        y = torch.zeros_like(y)
+        spqr_cuda.torch_mul_fp16(m, n, deq_w, x, y, runs[i])
+
+    return y, runs
+
 
 if __name__ == '__main__':
     torch_runs = {}
@@ -29,12 +75,11 @@ if __name__ == '__main__':
             for n in [4096, 11008]:
                 d = torch.zeros((m, n), dtype=torch.float16, device=device)
                 x = torch.zeros(n, dtype=torch.float16, device=device)
-                y, dense_runs = inference.torch_mul_timer(d, x, NUM_RUNS)
+                y, dense_runs = torch_mul_timer(d, x, NUM_RUNS)
                 this_algorithm = dense_runs[WARMUP:].min()
                 torch_runs[(m, n)] = this_algorithm
                 torch.cuda.empty_cache()
                 time.sleep(2)
-
 
         folders = os.listdir(base_path)
         folders_modified_csr = os.listdir(base_path_modified_csr)
@@ -103,7 +148,8 @@ if __name__ == '__main__':
                     torch.cuda.empty_cache()
                     time.sleep(1)
 
-                    y, spqr_runs_modified_csr = inference.spqr_mul_timer(spqr_module_device, x_fp16_device, flag, NUM_RUNS)
+                    y, spqr_runs_modified_csr = inference.spqr_mul_timer(spqr_module_device, x_fp16_device, flag,
+                                                                         NUM_RUNS)
                     spqr_runs_modified_csr = spqr_runs_modified_csr[WARMUP:]
                     this_algorithm_modified_csr = spqr_runs_modified_csr.min()
 
@@ -120,7 +166,6 @@ if __name__ == '__main__':
                     baseline_speed_up = max(speed_up, speed_up_modified_csr)
                     benchmark_results_ms.append(min(this_algorithm, this_algorithm_modified_csr))
                     benchmark_speed_up.append(baseline_speed_up)
-
 
                 f.write('\n')
                 f.flush()

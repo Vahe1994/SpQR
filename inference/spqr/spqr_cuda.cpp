@@ -293,7 +293,7 @@ void spqr_mul_timer(int m, int n,
                         measurements.data_ptr(), feature_flag);
 }
 
-void spqr_mul(int m, int n,
+int spqr_mul(int m, int n,
     // W and meta
               int bits,
     // Quantization
@@ -311,7 +311,6 @@ void spqr_mul(int m, int n,
   int dev = buff0.get_device();
   // Choose which algorithm to use
   int row_offsets_len = row_offsets.sizes()[0];
-  // TODO: Propagate error one layer up.
   int err = spqr_matvec(
       bits, m, n, beta1, beta2, buff0.data_ptr(),
       row_offsets_len,
@@ -319,11 +318,12 @@ void spqr_mul(int m, int n,
       nnz,
       X.data_ptr(), nullptr, Y.data_ptr(),
       at::cuda::getCurrentCUDAStream(dev), nullptr, feature_flag);
+  return err;
 }
 
 enum class SparseCompressionStrategy {
   CSR = 0,
-  CSR_2 = 1
+  PTCSR = 1
 };
 
 void tensor_compress_interleaved(

@@ -318,50 +318,6 @@ def spqr_mul(spqr_device: QuantizedLinear, x, y, feature_flag: FeatureFlags):
     )
 
 
-def torch_mul_timer(deq_w, x, num_runs):
-    if len(deq_w.shape) == 1:
-        n = x.shape[0]
-        m = deq_w.shape[0] // n
-    else:
-        m, n = deq_w.shape
-
-    assert (n == x.shape[0])
-
-    runs = torch.empty(num_runs).cpu().float()
-
-    y = torch.zeros(m, dtype=x.dtype, device=x.device)
-
-    for i in range(num_runs):
-        y = torch.zeros_like(y)
-        spqr_cuda.torch_mul_fp16(m, n, deq_w, x, y, runs[i])
-
-    return y, runs
-
-
-def spqr_mul_timer(spqr_device: QuantizedLinear, x, feature_flag: FeatureFlags, num_runs):
-    runs = torch.empty(num_runs).cpu().float()
-    y = torch.zeros(spqr_device.m, dtype=x.dtype, device=x.device)
-
-    for i in range(num_runs):
-        y = torch.zeros_like(y)
-        spqr_cuda.spqr_mul_timer(
-            spqr_device.m,
-            spqr_device.n,
-            spqr_device.bits,
-            spqr_device.beta1,
-            spqr_device.beta2,
-            spqr_device.buff0,
-            spqr_device.row_offsets,
-            spqr_device.col_vals,
-            spqr_device.nnz,
-            x,
-            y,
-            runs[i],
-            feature_flag)
-
-    return y, runs
-
-
 def write_tensor(spqr_module: QuantizedLinear, path: str):
     torch.save(spqr_module, path)
 

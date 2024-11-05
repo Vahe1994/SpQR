@@ -7,9 +7,6 @@ class build_ext_with_compiler_detection(cpp_extension.BuildExtension):
         # self.compiler.linker_so[0] = 'mold'
         super().build_extensions()
 
-ARCH = 86
-
-
 setup(
     name='spqr',
     version='0.1.1',
@@ -26,9 +23,6 @@ setup(
                 'inference/spqr/spqr_cuda_kernel.cu',
                 'inference/spqr/torch_bench.cu'
             ],
-            include_dirs=[
-                'inference/spqr/bit_array.cuh'
-            ],
             extra_compile_args={'cxx': [
                 '-fuse-ld=mold',
                 '-Wall',
@@ -38,8 +32,7 @@ setup(
                     '-O3',
                     '-std=c++17',
                     '-lineinfo',
-                    f'-arch=sm_{ARCH}',
-                    f'-gencode=arch=compute_{ARCH},code=compute_{ARCH}'
+                    '-arch=native'
                 ]}
         )
     ],
