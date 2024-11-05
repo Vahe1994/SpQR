@@ -119,8 +119,8 @@ if __name__ == '__main__':
 
                 deq_w = spqr_module.dequantize()
 
-                spqr_module.to_device(device)
-                spqr_module_modified_csr.to_device(device)
+                spqr_module.to(device=device)
+                spqr_module_modified_csr.to(device=device)
                 spqr_module_device = spqr_module
                 spqr_module_device_modified_csr = spqr_module_modified_csr
 
@@ -141,15 +141,14 @@ if __name__ == '__main__':
                 for flag in methods:
                     print(f'Running {repr(flag)} on {layer_id}.{p}')
 
-                    y, spqr_runs = inference.spqr_mul_timer(spqr_module_device, x_fp16_device, flag, NUM_RUNS)
+                    y, spqr_runs = spqr_mul_timer(spqr_module_device, x_fp16_device, flag, NUM_RUNS)
                     spqr_runs = spqr_runs[WARMUP:]
                     this_algorithm = spqr_runs.min()
 
                     torch.cuda.empty_cache()
                     time.sleep(1)
 
-                    y, spqr_runs_modified_csr = inference.spqr_mul_timer(spqr_module_device, x_fp16_device, flag,
-                                                                         NUM_RUNS)
+                    y, spqr_runs_modified_csr = spqr_mul_timer(spqr_module_device, x_fp16_device, flag, NUM_RUNS)
                     spqr_runs_modified_csr = spqr_runs_modified_csr[WARMUP:]
                     this_algorithm_modified_csr = spqr_runs_modified_csr.min()
 
