@@ -1,10 +1,12 @@
+import os
 import time
 from enum import IntEnum
 from typing import Tuple
 
 import numpy as np
 import torch
-from transformers import AutoModelForCausalLM, LlamaTokenizer, AutoConfig, StaticCache
+from transformers import AutoModelForCausalLM, LlamaTokenizer, AutoConfig, StaticCache, LlamaForCausalLM, LlamaModel, LlamaConfig
+
 
 from modelutils import suspend_nn_inits
 
@@ -21,8 +23,9 @@ except ModuleNotFoundError:
 
 
 class Mode(IntEnum):
-    CUDA_PT = 0
-    CUDA_DENSE = 1
+    DENSE = 0
+    QUANTIZED = 1
+    TORCH_PT = 2
 
 
 def decode_one_tokens(model, cur_token, input_pos, cache_position, past_key_values):
@@ -45,18 +48,33 @@ class LLama:
         self.device = device
         self.dtype = torch.float16
         self.torchscript = torchscript
+        self.backend = backend
 
-        self.config = AutoConfig.from_pretrained(pretrained_model_path, torchscript=self.torchscript,
-                                                 return_dict=True)
-        self.config.max_position_embeddings = 4096
-
-        if flag == Mode.CUDA_PT:
+        if flag == Mode.TORCH_PT:
+            self.config = AutoConfig.from_pretrained(pretrained_model_path, torchscript=self.torchscript)
+            self.model = torch.load(os.path.join(quantized_model_path, 'pytorch_model.bin'))
+        elif flag == Mode.QUANTIZED:
             with suspend_nn_inits():
                 with torch.no_grad():
-                    self.model = torch.load(quantized_model_path)
+                    self.config = AutoConfig.from_pretrained(quantized_model_path, torchscript=self.torchscript,
+                                                             return_dict=True,
+                                                             from_tf=True)
+                    self.model = AutoModelForCausalLM.from_pretrained(
+                        pretrained_model_name_or_path=quantized_model_path,
+                        trust_remote_code=True,
+                        config=self.config,
+                        from_tf=False,
+                        weights_only=False,
+                        low_cpu_mem_usage=True,
+                        device_map='cpu',
+                        no_cuda=True
+                    )
+                    print('Finished loading')
         else:
             with suspend_nn_inits():
                 with torch.no_grad():
+                    self.config = AutoConfig.from_pretrained(pretrained_model_path, torchscript=self.torchscript,
+                                                             return_dict=True)
                     self.model = AutoModelForCausalLM.from_pretrained(
                         pretrained_model_name_or_path=pretrained_model_path,
                         trust_remote_code=True,
@@ -105,25 +123,26 @@ class LLama:
         forward_time_s = []
         with torch.no_grad():
             # Compile the CUDA graph
-            decode_one_tokens_compiled = torch.compile(decode_one_tokens, mode='reduce-overhead', fullgraph=False)
+            if self.backend is None:
+                decode_one_tokens_compiled = decode_one_tokens
+            else:
+                decode_one_tokens_compiled = torch.compile(decode_one_tokens, mode='reduce-overhead', fullgraph=False)
 
             # Generate tokens one by one
             cache_position = torch.tensor([seq_len + 1], device="cuda")
             for _ in range(1, max_new_tokens):
                 # with torch.nn.attention.sdpa_kernel([SDPBackend.MATH]):
-                with torch.backends.cuda.sdp_kernel(enable_flash=False, enable_mem_efficient=False, enable_math=True):
-                    start_time = time.time()
-                    next_token = decode_one_tokens_compiled(self.model, next_token.clone(), None, cache_position,
-                                                            past_key_values)
-                    generated_ids[:, cache_position] = next_token.int()
-                    end_time = time.time()
-                    print(f'duration = {end_time - start_time}')
-                    forward_time_s.append(end_time - start_time)
+                start_time = time.time()
+                next_token = decode_one_tokens_compiled(self.model, next_token.clone(), None, cache_position,
+                                                        past_key_values)
+                generated_ids[:, cache_position] = next_token.int()
+                end_time = time.time()
+                print(f'duration = {end_time - start_time}')
+                forward_time_s.append(end_time - start_time)
 
                 cache_position += 1
-                # print(self.tokenizer.decode(generated_ids[0]))
 
-        return self.tokenizer.decode(generated_ids[0]), forward_time_s
+        return self.tokenizer.decode(generated_ids), forward_time_s
 
 
 if __name__ == "__main__":
@@ -143,10 +162,12 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--execution_mode",
-        choices=[0, 1],
+        choices=[0, 1, 2],
         required=True,
+        type=int,
         help="If set to 0, will evaluate the dense pretrained model. "
-             "If set to 1, will evaluate the spqr-quantized model",
+             "If set to 1, will evaluate the spqr-quantized model using HF"
+             "If set to 2, will evaluate the spqr-quantized model using torch .pt"
     )
 
     args = parser.parse_args()

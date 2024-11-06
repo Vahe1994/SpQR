@@ -60,6 +60,7 @@ def load_legacy_tensor(p: str, model_args: ModelArgs) -> SPQRLegacy:
 
 
 def replace_and_save_quantized_layers(model_args: ModelArgs, model_to_be_quantized, legacy_model_path,
+                                      parent_module=None, current_model=None,
                                       layer_id: int = -1, parent_tensor_name='', output_per_layer_path=None):
     """
     This function goes through the @model_to_be_quantized recursively and
@@ -78,7 +79,9 @@ def replace_and_save_quantized_layers(model_args: ModelArgs, model_to_be_quantiz
     @param layer_id: Internal used to keep track of the current layer as we descend the model.
     @param parent_tensor_name: Name of the previous layer in the recursion chain.
     """
-    for tensor_name, m in model_to_be_quantized.named_children():
+    if current_model == None:
+        current_model = model_to_be_quantized
+    for tensor_name, m in current_model.named_children():
         if tensor_name.isnumeric():
             layer_id = int(tensor_name)
             if output_per_layer_path is not None:
@@ -94,10 +97,10 @@ def replace_and_save_quantized_layers(model_args: ModelArgs, model_to_be_quantiz
                     per_layer_tensor_path = os.path.join(output_per_layer_path, f'{layer_id}',
                                                          f'{parent_tensor_name}.{tensor_name}')
                     torch.save(spqr_module, per_layer_tensor_path)
-                else:
-                    setattr(model_to_be_quantized, tensor_name, spqr_module)
-        elif m is not model_to_be_quantized:
-            replace_and_save_quantized_layers(model_args, m, legacy_model_path, layer_id, tensor_name,
+                setattr(current_model, tensor_name, spqr_module)
+        else:
+            replace_and_save_quantized_layers(model_args, model_to_be_quantized, legacy_model_path,
+                                              current_model, m, layer_id, tensor_name,
                                               output_per_layer_path)
 
 
@@ -127,8 +130,6 @@ if __name__ == '__main__':
                         help="Save the converted quantized model per layer here - useful for benchmarking individual layers")
 
     args, leftovers = parser.parse_known_args()
-    if args.save_pt is not None:
-        os.makedirs(args.save_pt, exist_ok=True)
 
     if args.save_per_layer is not None:
         os.makedirs(args.save_per_layer, exist_ok=True)

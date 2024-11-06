@@ -7,10 +7,8 @@ import torch
 from tqdm.auto import trange
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
-try:
-    import safetensors
-except ModuleNotFoundError:
-    safetensors = None
+import safetensors
+from safetensors.torch import save_model
 
 
 def get_int_dtype(nbits: int) -> torch.dtype:
@@ -77,26 +75,25 @@ def get_converted_state_dict(config, nbits: int, in_path: os.PathLike) -> [dict,
     return state_dict, linear_weights_not_to_quantize
 
 
-def get_metadata(in_path: os.PathLike) -> dict:
-    quant_args = torch.load(os.path.join(in_path, "args.pt"))
+def get_metadata(args_path: str) -> dict:
+    quant_args = torch.load(args_path)
     return {
-        "nbits_per_codebook": quant_args["nbits_per_codebook"],
-        "num_codebooks": quant_args["num_codebooks"],
-        "out_group_size": quant_args["out_group_size"],
-        "in_group_size": quant_args["in_group_size"],
+        "bits": quant_args["wbits"],
+        "beta1": quant_args["qq_groupsize"],
+        "beta2": quant_args["groupsize"]
     }
 
 
-def update_config(config_dict: dict, aqlm_metadata: dict[str, int], linear_weights_not_to_quantize: list[str]):
+def update_config(config_dict: dict, spqr_metadata: dict[str, int], linear_weights_not_to_quantize: list[str]):
     config_dict["quantization_config"] = {
-        "quant_method": "aqlm",
-        "nbits_per_codebook": aqlm_metadata["nbits_per_codebook"],
-        "num_codebooks": aqlm_metadata["num_codebooks"],
-        "out_group_size": aqlm_metadata["out_group_size"],
-        "in_group_size": aqlm_metadata["in_group_size"],
-        "linear_weights_not_to_quantize": linear_weights_not_to_quantize,
+        "quant_method": "spqr",
+        "beta1": spqr_metadata["beta1"],
+        "beta2": spqr_metadata["beta2"],
+        "bits": spqr_metadata["bits"],
     }
-    config_dict["torch_dtype"] = "float16"
+    config_dict["torch_dtype"] = None
+    config_dict["_attn_implementation_autoset"] = False
+    config_dict["architectures"] = []
     return config_dict
 
 
@@ -113,17 +110,22 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(add_help=True)
 
     parser.add_argument(
-        "model",
+        "--model",
         type=str,
         help="Path to the model to base config on, as in AutoConfig.from_pretrained()",
     )
     parser.add_argument(
-        "in_path",
+        "--config_path",
+        type=str,
+        help="Path to the model to base config on, as in AutoConfig.from_pretrained()",
+    )
+    parser.add_argument(
+        "--in_path_pt",
         type=str,
         help="Path of the checkpoint to convert",
     )
     parser.add_argument(
-        "out_path",
+        "--out_path",
         type=str,
         help="Path to save HF compatible checkpoint to",
     )
@@ -150,18 +152,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     old_config = AutoConfig.from_pretrained(args.model, trust_remote_code=args.trust_remote_code)
-    metadata = get_metadata(args.in_path)
-
-    # load dummy model
-    if args.load_model:
-        model = AutoModelForCausalLM.from_pretrained(
-            args.model, trust_remote_code=args.trust_remote_code, low_cpu_mem_usage=True, torch_dtype=torch.float16
-        )
-
-    state_dict, linear_weights_not_to_quantize = get_converted_state_dict(
-        old_config, metadata["nbits_per_codebook"], args.in_path
-    )
-    torch.save(state_dict, os.path.join(args.out_path, "pytorch_model.bin"))
+    metadata = get_metadata(os.path.join(args.config_path, 'args.pt'))
+    linear_weights_not_to_quantize = torch.load(os.path.join(args.config_path, 'not_quantized_weights.pt')).keys()
 
     new_config_dict = update_config(old_config.to_diff_dict(), metadata, linear_weights_not_to_quantize)
     with open(os.path.join(args.out_path, "config.json"), "w") as config_file:
@@ -169,10 +161,10 @@ if __name__ == "__main__":
 
     # convert to safetensors
     if args.save_safetensors:
-        assert safetensors
-        model = AutoModelForCausalLM.from_pretrained(args.out_path, trust_remote_code=True, torch_dtype=torch.float16)
-        shutil.rmtree(args.out_path)
-        model.save_pretrained(args.out_path)
+        # load dummy model
+        model = torch.load(args.in_path_pt)
+        # torch.save(model, os.path.join(args.out_path, "pytorch_model.bin"))
+        save_model(model, os.path.join(args.out_path, "model.safetensors"), metadata={"format": "pt"})
 
     if args.save_tokenizer:
         tokenizer = AutoTokenizer.from_pretrained(args.model)

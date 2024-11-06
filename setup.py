@@ -4,7 +4,6 @@ from torch.utils import cpp_extension
 
 class build_ext_with_compiler_detection(cpp_extension.BuildExtension):
     def build_extensions(self):
-        # self.compiler.linker_so[0] = 'mold'
         super().build_extensions()
 
 setup(
