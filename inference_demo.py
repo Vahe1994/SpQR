@@ -73,8 +73,10 @@ class LLama:
         else:
             with suspend_nn_inits():
                 with torch.no_grad():
-                    self.config = AutoConfig.from_pretrained(pretrained_model_path, torchscript=self.torchscript,
-                                                             return_dict=True)
+                    config = AutoConfig.from_pretrained(pretrained_model_path, torchscript=self.torchscript,
+                                                        return_dict=True)
+                    config.max_position_embeddings = 4096
+
                     self.model = AutoModelForCausalLM.from_pretrained(
                         pretrained_model_name_or_path=pretrained_model_path,
                         trust_remote_code=True,
@@ -106,7 +108,7 @@ class LLama:
         generated_ids = torch.zeros(1, seq_len + max_new_tokens * 2, dtype=torch.int, device=self.device)
         generated_ids[:, cache_position] = input_ids.to(self.device).to(torch.int)
 
-        past_key_values = StaticCache(self.config,
+        past_key_values = StaticCache(self.model.config,
                                       1,
                                       seq_len + max_new_tokens * 2 + 1,
                                       device=self.device,
@@ -142,7 +144,7 @@ class LLama:
 
                 cache_position += 1
 
-        return self.tokenizer.decode(generated_ids), forward_time_s
+        return self.tokenizer.decode(generated_ids[0]), forward_time_s
 
 
 if __name__ == "__main__":
