@@ -89,7 +89,7 @@ if __name__ == '__main__':
         if run_ptcsr:
             folders_modified_csr = os.listdir(base_path_modified_csr)
         else:
-            folders_modified_csr = folders
+            folders_modified_csr = base_path
 
         folders.sort()
         folders_modified_csr.sort()
