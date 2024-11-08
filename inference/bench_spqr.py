@@ -112,7 +112,11 @@ if __name__ == '__main__':
 
         for layer_id in folders:
             folder = os.path.join(base_path, layer_id)
-            folders_modified_csr = os.path.join(base_path_modified_csr, layer_id)
+
+            if run_ptcsr:
+                folders_modified_csr = os.path.join(base_path_modified_csr, layer_id)
+            else:
+                folders_modified_csr = os.path.join(base_path, layer_id)
             if not os.path.isdir(folder):
                 continue
             for p, p_modified_csr in zip(os.listdir(folder), os.listdir(folders_modified_csr)):
