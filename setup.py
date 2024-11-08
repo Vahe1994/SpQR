@@ -23,7 +23,6 @@ setup(
                 'inference/spqr/torch_bench.cu'
             ],
             extra_compile_args={'cxx': [
-                '-fuse-ld=mold',
                 '-Wall',
             ],
                 'nvcc': [
