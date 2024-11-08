@@ -170,7 +170,7 @@ which simply runs the `setup.py` script.
 In order to run the matvec benchmark suite, one should run:
 
 ```bash
-python3 bench_spqr.py <path_to_tensor_storage>
+python3 bench_spqr.py <path_to_tensor_storage> <cuda_device_id> <results_output>
 ```
 
 Make sure that the `<path_to_data>` points to a folder containing quantized matrices produced by the `convert_legacy_model_format.py` script.

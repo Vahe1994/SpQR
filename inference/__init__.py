@@ -234,7 +234,7 @@ class QuantizedLinear(torch.nn.Module):
         """
         @return: Input reordering is an optional argument. Check if we should reorder before matvec.
         """
-        return self.in_perm is None or torch.numel(self.in_perm) == 0
+        return self.in_perm is not None and torch.numel(self.in_perm) != 0
 
     @torch.no_grad()
     def forward(self, x: T) -> T:

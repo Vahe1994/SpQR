@@ -5,8 +5,7 @@ from typing import Tuple
 
 import numpy as np
 import torch
-from transformers import AutoModelForCausalLM, LlamaTokenizer, AutoConfig, StaticCache, LlamaForCausalLM, LlamaModel, LlamaConfig
-
+from transformers import AutoModelForCausalLM, LlamaTokenizer, AutoConfig, StaticCache
 
 from modelutils import suspend_nn_inits
 
@@ -52,7 +51,7 @@ class LLama:
 
         if flag == Mode.TORCH_PT:
             self.config = AutoConfig.from_pretrained(pretrained_model_path, torchscript=self.torchscript)
-            self.model = torch.load(os.path.join(quantized_model_path, 'pytorch_model.bin'))
+            self.model = torch.load(os.path.join(quantized_model_path, 'pytorch_model.pt'))
         elif flag == Mode.QUANTIZED:
             with suspend_nn_inits():
                 with torch.no_grad():
@@ -87,7 +86,6 @@ class LLama:
         if self.torchscript:
             self.model = torch.jit.script(self.model)
 
-        self.model.eval()
 
         if backend is None:
             self.model = self.model.to(device=self.device, dtype=self.dtype)
@@ -97,6 +95,8 @@ class LLama:
         self.tokenizer = LlamaTokenizer.from_pretrained(pretrained_model_path, use_fast=False,
                                                         torchscript=self.torchscript)
         self.tokenizer.pad_token = self.tokenizer.eos_token
+
+        self.model.eval()
 
     def generate(self, input_str, max_new_tokens) -> Tuple:
         inputs = self.tokenizer(input_str, return_tensors="pt").to(device=self.device)
@@ -180,7 +180,7 @@ if __name__ == "__main__":
         model = LLama(args.pretrained_model_path, args.compressed_model_path, m)
         text = 'The recipe for banana bread is '  # input()
         s = time.time()
-        generated_text, timings_s = model.generate(text, max_new_tokens=128)
+        generated_text, timings_s = model.generate(text, max_new_tokens=16)
         e = time.time()
         print(f'{generated_text}')
 
