@@ -60,7 +60,10 @@ if __name__ == '__main__':
 
     with open(sys.argv[3], 'w') as f:
         base_path = sys.argv[1]
+
         base_path_modified_csr = f'{sys.argv[1]}_ptcsr'
+
+        run_ptcsr = os.path.exists(base_path_modified_csr)
 
         seed = 1
         np.random.seed(seed)
@@ -82,8 +85,14 @@ if __name__ == '__main__':
                 time.sleep(2)
 
         folders = os.listdir(base_path)
-        folders_modified_csr = os.listdir(base_path_modified_csr)
+
+        if run_ptcsr:
+            folders_modified_csr = os.listdir(base_path_modified_csr)
+        else:
+            folders_modified_csr = folders
+
         folders.sort()
+        folders_modified_csr.sort()
 
         methods = [
             inference.FeatureFlags.SPARSE_FUSED_FP32,
