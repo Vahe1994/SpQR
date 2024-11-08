@@ -173,7 +173,8 @@ In order to run the matvec benchmark suite, one should run:
 python3 bench_spqr.py <path_to_tensor_storage> <cuda_device_id> <results_output>
 ```
 
-Make sure that the `<path_to_data>` points to a folder containing quantized matrices produced by the `convert_legacy_model_format.py` script.
+Make sure that the `<path_to_tensor_storage>` points to a folder containing quantized matrices produced by the `convert_legacy_model_format.py` script.
+Use `<cuda_device_id>` to set the cuda device during benchmark. The script outputs the results in `<results_output>`.
 
 # Tests
 
