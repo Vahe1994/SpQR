@@ -72,9 +72,9 @@ class LLama:
         else:
             with suspend_nn_inits():
                 with torch.no_grad():
-                    config = AutoConfig.from_pretrained(pretrained_model_path, torchscript=self.torchscript,
+                    self.config = AutoConfig.from_pretrained(pretrained_model_path, torchscript=self.torchscript,
                                                         return_dict=True)
-                    config.max_position_embeddings = 4096
+                    self.config.max_position_embeddings = 4096
 
                     self.model = AutoModelForCausalLM.from_pretrained(
                         pretrained_model_name_or_path=pretrained_model_path,
@@ -177,7 +177,7 @@ if __name__ == "__main__":
     m = Mode(args.execution_mode)
 
     with torch.no_grad():
-        model = LLama(args.pretrained_model_path, args.compressed_model_path, m, backend='cudagraphs')
+        model = LLama(args.pretrained_model_path, args.compressed_model_path, m, backend='inductor')
         text = 'The recipe for banana bread is '  # input()
         s = time.time()
         generated_text, timings_s = model.generate(text, max_new_tokens=16)
