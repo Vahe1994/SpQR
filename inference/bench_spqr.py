@@ -94,7 +94,6 @@ if __name__ == '__main__':
     with open(args.output_path, 'w') as f:
         run_ptcsr = args.ptcsr_path is not None
 
-
         base_path = args.tensor_path
         base_path_modified_csr = args.ptcsr_path
 

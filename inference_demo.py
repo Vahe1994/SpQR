@@ -51,7 +51,7 @@ class LLama:
 
         if flag == Mode.TORCH_PT:
             self.config = AutoConfig.from_pretrained(pretrained_model_path, torchscript=self.torchscript)
-            self.model = torch.load(os.path.join(quantized_model_path, 'pytorch_model.pt'))
+            self.model = torch.load(quantized_model_path)
         elif flag == Mode.QUANTIZED:
             with suspend_nn_inits():
                 with torch.no_grad():
@@ -177,7 +177,7 @@ if __name__ == "__main__":
     m = Mode(args.execution_mode)
 
     with torch.no_grad():
-        model = LLama(args.pretrained_model_path, args.compressed_model_path, m)
+        model = LLama(args.pretrained_model_path, args.compressed_model_path, m, backend='cudagraphs')
         text = 'The recipe for banana bread is '  # input()
         s = time.time()
         generated_text, timings_s = model.generate(text, max_new_tokens=16)
