@@ -5,6 +5,7 @@ from typing import Tuple
 
 import numpy as np
 import torch
+from torch.nn.attention import SDPBackend
 from transformers import AutoModelForCausalLM, LlamaTokenizer, AutoConfig, StaticCache
 
 from modelutils import suspend_nn_inits
@@ -133,13 +134,13 @@ class LLama:
             # Generate tokens one by one
             cache_position = torch.tensor([seq_len + 1], device="cuda")
             for _ in range(1, max_new_tokens):
-                # with torch.nn.attention.sdpa_kernel([SDPBackend.MATH]):
-                start_time = time.time()
-                next_token = decode_one_tokens_compiled(self.model, next_token.clone(), None, cache_position,
-                                                        past_key_values)
-                generated_ids[:, cache_position] = next_token.int()
-                end_time = time.time()
-                print(f'duration = {end_time - start_time}')
+                with torch.nn.attention.sdpa_kernel([SDPBackend.MATH]):
+                    start_time = time.time()
+                    next_token = decode_one_tokens_compiled(self.model, next_token.clone(), None, cache_position,
+                                                            past_key_values)
+                    generated_ids[:, cache_position] = next_token.int()
+                    end_time = time.time()
+                    print(f'duration = {end_time - start_time}')
                 forward_time_s.append(end_time - start_time)
 
                 cache_position += 1
@@ -177,7 +178,7 @@ if __name__ == "__main__":
     m = Mode(args.execution_mode)
 
     with torch.no_grad():
-        model = LLama(args.pretrained_model_path, args.compressed_model_path, m, backend='inductor')
+        model = LLama(args.pretrained_model_path, args.compressed_model_path, m, backend='cudagraphs')
         text = 'The recipe for banana bread is '  # input()
         s = time.time()
         generated_text, timings_s = model.generate(text, max_new_tokens=16)
