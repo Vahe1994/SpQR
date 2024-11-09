@@ -250,8 +250,8 @@ class QuantizedLinear(torch.nn.Module):
 
         for i in range(inner_dim):
             _x = x[..., i, :].flatten()
-            # if self.should_reorder():
-            #     _x = _x[self.in_perm]
+            if self.should_reorder():
+                _x = _x[self.in_perm]
             _y = y[(i * self.m):((i + 1) * self.m)]
             call_spqr_mul(
                 self.m,
