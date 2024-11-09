@@ -252,7 +252,7 @@ class QuantizedLinear(torch.nn.Module):
             _x = x[..., i, :].flatten()
             if self.should_reorder():
                 _x = _x[self.in_perm]
-            _y = y[0, i]
+            _y = y
             call_spqr_mul(
                 self.m,
                 self.n,
