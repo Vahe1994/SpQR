@@ -169,11 +169,21 @@ which simply runs the `setup.py` script.
 
 In order to run the matvec benchmark suite, one should run:
 
-```bash
-python3 bench_spqr.py <path_to_tensor_storage> <cuda_device_id> <results_output>
+```bash 
+bench_spqr.py [-h] --tensor_path TENSOR_PATH [--ptcsr_path PTCSR_PATH] [--output_path OUTPUT_PATH]
+
+options:
+  -h, --help            show this help message and exit
+  --tensor_path TENSOR_PATH
+                        Path to folder containing the tensors of the formmodel_path/ 0/ tensor0 tensor1
+  --ptcsr_path PTCSR_PATH
+                        Path to folder containing the tensors of the formmodel_path/ 0/ tensor0 tensor1
+  --output_path OUTPUT_PATH
+                        Path to results *.csv file.
+
 ```
 
-Make sure that the `<path_to_tensor_storage>` points to a folder containing quantized matrices produced by the `convert_legacy_model_format.py` script.
+Make sure that the `<tensor_path>` and the optional `<ptcsr_path.` point to a folder containing quantized matrices produced by the `convert_legacy_model_format.py` script.
 Use `<cuda_device_id>` to set the cuda device during benchmark. The script outputs the results in `<results_output>`.
 
 # Tests
