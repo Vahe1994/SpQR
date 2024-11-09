@@ -246,12 +246,13 @@ class QuantizedLinear(torch.nn.Module):
         """
         inner_dim = x.shape[1]
 
-        if inner_dim == 1:
-            y = torch.empty((1, inner_dim, self.m), dtype=torch.float16, device=self.buff0.device)
-            _x = x
+        y = torch.empty((1, inner_dim, self.m), dtype=torch.float16, device=self.buff0.device)
+
+        for i in range(inner_dim):
+            _x = x[..., i, :].flatten()
             if self.should_reorder():
                 _x = _x[self.in_perm]
-            _y = y
+            _y = y[0, i]
             call_spqr_mul(
                 self.m,
                 self.n,
@@ -267,32 +268,7 @@ class QuantizedLinear(torch.nn.Module):
                 _y,
                 _y)
 
-            return y
-        else:
-
-            y = torch.empty((1, inner_dim, self.m), dtype=torch.float16, device=self.buff0.device)
-
-            for i in range(inner_dim):
-                _x = x[..., i, :].flatten()
-                if self.should_reorder():
-                    _x = _x[self.in_perm]
-                _y = y[0, i]
-                call_spqr_mul(
-                    self.m,
-                    self.n,
-                    self.bits,
-                    self.beta1,
-                    self.beta2,
-                    self.buff0,
-                    self.row_offsets,
-                    self.col_vals,
-                    self.nnz,
-                    _x,
-                    int(FeatureFlags.SPARSE_FUSED_FP32_ASYNC),
-                    _y,
-                    _y)
-
-            return y
+        return y
 
 def flatten_tensor(W):
     """

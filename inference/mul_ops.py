@@ -28,7 +28,6 @@ def spqr_mul_meta(m, n, bits, beta1, beta2, buff0, row_offsets, col_vals, nnz, x
 
 
 def call_spqr_mul(*args):
-    with torch.no_grad():
-        return torch.ops.spqr_torch_lib.spqr_mul(*args)
+    return torch.ops.spqr_torch_lib.spqr_mul(*args)
 
 
