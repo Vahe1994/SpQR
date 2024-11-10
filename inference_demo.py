@@ -126,18 +126,17 @@ class LLama:
             if self.backend is None:
                 decode_one_tokens_compiled = decode_one_tokens
             else:
-                decode_one_tokens_compiled = torch.compile(decode_one_tokens, mode='reduce-overhead', fullgraph=False)
+                decode_one_tokens_compiled = torch.compile(decode_one_tokens, mode='reduce-overhead', fullgraph=True)
 
             # Generate tokens one by one
             cache_position = torch.tensor([seq_len + 1], device="cuda")
             for _ in range(1, max_new_tokens):
-                with torch.nn.attention.sdpa_kernel([SDPBackend.MATH]):
-                    start_time = time.time()
-                    next_token = decode_one_tokens_compiled(self.model, next_token.clone(), None, cache_position,
-                                                            past_key_values)
-                    generated_ids[:, cache_position] = next_token.int()
-                    end_time = time.time()
-                    print(f'duration = {end_time - start_time}')
+                start_time = time.time()
+                next_token = decode_one_tokens_compiled(self.model, next_token.clone(), None, cache_position,
+                                                        past_key_values)
+                generated_ids[:, cache_position] = next_token.int()
+                end_time = time.time()
+                print(f'duration = {end_time - start_time}')
                 forward_time_s.append(end_time - start_time)
 
                 cache_position += 1
