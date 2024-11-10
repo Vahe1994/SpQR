@@ -88,10 +88,7 @@ class LLama:
             self.model = torch.jit.script(self.model)
 
 
-        if backend is None:
-            self.model = self.model.to(device=self.device, dtype=self.dtype)
-        else:
-            self.model = torch.compile(self.model.to(device=self.device, dtype=self.dtype), backend=backend)
+        self.model = self.model.to(device=self.device, dtype=self.dtype)
 
         self.tokenizer = LlamaTokenizer.from_pretrained(pretrained_model_path, use_fast=False,
                                                         torchscript=self.torchscript)

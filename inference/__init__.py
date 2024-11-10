@@ -268,7 +268,7 @@ class QuantizedLinear(torch.nn.Module):
                 _y,
                 _y)
 
-        return y
+            return y
 
 def flatten_tensor(W):
     """
