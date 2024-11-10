@@ -177,13 +177,13 @@ if __name__ == "__main__":
         model = LLama(args.pretrained_model_path, args.compressed_model_path, m, backend='inductor')
         text = 'The recipe for banana bread is '  # input()
         s = time.time()
-        generated_text, timings_s = model.generate(text, max_new_tokens=16)
+        generated_text, timings_s = model.generate(text, max_new_tokens=128)
         e = time.time()
         print(f'{generated_text}')
 
         print(f'Total duration = {e - s}s')
 
-        durations = np.array(timings_s[5:])
+        durations = np.array(timings_s[16:])
 
         print(f'Mean duration after caching initial input = {durations.mean()}')
         print(f'Median duration after caching initial input = {np.median(durations)}')
