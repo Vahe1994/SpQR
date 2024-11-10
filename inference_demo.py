@@ -126,10 +126,10 @@ class LLama:
             if self.backend is None:
                 decode_one_tokens_compiled = decode_one_tokens
             else:
-                decode_one_tokens_compiled = torch.compile(decode_one_tokens, mode='reduce-overhead', fullgraph=True)
+                decode_one_tokens_compiled = torch.compile(decode_one_tokens, mode='default', fullgraph=True)
 
             # Generate tokens one by one
-            cache_position = torch.tensor([seq_len + 1], device="cuda")
+            cache_position = torch.tensor([seq_len + 1], device='cuda')
             for _ in range(1, max_new_tokens):
                 start_time = time.time()
                 next_token = decode_one_tokens_compiled(self.model, next_token.clone(), None, cache_position,
