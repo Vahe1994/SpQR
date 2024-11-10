@@ -249,7 +249,12 @@ class QuantizedLinear(torch.nn.Module):
         y = torch.empty((1, inner_dim, self.m), dtype=torch.float16, device=self.buff0.device)
 
         for i in range(inner_dim):
-            _x = x[..., i, :].flatten()
+            if inner_dim != 1:
+                _x = x[..., i, :].flatten()
+            else:
+                _x = x.flatten()
+            if self.should_reorder():
+                _x = _x[self.in_perm]
             _y = y[0, i]
             call_spqr_mul(
                 self.m,
