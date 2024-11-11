@@ -207,13 +207,17 @@ constexpr int X_LOAD_BLOCK_SIZE = 8;
 using Load_t = __int128_t;
 constexpr bool PIPELINED_LOAD = false;
 
+
+// #define DEQUANTIZE(v) make_half2(__int2half_rd((v) & 0b111), __int2half_rd(((v) >> 3) & 0b111))
+#define INT2_TO_HALF2(v) s_half2_lut[v]
+
 template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH, class W_t /* = uint64_t */, int
 PIPELINE_DEPTH, bool IS_CSR> __global__ void spqr_quantized_matvec_fused_csr(
     // W and meta
     unsigned int prob_m,
     unsigned int prob_n,
     // W 1st order stats
-    const W_t *__restrict__ raw_data,
+    const W_t *__restrict__ dense_matrix,
     const half *__restrict__ x,
     // Outliers
     const int *__restrict__ row_offsets,
@@ -236,12 +240,14 @@ PIPELINE_DEPTH, bool IS_CSR> __global__ void spqr_quantized_matvec_fused_csr(
   static constexpr u32 HALF_WARP_SIZE = WARP_SIZE / 2;
 
   static constexpr u32 NUM_HALF_WARPS = BLOCK_HEIGHT * BLOCK_WIDTH;
+  static constexpr u32 NUM_WARPS = MAX(NUM_HALF_WARPS / 2, 1);
   static constexpr u32 THREAD_COUNT = BLOCK_HEIGHT * BLOCK_WIDTH * HALF_WARP_SIZE;
   static constexpr u32 OUTPUT_SIZE = BETA1 * BLOCK_HEIGHT;
   static constexpr u32 ROW_OFFSETS_SIZE = IS_CSR ? OUTPUT_SIZE : 1;
 
   extern __shared__ half2 s_x2[];
-  __shared__ half2 s_half2_lut_global[64 * NUM_HALF_WARPS];
+  static constexpr u32 LUT_SIZE = 64 * NUM_WARPS;
+  __shared__ half2 s_half2_lut_global[LUT_SIZE];
 
   __shared__ u32 s_row_offsets[ROW_OFFSETS_SIZE + 1];
 
@@ -250,26 +256,29 @@ PIPELINE_DEPTH, bool IS_CSR> __global__ void spqr_quantized_matvec_fused_csr(
   if constexpr (THREAD_COUNT >= 64) {
     const auto v = make_half2(__int2half_rd(thread_xy & 0b111), __int2half_rd((thread_xy >> 3) & 0b111));
 #pragma unroll
-    for (int i = thread_xy; i < 64 * NUM_HALF_WARPS; i += THREAD_COUNT) { s_half2_lut_global[i] = v; }
+    for (u32 i = thread_xy; i < LUT_SIZE; i += THREAD_COUNT) { s_half2_lut_global[i] = v; }
   } else {
 #pragma unroll
-    for (int i = thread_xy; i < 64 * NUM_HALF_WARPS; i += THREAD_COUNT) {
-    const auto v = make_half2(__int2half_rd(i & 0b111), __int2half_rd((i >> 3) & 0b111));
+    for (u32 i = thread_xy; i < LUT_SIZE; i += THREAD_COUNT) {
+      const auto v = make_half2(__int2half_rd(i & 0b111u), __int2half_rd((i >> 3u) & 0b111u));
       s_half2_lut_global[i] = v;
     }
   }
 
-  auto s_half2_lut = s_half2_lut_global + ((thread_xy / HALF_WARP_SIZE) << 6);
+  auto s_half2_lut = s_half2_lut_global + ((thread_xy / WARP_SIZE) << 6);
+
   const half2 *x2 = reinterpret_cast<const half2 *>(x);
 
 
   const u32 tile_row_id = blockIdx.x * BLOCK_HEIGHT + threadIdx.y;
 
-  // Here we load the row offsets into smem.
-  for (u32 i = thread_xy; i <= ROW_OFFSETS_SIZE; i += THREAD_COUNT) {
-    __pipeline_memcpy_async(s_row_offsets + i, row_offsets + blockIdx.x * ROW_OFFSETS_SIZE + i, sizeof(u32));
+  if (IS_CSR) {
+    // Here we load the row offsets into smem.
+    for (u32 i = thread_xy; i <= ROW_OFFSETS_SIZE; i += THREAD_COUNT) {
+      __pipeline_memcpy_async(s_row_offsets + i, row_offsets + blockIdx.x * ROW_OFFSETS_SIZE + i, sizeof(u32));
+    }
+    __pipeline_commit();
   }
-  __pipeline_commit();
 
 
   // Number of SPQR tiles that this CUDA block will process.
@@ -295,11 +304,10 @@ PIPELINE_DEPTH, bool IS_CSR> __global__ void spqr_quantized_matvec_fused_csr(
 
   float acc{};
 
-  cp_async_wait_all();
   __syncthreads();
 
   u32 i = subtile_id, pipeline_id{};
-  const W_t *local_raw_data = raw_data + raw_data_offset;
+  const W_t *local_raw_data = dense_matrix + raw_data_offset;
 
 
   for (u32 x2_id = thread_xy, it = 0;
@@ -330,7 +338,7 @@ PIPELINE_DEPTH, bool IS_CSR> __global__ void spqr_quantized_matvec_fused_csr(
     uint64_t s_order_partial =
         (row_bits.mask >> NUM_USEFUL_BITS) << (SECOND_ORDER_FRAGMENT_SIZE_BITS * (row_pos / OFFSET));
     SecondOrder _s{.v = recover_second_order_sync(s_order_partial)};
-    half2 first_order_quantized = s_half2_lut[row_bits.get_w2(0)];
+    half2 first_order_quantized = INT2_TO_HALF2(row_bits.get_w2(0));
     half2 first_order_dequantized = dequantize2(first_order_quantized, _s.get_sws2(), _s.get_swz2());
 
     ws2 = __half2half2(first_order_dequantized.x);
@@ -344,7 +352,7 @@ PIPELINE_DEPTH, bool IS_CSR> __global__ void spqr_quantized_matvec_fused_csr(
 
 #pragma unroll
     for (u32 j = 0; j < BETA2 / 2; j++) {
-      half2 w_q = s_half2_lut[row_bits.get_w2(j + 1)];
+      half2 w_q = INT2_TO_HALF2(row_bits.get_w2(j + 1));
       half2 w = dequantize2(w_q, ws2, wz2);
       float2 x_fp32 = __half22float2(s_x2_[j]);
       float2 w_fp32 = __half22float2(w);
@@ -366,7 +374,7 @@ PIPELINE_DEPTH, bool IS_CSR> __global__ void spqr_quantized_matvec_fused_csr(
     uint64_t s_order_partial =
         (row_bits.mask >> NUM_USEFUL_BITS) << (SECOND_ORDER_FRAGMENT_SIZE_BITS * (row_pos / OFFSET));
     SecondOrder _s{.v = recover_second_order_sync(s_order_partial)};
-    half2 first_order_quantized = s_half2_lut[row_bits.get_w2(0)];
+    half2 first_order_quantized = INT2_TO_HALF2(row_bits.get_w2(0));
     half2 first_order_dequantized = dequantize2(first_order_quantized, _s.get_sws2(), _s.get_swz2());
 
     half2 ws2 = __half2half2(first_order_dequantized.x);
@@ -376,7 +384,7 @@ PIPELINE_DEPTH, bool IS_CSR> __global__ void spqr_quantized_matvec_fused_csr(
 
 #pragma unroll
     for (u32 j = 0; j < BETA2 / 2; j++) {
-      half2 w_q = s_half2_lut[row_bits.get_w2(j + 1u)];
+      half2 w_q = INT2_TO_HALF2(row_bits.get_w2(j + 1u));
       half2 w = dequantize2(w_q, ws2, wz2);
       float2 x_fp32 = __half22float2(s_x2_[j]);
       float2 w_fp32 = __half22float2(w);
@@ -386,7 +394,6 @@ PIPELINE_DEPTH, bool IS_CSR> __global__ void spqr_quantized_matvec_fused_csr(
   }
 
   cp_async_wait_all();
-
   if constexpr (IS_CSR) {
     u32 t = threadIdx.y * BETA1 + row_pos;
     u32 s = s_row_offsets[t];

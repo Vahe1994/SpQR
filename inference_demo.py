@@ -5,7 +5,6 @@ from typing import Tuple
 
 import numpy as np
 import torch
-from torch.nn.attention import SDPBackend
 from transformers import AutoModelForCausalLM, LlamaTokenizer, AutoConfig, StaticCache
 
 from modelutils import suspend_nn_inits
