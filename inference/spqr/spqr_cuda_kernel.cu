@@ -240,7 +240,7 @@ PIPELINE_DEPTH, bool IS_CSR> __global__ void spqr_quantized_matvec_fused_csr(
   static constexpr u32 HALF_WARP_SIZE = WARP_SIZE / 2;
 
   static constexpr u32 NUM_HALF_WARPS = BLOCK_HEIGHT * BLOCK_WIDTH;
-  static constexpr u32 NUM_WARPS = MAX(NUM_HALF_WARPS / 2, 1);
+  static constexpr u32 NUM_WARPS = UPDIV(NUM_HALF_WARPS, 2);
   static constexpr u32 THREAD_COUNT = BLOCK_HEIGHT * BLOCK_WIDTH * HALF_WARP_SIZE;
   static constexpr u32 OUTPUT_SIZE = BETA1 * BLOCK_HEIGHT;
   static constexpr u32 ROW_OFFSETS_SIZE = IS_CSR ? OUTPUT_SIZE : 1;
@@ -272,14 +272,6 @@ PIPELINE_DEPTH, bool IS_CSR> __global__ void spqr_quantized_matvec_fused_csr(
 
   const u32 tile_row_id = blockIdx.x * BLOCK_HEIGHT + threadIdx.y;
 
-  if (IS_CSR) {
-    // Here we load the row offsets into smem.
-    for (u32 i = thread_xy; i <= ROW_OFFSETS_SIZE; i += THREAD_COUNT) {
-      __pipeline_memcpy_async(s_row_offsets + i, row_offsets + blockIdx.x * ROW_OFFSETS_SIZE + i, sizeof(u32));
-    }
-    __pipeline_commit();
-  }
-
 
   // Number of SPQR tiles that this CUDA block will process.
   u32 num_tiles_per_tile_row = UPDIV(prob_n, BETA2);
@@ -305,6 +297,14 @@ PIPELINE_DEPTH, bool IS_CSR> __global__ void spqr_quantized_matvec_fused_csr(
   float acc{};
 
   __syncthreads();
+
+
+  // Here we load the row offsets into smem.
+  for (u32 i = thread_xy; i <= ROW_OFFSETS_SIZE; i += THREAD_COUNT) {
+    __pipeline_memcpy_async(s_row_offsets + i, row_offsets + blockIdx.x * ROW_OFFSETS_SIZE + i, sizeof(u32));
+  }
+  __pipeline_commit();
+
 
   u32 i = subtile_id, pipeline_id{};
   const W_t *local_raw_data = dense_matrix + raw_data_offset;
