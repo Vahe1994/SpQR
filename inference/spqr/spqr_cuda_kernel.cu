@@ -134,7 +134,7 @@ DEVICE_INLINE half get_val(u32 m) {
     constexpr int BLOCK_HEIGHT = _BLOCK_HEIGHT; \
     constexpr int BLOCK_WIDTH = _BLOCK_WIDTH; \
     size_t smem_size = sizeof(half2) * prob_n / 2;                   \
-    F<3, 16, 16, BLOCK_HEIGHT, BLOCK_WIDTH, uint64_t, PIPELINE_DEPTH, IS_CSR> \
+    F<3, 16, 16, BLOCK_HEIGHT, BLOCK_WIDTH, u64, PIPELINE_DEPTH, IS_CSR> \
             <<<dim3(updiv(prob_m, 16 * BLOCK_HEIGHT), 1, 1), \
             dim3(__min(updiv(prob_n, 16), BLOCK_WIDTH) * 16, __min(updiv(prob_m, 16), BLOCK_HEIGHT), 1), smem_size, \
             stream>>>(prob_m, \
@@ -495,12 +495,12 @@ int spqr_matvec(
 
   Features features{._ = feature_flag};
 
-  const uint64_t *raw_data_ptr = (const uint64_t *) raw_data;
+  const auto *raw_data_ptr = (const u64 *) raw_data;
   const half *X_ptr = (const half *) X;
   const int *row_offsets_ptr = (const int *) row_offsets;
   half *y_ptr = (half *) y;
   const auto *col_vals_ptr = (const u32 *) col_vals;
-  const short *order_ptr = (const short *) order;
+  const auto *order_ptr = (const short *) order;
 
   int ret = 0;
 
@@ -508,10 +508,8 @@ int spqr_matvec(
 
 
   if (is_csr) {
-    if (prob_m % 16 == 0 && prob_n % 2048 == 0) {
-      CALL_FUSED(spqr_quantized_matvec_fused_csr, 1, 64, 1, true);
-    } else if (prob_m % 16 == 0 && prob_n % 512 == 0) {
-      CALL_FUSED(spqr_quantized_matvec_fused_csr, 1, 16, 1, true);
+    if (prob_m % 16 == 0 && prob_n % 512 == 0) {
+      CALL_FUSED(spqr_quantized_matvec_fused_csr, 1, 32, 1, true);
     } else if (prob_m % 16 == 0 && prob_n % 256 == 0) {
       CALL_FUSED(spqr_quantized_matvec_fused_csr, 1, 16, 1, true);
     } else if (prob_m % 16 == 0 && prob_n % 128 == 0) {
@@ -524,10 +522,8 @@ int spqr_matvec(
       CALL_FUSED(spqr_quantized_matvec_fused_csr, 1, 1, 1, true);
     }
   } else {
-    if (prob_m % 16 == 0 && prob_n % 2048 == 0) {
-      CALL_FUSED(spqr_quantized_matvec_fused_csr, 1, 64, 1, false);
-    } else if (prob_m % 16 == 0 && prob_n % 512 == 0) {
-      CALL_FUSED(spqr_quantized_matvec_fused_csr, 1, 16, 1, false);
+    if (prob_m % 16 == 0 && prob_n % 512 == 0) {
+      CALL_FUSED(spqr_quantized_matvec_fused_csr, 1, 32, 1, false);
     } else if (prob_m % 16 == 0 && prob_n % 256 == 0) {
       CALL_FUSED(spqr_quantized_matvec_fused_csr, 1, 16, 1, false);
     } else if (prob_m % 16 == 0 && prob_n % 128 == 0) {

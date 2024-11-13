@@ -24,6 +24,7 @@ setup(
             ],
             extra_compile_args={'cxx': [
                 '-Wall',
+                '-O3'
             ],
                 'nvcc': [
                     # https://github.com/pytorch/pytorch/blob/main/torch/utils/cpp_extension.py#L1050C13-L1050C17

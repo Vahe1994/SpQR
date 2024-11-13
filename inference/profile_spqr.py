@@ -65,10 +65,10 @@ if __name__ == '__main__':
         type=str,
         required=True,
         help="Path to folder containing the tensors of the form"
-        "model_path/"
-        "   0/"
-        "       tensor0"
-        "       tensor1"
+             "model_path/"
+             "   0/"
+             "       tensor0"
+             "       tensor1"
     )
 
     parser.add_argument(
@@ -101,8 +101,8 @@ if __name__ == '__main__':
         np.random.seed(seed)
         torch.random.manual_seed(seed)
 
-        NUM_RUNS = 2000
-        WARMUP = 10
+        NUM_RUNS = 2
+        WARMUP = 1
 
         device = torch.device('cuda')
 
@@ -145,7 +145,6 @@ if __name__ == '__main__':
 
         for layer_id in csr_folders:
             folder = os.path.join(base_path, layer_id)
-            folder_ptcsr = os.path.join(base_path_modified_csr, layer_id)
 
             if run_ptcsr:
                 folders_modified_csr = os.path.join(base_path_modified_csr, layer_id)
@@ -154,10 +153,10 @@ if __name__ == '__main__':
             if not os.path.isdir(folder):
                 continue
 
-            for p, p_modified_csr in zip(os.listdir(folder), os.listdir(folder_ptcsr)):
+            for p, p_modified_csr in zip(os.listdir(folder), os.listdir(folders_modified_csr)):
                 tensor_path = os.path.join(folder, p)
-                tensor_path_modified_csr = os.path.join(folder_ptcsr, p_modified_csr)
 
+                tensor_path_modified_csr = os.path.join(folder, p_modified_csr)
                 spqr_module_modified_csr = torch.load(tensor_path_modified_csr)
 
                 spqr_module_modified_csr.to(device=device)
