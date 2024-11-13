@@ -509,7 +509,7 @@ int spqr_matvec(
 
   if (is_csr) {
     if (prob_m % 16 == 0 && prob_n % 512 == 0) {
-      CALL_FUSED(spqr_quantized_matvec_fused_csr, 1, 16, 1, true);
+      CALL_FUSED(spqr_quantized_matvec_fused_csr, 1, 64, 1, true);
     } else if (prob_m % 16 == 0 && prob_n % 256 == 0) {
       CALL_FUSED(spqr_quantized_matvec_fused_csr, 1, 16, 1, true);
     } else if (prob_m % 16 == 0 && prob_n % 128 == 0) {
@@ -523,7 +523,7 @@ int spqr_matvec(
     }
   } else {
     if (prob_m % 16 == 0 && prob_n % 512 == 0) {
-      CALL_FUSED(spqr_quantized_matvec_fused_csr, 1, 16, 1, false);
+      CALL_FUSED(spqr_quantized_matvec_fused_csr, 1, 64, 1, false);
     } else if (prob_m % 16 == 0 && prob_n % 256 == 0) {
       CALL_FUSED(spqr_quantized_matvec_fused_csr, 1, 16, 1, false);
     } else if (prob_m % 16 == 0 && prob_n % 128 == 0) {
