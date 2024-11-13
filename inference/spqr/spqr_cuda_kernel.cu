@@ -90,25 +90,6 @@ template<class Bit_t, class Scalar_t> DEVICE_INLINE Scalar_t dequantize(Bit_t q,
   return (x + y - 1) / y;
 }
 
-
-template<typename T> __device__ T _debug_halfs(T v) {
-  if constexpr (std::is_same<T, half>::value) {
-    printf(" %f\n", __half2float(v));
-  } else if constexpr (std::is_same<T, half2>::value) {
-    printf(" %f %f\n", __half2float(v.x), __half2float(v.y));
-  }
-  return v;
-}
-
-template<typename T, typename... Arguments> __device__ void _debug_halfs(T v, Arguments... vals) {
-  if constexpr (std::is_same<T, half>::value) {
-    printf(" %f", __half2float(v));
-  } else if constexpr (std::is_same<T, half2>::value) {
-    printf(" %f %f", __half2float(v.x), __half2float(v.y));
-  }
-  _debug_halfs(vals...);
-}
-
 template<class Scalar_t> __host__ __device__ auto vectorize(Scalar_t *ptr) {
   if constexpr (std::is_same<Scalar_t, float>::value) {
     return reinterpret_cast<float2 *>(ptr);
@@ -148,22 +129,6 @@ DEVICE_INLINE half get_val(u32 m) {
   half v = *reinterpret_cast<half *>(&_v);
   return v;
 }
-
-
-#define CALL_DENSE(F, _BLOCK_HEIGHT, _BLOCK_WIDTH, PIPELINE_DEPTH) \
-    constexpr int BLOCK_HEIGHT = _BLOCK_HEIGHT; \
-    constexpr int BLOCK_WIDTH = _BLOCK_WIDTH; \
-    size_t smem_size = sizeof(half2) * (BLOCK_WIDTH * SHARED_OFFSET);                   \
-    F<3, 16, 16, BLOCK_HEIGHT, BLOCK_WIDTH, float, uint64_t, PIPELINE_DEPTH> \
-            <<<dim3(updiv(prob_m, 16 * BLOCK_HEIGHT), 1, 1), \
-            dim3(__min(updiv(prob_n, 16), BLOCK_WIDTH) * 16, 1, 1), smem_size, \
-            stream>>>(prob_m, \
-            prob_n, \
-            raw_data,                               \
-            X_ptr, \
-            order_ptr, \
-            y_ptr);
-
 
 #define CALL_FUSED(F, _BLOCK_HEIGHT, _BLOCK_WIDTH, PIPELINE_DEPTH, IS_CSR) \
     constexpr int BLOCK_HEIGHT = _BLOCK_HEIGHT; \
@@ -326,7 +291,9 @@ PIPELINE_DEPTH, bool IS_CSR> __global__ void spqr_quantized_matvec_fused_csr(
         auto x_shared_load_ptr = reinterpret_cast<const Load_t *>(s_x2);
         size_t smem_ptr = __cvta_generic_to_shared(x_shared_load_ptr + idx);
         asm volatile("cp.async.ca.shared.global [%0], [%1], 16;\n"::"l"(smem_ptr), "l"(x_global_load_ptr + idx));
-      } else { reinterpret_cast<Load_t *>(s_x2)[idx] = reinterpret_cast<const Load_t *>(x2)[idx]; }
+      } else {
+        reinterpret_cast<Load_t *>(s_x2)[idx] = reinterpret_cast<const Load_t *>(x2)[idx];
+      }
     }
 
     if constexpr (PIPELINED_LOAD) {
@@ -540,10 +507,9 @@ int spqr_matvec(
   bool is_csr = prob_m + 1 == row_offsets_len;
 
 
-
   if (is_csr) {
-    if (prob_m % 16 == 0 && prob_n % 1024 == 0) {
-      CALL_FUSED(spqr_quantized_matvec_fused_csr, 1, 16, 1, true);
+    if (prob_m % 16 == 0 && prob_n % 2048 == 0) {
+      CALL_FUSED(spqr_quantized_matvec_fused_csr, 1, 128, 1, true);
     } else if (prob_m % 16 == 0 && prob_n % 512 == 0) {
       CALL_FUSED(spqr_quantized_matvec_fused_csr, 1, 16, 1, true);
     } else if (prob_m % 16 == 0 && prob_n % 256 == 0) {
@@ -558,8 +524,8 @@ int spqr_matvec(
       CALL_FUSED(spqr_quantized_matvec_fused_csr, 1, 1, 1, true);
     }
   } else {
-    if (prob_m % 16 == 0 && prob_n % 1024 == 0) {
-      CALL_FUSED(spqr_quantized_matvec_fused_csr, 1, 16, 1, false);
+    if (prob_m % 16 == 0 && prob_n % 2048 == 0) {
+      CALL_FUSED(spqr_quantized_matvec_fused_csr, 1, 128, 1, false);
     } else if (prob_m % 16 == 0 && prob_n % 512 == 0) {
       CALL_FUSED(spqr_quantized_matvec_fused_csr, 1, 16, 1, false);
     } else if (prob_m % 16 == 0 && prob_n % 256 == 0) {
@@ -573,7 +539,6 @@ int spqr_matvec(
     } else {
       CALL_FUSED(spqr_quantized_matvec_fused_csr, 1, 1, 1, false);
     }
-
   }
 
   if (!features.flags.is_async) {
