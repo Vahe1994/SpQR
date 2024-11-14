@@ -4,6 +4,8 @@ import spqr_cuda
 import time
 import os
 
+from torch import nn
+
 import inference
 import tests.test_util as test_util
 
@@ -160,6 +162,8 @@ if __name__ == '__main__':
 
                 spqr_module_modified_csr = torch.load(tensor_path_modified_csr)
 
+                deq_w_modified_csr = spqr_module_modified_csr.dequantize()
+
                 spqr_module_modified_csr.to(device=device)
                 spqr_module_device_modified_csr = spqr_module_modified_csr
 
@@ -169,7 +173,23 @@ if __name__ == '__main__':
                 n = spqr_module.n
                 print(f'Running {m} x {n}')
 
+                # m = nn.MaxPool2d(16, stride=16)
+
                 deq_w = spqr_module.dequantize()
+                # import matplotlib.pyplot as plt
+
+                # img0 = m(((deq_w.abs() / deq_w.abs().max()) * 255).unsqueeze(0).unsqueeze(0))
+                # img1 = m(((deq_w_modified_csr.abs() / deq_w_modified_csr.abs().max()) * 255).unsqueeze(0).unsqueeze(0))
+                # img0 = img0.squeeze().numpy()  # Remove extra dimensions for visualization
+                # img1 = img1.squeeze().numpy()
+                # plt.subplot(1, 2, 1)  # 1 row, 2 columns, 1st subplot
+                #
+                # plt.imshow(img0, cmap='gray')
+                # plt.subplot(1, 2, 2)  # 1 row, 2 columns, 2nd subplot
+                #
+                # plt.imshow(img1, cmap='gray')
+                # plt.show()
+                # assert(torch.allclose(deq_w, deq_w_modified_csr))
 
                 spqr_module.to(device=device)
                 spqr_module_device = spqr_module
@@ -191,14 +211,16 @@ if __name__ == '__main__':
                 for flag in methods:
                     print(f'Running {repr(flag)} on {layer_id}.{p}')
 
-                    y, spqr_runs = spqr_mul_timer(spqr_module_device, x_fp16_device, flag, NUM_RUNS)
+                    y_csr, spqr_runs = spqr_mul_timer(spqr_module_device, x_fp16_device, flag, NUM_RUNS)
                     spqr_runs = spqr_runs[WARMUP:]
                     this_algorithm = spqr_runs.min()
 
                     torch.cuda.empty_cache()
                     time.sleep(1)
 
-                    y, spqr_runs_modified_csr = spqr_mul_timer(spqr_module_device_modified_csr, x_fp16_device, flag, NUM_RUNS)
+                    y_ptcsr, spqr_runs_modified_csr = spqr_mul_timer(spqr_module_device_modified_csr, x_fp16_device, flag, NUM_RUNS)
+
+                    assert(torch.allclose(y_csr, y_ptcsr))
                     spqr_runs_modified_csr = spqr_runs_modified_csr[WARMUP:]
 
                     speed_up = torch_run / this_algorithm

@@ -161,10 +161,10 @@ DEVICE_INLINE void cp_async_wait_all() {
 __device__ __forceinline__ uint32_t __ld_stream(const uint32_t *ptr) {
   uint32_t v;
   asm volatile(
-      "{\n"
-      "   ld.global.ca.u32 %0, [%1];\n"
-      "}\n" : "=r"(v) : "l"(ptr)
-      );
+    "{\n"
+    "   ld.global.ca.u32 %0, [%1];\n"
+    "}\n" : "=r"(v) : "l"(ptr)
+  );
   return v;
 }
 
@@ -177,19 +177,19 @@ constexpr bool PIPELINED_LOAD = false;
 #define INT2_TO_HALF2(v) s_half2_lut[v]
 
 template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH, class W_t /* = uint64_t */, int
-PIPELINE_DEPTH, bool IS_CSR> __global__ void spqr_quantized_matvec_fused_csr(
-    // W and meta
-    unsigned int prob_m,
-    unsigned int prob_n,
-    // W 1st order stats
-    const W_t *__restrict__ dense_matrix,
-    const half *__restrict__ x,
-    // Outliers
-    const int *__restrict__ row_offsets,
-    const u32 *__restrict__ col_vals,
-    const short *__restrict__ order,
-    // Output
-    half *__restrict__ y_fp16) {
+  PIPELINE_DEPTH, bool IS_CSR> __global__ void spqr_quantized_matvec_fused_csr(
+  // W and meta
+  unsigned int prob_m,
+  unsigned int prob_n,
+  // W 1st order stats
+  const W_t *__restrict__ dense_matrix,
+  const half *__restrict__ x,
+  // Outliers
+  const int *__restrict__ row_offsets,
+  const u32 *__restrict__ col_vals,
+  const short *__restrict__ order,
+  // Output
+  half *__restrict__ y_fp16) {
   /*
            ┌─────────────┐ ┌─┐   ┌─┐
    beta1   │   block 0   │ │ │   │ │
@@ -333,10 +333,10 @@ PIPELINE_DEPTH, bool IS_CSR> __global__ void spqr_quantized_matvec_fused_csr(
   }
 
   for (; i < num_tiles_per_tile_row; i += NUM_SPQR_TILES_PER_ITERATION, local_raw_data +=
-                                                                            NUM_SPQR_TILES_PER_ITERATION * BETA1) {
+                                     NUM_SPQR_TILES_PER_ITERATION * BETA1) {
     auto v = __ldg(local_raw_data);
     RowBits row_bits{
-        .mask = v
+      .mask = v
     };
     uint64_t s_order_partial =
         (row_bits.mask >> NUM_USEFUL_BITS) << (SECOND_ORDER_FRAGMENT_SIZE_BITS * (row_pos / OFFSET));
@@ -430,7 +430,7 @@ PIPELINE_DEPTH, bool IS_CSR> __global__ void spqr_quantized_matvec_fused_csr(
   } else {
     if (threadIdx.x < BETA1) {
       short row = order[tile_row_id * BETA1 + threadIdx.x];
-      y_fp16[row] =  __float2half_rn(acc);
+      y_fp16[row] = __float2half_rn(acc);
     }
   }
 }
@@ -460,29 +460,29 @@ union Features {
 };
 
 int spqr_matvec(
-    // W and meta
-    int bits,
-    int prob_m,
-    int prob_n,
-    // Quantization
-    int beta1,
-    int beta2,
-    const void *raw_data,
-    // 32-bit
-    int row_offsets_len,
-    void *row_offsets,
-    // 16-bit
-    void *col_vals,
-    int nnz,
-    // 16-bit
-    // Input
-    void *X,
-    void *order,
-    // Output
-    void *y,
-    cudaStream_t stream,
-    void *measurements,
-    uint32_t feature_flag) {
+  // W and meta
+  int bits,
+  int prob_m,
+  int prob_n,
+  // Quantization
+  int beta1,
+  int beta2,
+  const void *raw_data,
+  // 32-bit
+  int row_offsets_len,
+  void *row_offsets,
+  // 16-bit
+  void *col_vals,
+  int nnz,
+  // 16-bit
+  // Input
+  void *X,
+  void *order,
+  // Output
+  void *y,
+  cudaStream_t stream,
+  void *measurements,
+  uint32_t feature_flag) {
   Timer *timer{};
   if (measurements) {
     timer = new Timer(stream);

@@ -144,11 +144,13 @@ class QuantizedLinear(torch.nn.Module):
                                                                 model_args.beta2,
                                                                 'cpu')
 
-        col_vals_output = merge_col_val(spqr_legacy.col_ids, spqr_legacy.values)
+        col_vals = merge_col_val(spqr_legacy.col_ids, spqr_legacy.values)
         row_offsets_output = spqr_legacy.row_offsets
 
         if model_args.sparse_compression == SparseStorageConfiguration.PTCSR:
             row_offsets_output, col_vals_output = init_ptcsr(row_offsets_output)
+        else:
+            col_vals_output = col_vals
 
         spqr_cuda.tensor_compress_interleaved(spqr_legacy.m, spqr_legacy.n, model_args.bits, spqr_legacy.W,
                                               model_args.beta1, model_args.beta2,
@@ -156,7 +158,7 @@ class QuantizedLinear(torch.nn.Module):
                                               spqr_legacy.W_z_s, spqr_legacy.W_z_z,
                                               spqr_legacy.row_offsets,
                                               row_offsets_output,
-                                              col_vals_output,
+                                              col_vals,
                                               col_vals_output,
                                               dense_weights,
                                               0 if model_args.sparse_compression == SparseStorageConfiguration.CSR else 1)

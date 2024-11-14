@@ -126,6 +126,8 @@ void dequantize_compressed(int m, int n, int bits, int beta1, int beta2,
   int w_id{};
   uint64_t *buff0_ptr = reinterpret_cast<uint64_t *>(buff0.data_ptr());
 
+  std::vector<float> deq_float32(m * n, 0);
+
   for (int ii = 0; ii < m; ii += beta1) {
     for (int jj = 0; jj < n; jj += beta2) {
       uint64_t w2_bits{};
@@ -155,7 +157,7 @@ void dequantize_compressed(int m, int n, int bits, int beta1, int beta2,
 
         for (int j = 0; j < beta2 && j + jj < n; j++) {
           half w = host_dequantize<half, half>(int2half_rd(wbits[2 + j]), s, z);
-          deq_w[(i + ii) * n + j + jj] = w;
+          deq_float32[(i + ii) * n + j + jj] = __half2float(w);
           w_id++;
         }
         subtile_id++;
@@ -174,7 +176,7 @@ void dequantize_compressed(int m, int n, int bits, int beta1, int beta2,
       for (int r = 0; r < m; r++) {
         for (int j = _row_offsets[r]; j < _row_offsets[r + 1]; j++) {
           auto c = _col_vals[j].members.c;
-          deq_w[r * n + c] = deq_w[r * n + c] + _col_vals[j].members.v;
+          deq_float32[r * n + c] += __half2float(_col_vals[j].members.v);
         }
       }
     } else {
@@ -182,10 +184,14 @@ void dequantize_compressed(int m, int n, int bits, int beta1, int beta2,
         for (int j = _row_offsets[r]; j < _row_offsets[r + 1]; j++) {
           auto c = _col_vals[j].members.c;
           int ptr = (r * 16 + j % 16) * n + c;
-          deq_w[ptr] = deq_w[ptr] + _col_vals[j].members.v;
+          deq_float32[ptr] += __half2float(_col_vals[j].members.v);
         }
       }
     }
+  }
+
+  for (int i = 0; i < m * n; i++) {
+    deq_w[i] = __float2half_rn(deq_float32[i]);
   }
 }
 
