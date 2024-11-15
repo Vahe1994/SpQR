@@ -260,8 +260,8 @@ class QuantizedLinear(torch.nn.Module):
             else:
                 _x = x.view(-1)
                 _y = y
-            # if self.should_reorder():
-            #     _x = _x[self.in_perm]
+            if self.should_reorder():
+                _x = _x[self.in_perm]
             call_spqr_mul(
                 self.m,
                 self.n,
