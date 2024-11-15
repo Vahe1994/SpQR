@@ -73,7 +73,7 @@ class LLama:
             with suspend_nn_inits():
                 with torch.no_grad():
                     self.config = AutoConfig.from_pretrained(pretrained_model_path, torchscript=self.torchscript,
-                                                        return_dict=True)
+                                                             return_dict=True)
                     self.config.max_position_embeddings = 4096
 
                     self.model = AutoModelForCausalLM.from_pretrained(
@@ -85,7 +85,6 @@ class LLama:
 
         if self.torchscript:
             self.model = torch.jit.script(self.model)
-
 
         self.model = self.model.to(device=self.device, dtype=self.dtype)
 
