@@ -333,10 +333,18 @@ enum class SparseCompressionStrategy {
 };
 
 void tensor_compress_interleaved(
-    int m, int n, int bits, const torch::Tensor &W, int beta1, int beta2,
-    const torch::Tensor &W_s, const torch::Tensor &W_z,
-    const torch::Tensor &W_s_s, const torch::Tensor &W_s_z,
-    const torch::Tensor &W_z_s, const torch::Tensor &W_z_z,
+    int m,
+    int n,
+    int bits,
+    const torch::Tensor &W,
+    int beta1,
+    int beta2,
+    const torch::Tensor &W_s,
+    const torch::Tensor &W_z,
+    const torch::Tensor &W_s_s,
+    const torch::Tensor &W_s_z,
+    const torch::Tensor &W_z_s,
+    const torch::Tensor &W_z_z,
     const torch::Tensor &row_offsets,
     const torch::Tensor &row_offsets_output,
     const torch::Tensor &col_vals,

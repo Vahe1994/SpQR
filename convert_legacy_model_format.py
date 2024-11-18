@@ -1,10 +1,10 @@
 import os
 import torch
 import argparse
-from inference import flatten_tensor
+from spqr import flatten_tensor
 from transformers import AutoModelForCausalLM, AutoConfig
 
-from inference import ModelArgs, SPQRLegacy, QuantizedLinear
+from spqr import ModelArgs, SPQRLegacy, QuantizedLinear
 
 
 def load_legacy_tensor(p: str, model_args: ModelArgs) -> SPQRLegacy:

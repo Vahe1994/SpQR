@@ -10,10 +10,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
+from dataclasses import dataclass
 from typing import Tuple
 
-from inference import *
+import torch
+
+from spqr import updiv, SparseStorageConfiguration, QuantizedLinear, SPQRLegacy, ModelArgs
 
 
 def generate_x_fp32(n, upper_bound=3):

@@ -18,11 +18,11 @@ import spqr_cuda
 
 from torch import Tensor as T, nn
 
-from inference.mul_ops import call_spqr_mul
+from spqr.mul_ops import call_spqr_mul
 
 from dataclasses import dataclass
 
-from inference.sparse_util import init_ptcsr, merge_col_val
+from spqr.sparse_util import init_ptcsr, merge_col_val
 
 
 # Utility functions
@@ -76,10 +76,10 @@ class ModelArgs:
 
 class QuantizedLinear(torch.nn.Module):
     def __init__(self, rows, cols, bits, beta1, beta2,
-                 dense_weights=torch.empty(0, dtype=torch.int64),
-                 row_offsets=torch.empty(0, dtype=torch.int32),
-                 col_vals=torch.empty(0, dtype=torch.int32),
-                 in_perm=torch.empty(0, dtype=torch.int16)):
+                 dense_weights,
+                 row_offsets,
+                 col_vals,
+                 in_perm):
         """
         This class stores the fully compressed bits=3-bit beta2=16 x beta1=16 SpQR mxn tensor.
 
@@ -114,10 +114,29 @@ class QuantizedLinear(torch.nn.Module):
         self.beta1 = beta1
         self.beta2 = beta2
 
-        self.buff0 = nn.Parameter(dense_weights, requires_grad=False)
+        self.dense_weights = nn.Parameter(dense_weights, requires_grad=False)
         self.row_offsets = nn.Parameter(row_offsets, requires_grad=False)
         self.col_vals = nn.Parameter(col_vals, requires_grad=False)
         self.in_perm = nn.Parameter(in_perm, requires_grad=False)
+
+    @staticmethod
+    def create_placehodler(rows, cols, bits, beta1, beta2,
+                           dense_weights_shape: int,
+                           row_offsets_shape: int,
+                           col_vals_shape: int,
+                           in_perm_shape: int):
+        dense_weights = nn.Parameter(torch.empty(dense_weights_shape, dtype=torch.int64), requires_grad=False)
+        row_offsets = nn.Parameter(torch.empty(row_offsets_shape, dtype=torch.int32), requires_grad=False)
+        col_vals = nn.Parameter(torch.empty(col_vals_shape, dtype=torch.int32), requires_grad=False)
+        in_perm = nn.Parameter(torch.empty(in_perm_shape, dtype=torch.int64), requires_grad=False)
+
+        return QuantizedLinear(
+            rows, cols, bits, beta1, beta2,
+            dense_weights,
+            row_offsets,
+            col_vals,
+            in_perm
+        )
 
     @staticmethod
     def _calculate_weight_buffer_size(m, n, beta1, beta2):
@@ -152,10 +171,18 @@ class QuantizedLinear(torch.nn.Module):
         else:
             col_vals_output = col_vals
 
-        spqr_cuda.tensor_compress_interleaved(spqr_legacy.m, spqr_legacy.n, model_args.bits, spqr_legacy.W,
-                                              model_args.beta1, model_args.beta2,
-                                              spqr_legacy.W_s, spqr_legacy.W_z, spqr_legacy.W_s_s, spqr_legacy.W_s_z,
-                                              spqr_legacy.W_z_s, spqr_legacy.W_z_z,
+        spqr_cuda.tensor_compress_interleaved(spqr_legacy.m,
+                                              spqr_legacy.n,
+                                              model_args.bits,
+                                              spqr_legacy.W,
+                                              model_args.beta1,
+                                              model_args.beta2,
+                                              spqr_legacy.W_s,
+                                              spqr_legacy.W_z,
+                                              spqr_legacy.W_s_s,
+                                              spqr_legacy.W_s_z,
+                                              spqr_legacy.W_z_s,
+                                              spqr_legacy.W_z_z,
                                               spqr_legacy.row_offsets,
                                               row_offsets_output,
                                               col_vals,
@@ -188,7 +215,7 @@ class QuantizedLinear(torch.nn.Module):
             self.bits,
             self.beta1,
             self.beta2,
-            self.buff0,
+            self.dense_weights,
             self.row_offsets,
             self.col_vals,
             nnz,
@@ -249,9 +276,9 @@ class QuantizedLinear(torch.nn.Module):
         inner_dim = x.shape[1]
 
         if inner_dim == 1:
-            y = torch.empty(self.m, dtype=torch.float16, device=self.buff0.device)
+            y = torch.empty(self.m, dtype=torch.float16, device=self.dense_weights.device)
         else:
-            y = torch.empty((1, inner_dim, self.m), dtype=torch.float16, device=self.buff0.device)
+            y = torch.empty((1, inner_dim, self.m), dtype=torch.float16, device=self.dense_weights.device)
 
         for i in range(inner_dim):
             if inner_dim != 1:
@@ -268,7 +295,7 @@ class QuantizedLinear(torch.nn.Module):
                 self.bits,
                 self.beta1,
                 self.beta2,
-                self.buff0,
+                self.dense_weights,
                 self.row_offsets,
                 self.col_vals,
                 self.nnz,

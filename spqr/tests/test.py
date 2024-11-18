@@ -4,9 +4,9 @@ import numpy as np
 import torch
 import spqr_cuda
 
-import test_util
-import inference
-from inference import SparseStorageConfiguration
+import spqr.tests.test_util as test_util
+import spqr
+from spqr import SparseStorageConfiguration
 
 seed = 1
 np.random.seed(seed)
@@ -14,14 +14,15 @@ torch.random.manual_seed(seed)
 
 DEV = torch.device('cuda:0')
 
-def spqr_mul(spqr_device: inference.QuantizedLinear, x, y, feature_flag: inference.FeatureFlags):
+
+def spqr_mul(spqr_device: spqr.QuantizedLinear, x, y, feature_flag: spqr.FeatureFlags):
     spqr_cuda.spqr_mul(
         spqr_device.m,
         spqr_device.n,
         spqr_device.bits,
         spqr_device.beta1,
         spqr_device.beta2,
-        spqr_device.buff0,
+        spqr_device.dense_weights,
         spqr_device.row_offsets,
         spqr_device.col_vals,
         spqr_device.nnz,
@@ -57,7 +58,7 @@ class TestSparseFp16Easy(unittest.TestCase):
             for n in [16, 32, 64, 128, 256, 512, 4096, 11008]:
                 for density in [0]:  # , 0.01, 0.05, 0.5, 0.9]:
                     for flag in [
-                        inference.FeatureFlags.SPARSE_FUSED_FP32,
+                        spqr.FeatureFlags.SPARSE_FUSED_FP32,
                     ]:
                         print(f'Running m = {m} n = {n}')
                         # Generate test case
@@ -90,7 +91,7 @@ class TestSparseFp16DenseOnly(unittest.TestCase):
                                       test_util.create_random_first_order_ones,
                                       test_util.create_random_second_order_ones, test_util.create_random]:
                     for create_x in [test_util.create_x_zeros, test_util.create_x_ones, test_util.create_x_random]:
-                        for flag in [inference.FeatureFlags.SPARSE_FUSED_FP32]:
+                        for flag in [spqr.FeatureFlags.SPARSE_FUSED_FP32]:
                             # Generate test case
                             x_fp16_device = create_x(n).cuda(device=device)
                             spqr_module, quantized_linear = test_util.create_random(m, n, 0)
@@ -118,7 +119,7 @@ class TestSparseFp16Fused(unittest.TestCase):
                 for density in [0, 0.01, 0.05, 0.5, 0.9]:
                     for compression_strategy in [SparseStorageConfiguration.CSR, SparseStorageConfiguration.PTCSR]:
                         for flag in [
-                            inference.FeatureFlags.SPARSE_FUSED_FP32,
+                            spqr.FeatureFlags.SPARSE_FUSED_FP32,
                         ]:
                             print(f'Running m = {m} n = {n} density = {density} storage = {compression_strategy}')
                             # Generate test case

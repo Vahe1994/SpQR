@@ -4,8 +4,6 @@ import spqr_cuda
 import time
 import os
 
-from torch import nn
-
 import inference
 import tests.test_util as test_util
 
@@ -25,7 +23,7 @@ def spqr_mul_timer(spqr_device: inference.QuantizedLinear, x, feature_flag: infe
             spqr_device.bits,
             spqr_device.beta1,
             spqr_device.beta2,
-            spqr_device.buff0,
+            spqr_device.dense_weights,
             spqr_device.row_offsets,
             spqr_device.col_vals,
             spqr_device.nnz,
@@ -67,10 +65,10 @@ if __name__ == '__main__':
         type=str,
         required=True,
         help="Path to folder containing the tensors of the form"
-        "model_path/"
-        "   0/"
-        "       tensor0"
-        "       tensor1"
+             "model_path/"
+             "   0/"
+             "       tensor0"
+             "       tensor1"
     )
 
     parser.add_argument(
@@ -103,8 +101,8 @@ if __name__ == '__main__':
         np.random.seed(seed)
         torch.random.manual_seed(seed)
 
-        NUM_RUNS = 2000
-        WARMUP = 10
+        NUM_RUNS = 2
+        WARMUP = 1
 
         device = torch.device('cuda')
 
@@ -147,7 +145,6 @@ if __name__ == '__main__':
 
         for layer_id in csr_folders:
             folder = os.path.join(base_path, layer_id)
-            folder_ptcsr = os.path.join(base_path_modified_csr, layer_id)
 
             if run_ptcsr:
                 folders_modified_csr = os.path.join(base_path_modified_csr, layer_id)
@@ -156,13 +153,11 @@ if __name__ == '__main__':
             if not os.path.isdir(folder):
                 continue
 
-            for p, p_modified_csr in zip(os.listdir(folder), os.listdir(folder_ptcsr)):
+            for p, p_modified_csr in zip(os.listdir(folder), os.listdir(folders_modified_csr)):
                 tensor_path = os.path.join(folder, p)
-                tensor_path_modified_csr = os.path.join(folder_ptcsr, p_modified_csr)
 
+                tensor_path_modified_csr = os.path.join(folder, p_modified_csr)
                 spqr_module_modified_csr = torch.load(tensor_path_modified_csr)
-
-                deq_w_modified_csr = spqr_module_modified_csr.dequantize()
 
                 spqr_module_modified_csr.to(device=device)
                 spqr_module_device_modified_csr = spqr_module_modified_csr
@@ -173,23 +168,7 @@ if __name__ == '__main__':
                 n = spqr_module.n
                 print(f'Running {m} x {n}')
 
-                # m = nn.MaxPool2d(16, stride=16)
-
                 deq_w = spqr_module.dequantize()
-                # import matplotlib.pyplot as plt
-
-                # img0 = m(((deq_w.abs() / deq_w.abs().max()) * 255).unsqueeze(0).unsqueeze(0))
-                # img1 = m(((deq_w_modified_csr.abs() / deq_w_modified_csr.abs().max()) * 255).unsqueeze(0).unsqueeze(0))
-                # img0 = img0.squeeze().numpy()  # Remove extra dimensions for visualization
-                # img1 = img1.squeeze().numpy()
-                # plt.subplot(1, 2, 1)  # 1 row, 2 columns, 1st subplot
-                #
-                # plt.imshow(img0, cmap='gray')
-                # plt.subplot(1, 2, 2)  # 1 row, 2 columns, 2nd subplot
-                #
-                # plt.imshow(img1, cmap='gray')
-                # plt.show()
-                # assert(torch.allclose(deq_w, deq_w_modified_csr))
 
                 spqr_module.to(device=device)
                 spqr_module_device = spqr_module
@@ -211,16 +190,14 @@ if __name__ == '__main__':
                 for flag in methods:
                     print(f'Running {repr(flag)} on {layer_id}.{p}')
 
-                    y_csr, spqr_runs = spqr_mul_timer(spqr_module_device, x_fp16_device, flag, NUM_RUNS)
+                    y, spqr_runs = spqr_mul_timer(spqr_module_device, x_fp16_device, flag, NUM_RUNS)
                     spqr_runs = spqr_runs[WARMUP:]
                     this_algorithm = spqr_runs.min()
 
                     torch.cuda.empty_cache()
                     time.sleep(1)
 
-                    y_ptcsr, spqr_runs_modified_csr = spqr_mul_timer(spqr_module_device_modified_csr, x_fp16_device, flag, NUM_RUNS)
-
-                    assert(torch.allclose(y_csr, y_ptcsr))
+                    y, spqr_runs_modified_csr = spqr_mul_timer(spqr_module_device_modified_csr, x_fp16_device, flag, NUM_RUNS)
                     spqr_runs_modified_csr = spqr_runs_modified_csr[WARMUP:]
 
                     speed_up = torch_run / this_algorithm

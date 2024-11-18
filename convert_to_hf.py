@@ -4,11 +4,11 @@ import re
 import shutil
 
 import torch
-from tqdm.auto import trange
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
-
-import safetensors
 from safetensors.torch import save_model
+from tqdm.auto import trange
+from transformers import AutoConfig, AutoTokenizer
+
+from spqr import QuantizedLinear
 
 
 def get_int_dtype(nbits: int) -> torch.dtype:
@@ -25,7 +25,7 @@ def get_int_dtype(nbits: int) -> torch.dtype:
 
 @torch.inference_mode()
 def pack_int_data(data: torch.IntTensor, nbits: int) -> torch.IntTensor:
-    data[data >= 2 ** (nbits - 1)] -= 2**nbits
+    data[data >= 2 ** (nbits - 1)] -= 2 ** nbits
     return data.to(get_int_dtype(nbits))
 
 
@@ -103,6 +103,39 @@ def add_inference_code(model_type: str, save_path: os.PathLike):
     else:
         print(f"No predefined PreTrainedModel exists for {model_type}. You'll have to copy-paste some code yourself.")
 
+def replace_with_spqr_linear(
+    model,
+    quantization_config_shapes=None,
+    linear_weights_not_to_quantize=None,
+    current_key_name=None,
+):
+    for name, module in model.named_children():
+        if current_key_name is None:
+            current_key_name = []
+        current_key_name.append(name)
+
+        if isinstance(module, QuantizedLinear):
+            # Check if the current key is not in the `linear_weights_not_to_quantize`
+            if ".".join(current_key_name) + ".weight" not in linear_weights_not_to_quantize:
+                tensor_name = '.'.join(current_key_name)
+                quantization_config_shapes[f'{tensor_name}.dense_weights.shape'] = module.dense_weights.shape[0]
+                quantization_config_shapes[f'{tensor_name}.row_offsets.shape'] = module.row_offsets.shape[0]
+                quantization_config_shapes[f'{tensor_name}.col_vals.shape'] = module.col_vals.shape[0]
+                quantization_config_shapes[f'{tensor_name}.in_perm.shape'] = module.in_perm.shape[0]
+                # Store the module class in case we need to transpose the weight later
+                model._modules[name].source_cls = type(module)
+                # Force requires grad to False to avoid unexpected errors
+                model._modules[name].requires_grad_(False)
+        if len(list(module.children())) > 0:
+            _, has_been_replaced = replace_with_spqr_linear(
+                module,
+                quantization_config_shapes=quantization_config_shapes,
+                linear_weights_not_to_quantize=linear_weights_not_to_quantize,
+                current_key_name=current_key_name,
+            )
+        # Remove the last key for recursion
+        current_key_name.pop(-1)
+    return model, True
 
 if __name__ == "__main__":
     import argparse
@@ -155,17 +188,22 @@ if __name__ == "__main__":
     metadata = get_metadata(os.path.join(args.config_path, 'args.pt'))
     linear_weights_not_to_quantize = torch.load(os.path.join(args.config_path, 'not_quantized_weights.pt')).keys()
 
-    new_config_dict = update_config(old_config.to_diff_dict(), metadata, linear_weights_not_to_quantize)
-    with open(os.path.join(args.out_path, "config.json"), "w") as config_file:
-        json.dump(new_config_dict, config_file, indent=4)
+    model = torch.load(args.in_path_pt)
 
     # convert to safetensors
     if args.save_safetensors:
         # load dummy model
-        model = torch.load(args.in_path_pt)
         # torch.save(model, os.path.join(args.out_path, "pytorch_model.bin"))
         save_model(model, os.path.join(args.out_path, "model.safetensors"), metadata={"format": "pt"})
 
     if args.save_tokenizer:
         tokenizer = AutoTokenizer.from_pretrained(args.model)
         tokenizer.save_pretrained(args.out_path)
+
+    new_config_dict = update_config(old_config.to_diff_dict(), metadata, list(linear_weights_not_to_quantize))
+    new_config_dict['quantization_config']['linear_weights_not_to_quantize'] = list(linear_weights_not_to_quantize)
+
+    new_config_dict['quantization_config']['shapes'] = {}
+    replace_with_spqr_linear(model, new_config_dict['quantization_config']['shapes'], set(linear_weights_not_to_quantize))
+    with open(os.path.join(args.out_path, "config.json"), "w") as config_file:
+        json.dump(new_config_dict, config_file, indent=4)

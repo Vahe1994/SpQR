@@ -2,8 +2,8 @@
 .idea/*
 .ipynb_checkpoints/*
 __pycache__/*
-src/.ipynb_checkpoints/*
-src/__pycache__/*
+spqr/.ipynb_checkpoints/*
+spqr/__pycache__/*
 outliers/*
 outliers_stru*
 wandb/*

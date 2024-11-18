@@ -1,8 +1,7 @@
 from setuptools import setup
-from torch.utils import cpp_extension
+from torch.utils.cpp_extension import BuildExtension, CUDAExtension
 
-
-class build_ext_with_compiler_detection(cpp_extension.BuildExtension):
+class BuildWithCompilerDetection(BuildExtension):
     def build_extensions(self):
         super().build_extensions()
 
@@ -13,27 +12,20 @@ setup(
     author_email='elvircrn@gmail.com',
     description='SPQR',
     install_requires=['numpy', 'torch'],
-    packages=['inference'],
+    packages=['spqr'],
     ext_modules=[
-        cpp_extension.CUDAExtension(
-            'spqr_cuda',
-            [
-                'inference/spqr/spqr_cuda.cpp',
-                'inference/spqr/spqr_cuda_kernel.cu',
-                'inference/spqr/torch_bench.cu'
+        CUDAExtension(
+            name='spqr_cuda',
+            sources=[
+                'spqr/spqr/spqr_cuda.cpp',
+                'spqr/spqr/spqr_cuda_kernel.cu',
+                'spqr/spqr/torch_bench.cu'
             ],
-            extra_compile_args={'cxx': [
-                '-Wall',
-                '-O3'
-            ],
-                'nvcc': [
-                    # https://github.com/pytorch/pytorch/blob/main/torch/utils/cpp_extension.py#L1050C13-L1050C17
-                    '-O3',
-                    '-std=c++17',
-                    '-lineinfo',
-                    '-arch=native'
-                ]}
+            extra_compile_args={
+                'cxx': ['-Wall', '-O3'],
+                'nvcc': ['-O3', '-std=c++17', '-lineinfo', '-arch=native']
+            }
         )
     ],
-    cmdclass={'build_ext': build_ext_with_compiler_detection},
+    cmdclass={'build_ext': BuildWithCompilerDetection},
 )

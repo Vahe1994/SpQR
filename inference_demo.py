@@ -65,8 +65,7 @@ class LLama:
                         from_tf=False,
                         weights_only=False,
                         low_cpu_mem_usage=True,
-                        device_map='cpu',
-                        no_cuda=True
+                        device_map='cpu'
                     )
                     print('Finished loading')
         else:

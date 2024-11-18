@@ -4,14 +4,15 @@ import spqr_cuda
 import time
 import os
 
-import inference
 import tests.test_util as test_util
 
 from scipy.stats import gmean
 import argparse
 
+from spqr import QuantizedLinear, FeatureFlags
 
-def spqr_mul_timer(spqr_device: inference.QuantizedLinear, x, feature_flag: inference.FeatureFlags, num_runs):
+
+def spqr_mul_timer(spqr_device: QuantizedLinear, x, feature_flag: FeatureFlags, num_runs):
     runs = torch.empty(num_runs).cpu().float()
     y = torch.zeros(spqr_device.m, dtype=x.dtype, device=x.device)
 
@@ -23,7 +24,7 @@ def spqr_mul_timer(spqr_device: inference.QuantizedLinear, x, feature_flag: infe
             spqr_device.bits,
             spqr_device.beta1,
             spqr_device.beta2,
-            spqr_device.buff0,
+            spqr_device.dense_weights,
             spqr_device.row_offsets,
             spqr_device.col_vals,
             spqr_device.nnz,
@@ -65,10 +66,10 @@ if __name__ == '__main__':
         type=str,
         required=True,
         help="Path to folder containing the tensors of the form"
-             "model_path/"
-             "   0/"
-             "       tensor0"
-             "       tensor1"
+        "model_path/"
+        "   0/"
+        "       tensor0"
+        "       tensor1"
     )
 
     parser.add_argument(
@@ -101,8 +102,8 @@ if __name__ == '__main__':
         np.random.seed(seed)
         torch.random.manual_seed(seed)
 
-        NUM_RUNS = 2
-        WARMUP = 1
+        NUM_RUNS = 2000
+        WARMUP = 10
 
         device = torch.device('cuda')
 
@@ -128,12 +129,12 @@ if __name__ == '__main__':
         folders_modified_csr.sort()
 
         methods = [
-            inference.FeatureFlags.SPARSE_FUSED_FP32,
+            FeatureFlags.SPARSE_FUSED_FP32,
         ]
 
         f.write('Layer;Tensor Name;M;N;Sparsity (%)')
 
-        for method in [inference.FeatureFlags.TORCH_FP16] + methods:
+        for method in [FeatureFlags.TORCH_FP16] + methods:
             f.write(f';{method.pretty()} (ms)')
 
         f.write(f';{method.pretty()} Modified CSR (ms)')
@@ -145,6 +146,7 @@ if __name__ == '__main__':
 
         for layer_id in csr_folders:
             folder = os.path.join(base_path, layer_id)
+            folder_ptcsr = os.path.join(base_path_modified_csr, layer_id)
 
             if run_ptcsr:
                 folders_modified_csr = os.path.join(base_path_modified_csr, layer_id)
@@ -153,11 +155,13 @@ if __name__ == '__main__':
             if not os.path.isdir(folder):
                 continue
 
-            for p, p_modified_csr in zip(os.listdir(folder), os.listdir(folders_modified_csr)):
+            for p, p_modified_csr in zip(os.listdir(folder), os.listdir(folder_ptcsr)):
                 tensor_path = os.path.join(folder, p)
+                tensor_path_modified_csr = os.path.join(folder_ptcsr, p_modified_csr)
 
-                tensor_path_modified_csr = os.path.join(folder, p_modified_csr)
                 spqr_module_modified_csr = torch.load(tensor_path_modified_csr)
+
+                deq_w_modified_csr = spqr_module_modified_csr.dequantize()
 
                 spqr_module_modified_csr.to(device=device)
                 spqr_module_device_modified_csr = spqr_module_modified_csr
@@ -190,14 +194,16 @@ if __name__ == '__main__':
                 for flag in methods:
                     print(f'Running {repr(flag)} on {layer_id}.{p}')
 
-                    y, spqr_runs = spqr_mul_timer(spqr_module_device, x_fp16_device, flag, NUM_RUNS)
+                    y_csr, spqr_runs = spqr_mul_timer(spqr_module_device, x_fp16_device, flag, NUM_RUNS)
                     spqr_runs = spqr_runs[WARMUP:]
                     this_algorithm = spqr_runs.min()
 
                     torch.cuda.empty_cache()
                     time.sleep(1)
 
-                    y, spqr_runs_modified_csr = spqr_mul_timer(spqr_module_device_modified_csr, x_fp16_device, flag, NUM_RUNS)
+                    y_ptcsr, spqr_runs_modified_csr = spqr_mul_timer(spqr_module_device_modified_csr, x_fp16_device, flag, NUM_RUNS)
+
+                    assert(torch.allclose(y_csr, y_ptcsr))
                     spqr_runs_modified_csr = spqr_runs_modified_csr[WARMUP:]
 
                     speed_up = torch_run / this_algorithm
