@@ -1,6 +1,7 @@
 .vscode/*
 .idea/*
 .ipynb_checkpoints/*
+__pycache__
 __pycache__/*
 spqr/.ipynb_checkpoints/*
 spqr/__pycache__/*

@@ -11,25 +11,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import os
+from dataclasses import dataclass
 from enum import IntEnum, StrEnum
 
-import torch
 import spqr_cuda
-
+import torch
 from torch import Tensor as T, nn
 
 from spqr.mul_ops import call_spqr_mul
-
-from dataclasses import dataclass
-
 from spqr.sparse_util import init_ptcsr, merge_col_val
 
 
 # Utility functions
 class SparseStorageConfiguration(StrEnum):
-    CSR = 'csr'
-    PTCSR = 'ptcsr'
-    OPTIMIZE_LATENCY = 'optimize_latency'
+    CSR = "csr"
+    PTCSR = "ptcsr"
+    OPTIMIZE_LATENCY = "optimize_latency"
 
 
 @dataclass
@@ -61,25 +58,16 @@ class ModelArgs:
 
     @staticmethod
     def from_file(legacy_model_path: str, compression_strategy: str):
-        b = torch.load(os.path.join(legacy_model_path, 'args.pt'))
-        bits = b['wbits']
-        beta1 = b['qq_groupsize']
-        beta2 = b['groupsize']
+        b = torch.load(os.path.join(legacy_model_path, "args.pt"))
+        bits = b["wbits"]
+        beta1 = b["qq_groupsize"]
+        beta2 = b["groupsize"]
         sparse_compression = SparseStorageConfiguration(compression_strategy)
-        return ModelArgs(
-            bits=bits,
-            beta1=beta1,
-            beta2=beta2,
-            sparse_compression=sparse_compression
-        )
+        return ModelArgs(bits=bits, beta1=beta1, beta2=beta2, sparse_compression=sparse_compression)
 
 
 class QuantizedLinear(torch.nn.Module):
-    def __init__(self, rows, cols, bits, beta1, beta2,
-                 dense_weights,
-                 row_offsets,
-                 col_vals,
-                 in_perm):
+    def __init__(self, rows, cols, bits, beta1, beta2, dense_weights, row_offsets, col_vals, in_perm):
         """
         This class stores the fully compressed bits=3-bit beta2=16 x beta1=16 SpQR mxn tensor.
 
@@ -120,23 +108,23 @@ class QuantizedLinear(torch.nn.Module):
         self.in_perm = nn.Parameter(in_perm, requires_grad=False)
 
     @staticmethod
-    def create_placehodler(rows, cols, bits, beta1, beta2,
-                           dense_weights_shape: int,
-                           row_offsets_shape: int,
-                           col_vals_shape: int,
-                           in_perm_shape: int):
+    def create_placehodler(
+        rows,
+        cols,
+        bits,
+        beta1,
+        beta2,
+        dense_weights_shape: int,
+        row_offsets_shape: int,
+        col_vals_shape: int,
+        in_perm_shape: int,
+    ):
         dense_weights = nn.Parameter(torch.empty(dense_weights_shape, dtype=torch.int64), requires_grad=False)
         row_offsets = nn.Parameter(torch.empty(row_offsets_shape, dtype=torch.int32), requires_grad=False)
         col_vals = nn.Parameter(torch.empty(col_vals_shape, dtype=torch.int32), requires_grad=False)
         in_perm = nn.Parameter(torch.empty(in_perm_shape, dtype=torch.int64), requires_grad=False)
 
-        return QuantizedLinear(
-            rows, cols, bits, beta1, beta2,
-            dense_weights,
-            row_offsets,
-            col_vals,
-            in_perm
-        )
+        return QuantizedLinear(rows, cols, bits, beta1, beta2, dense_weights, row_offsets, col_vals, in_perm)
 
     @staticmethod
     def _calculate_weight_buffer_size(m, n, beta1, beta2):
@@ -159,9 +147,9 @@ class QuantizedLinear(torch.nn.Module):
         @param device: Device.
         @return: Fully compressed SpQR tensor.
         """
-        dense_weights = QuantizedLinear._allocate_weight_buffer(spqr_legacy.m, spqr_legacy.n, model_args.beta1,
-                                                                model_args.beta2,
-                                                                'cpu')
+        dense_weights = QuantizedLinear._allocate_weight_buffer(
+            spqr_legacy.m, spqr_legacy.n, model_args.beta1, model_args.beta2, "cpu"
+        )
 
         col_vals = merge_col_val(spqr_legacy.col_ids, spqr_legacy.values)
         row_offsets_output = spqr_legacy.row_offsets
@@ -171,24 +159,26 @@ class QuantizedLinear(torch.nn.Module):
         else:
             col_vals_output = col_vals
 
-        spqr_cuda.tensor_compress_interleaved(spqr_legacy.m,
-                                              spqr_legacy.n,
-                                              model_args.bits,
-                                              spqr_legacy.W,
-                                              model_args.beta1,
-                                              model_args.beta2,
-                                              spqr_legacy.W_s,
-                                              spqr_legacy.W_z,
-                                              spqr_legacy.W_s_s,
-                                              spqr_legacy.W_s_z,
-                                              spqr_legacy.W_z_s,
-                                              spqr_legacy.W_z_z,
-                                              spqr_legacy.row_offsets,
-                                              row_offsets_output,
-                                              col_vals,
-                                              col_vals_output,
-                                              dense_weights,
-                                              0 if model_args.sparse_compression == SparseStorageConfiguration.CSR else 1)
+        spqr_cuda.tensor_compress_interleaved(
+            spqr_legacy.m,
+            spqr_legacy.n,
+            model_args.bits,
+            spqr_legacy.W,
+            model_args.beta1,
+            model_args.beta2,
+            spqr_legacy.W_s,
+            spqr_legacy.W_z,
+            spqr_legacy.W_s_s,
+            spqr_legacy.W_s_z,
+            spqr_legacy.W_z_s,
+            spqr_legacy.W_z_z,
+            spqr_legacy.row_offsets,
+            row_offsets_output,
+            col_vals,
+            col_vals_output,
+            dense_weights,
+            0 if model_args.sparse_compression == SparseStorageConfiguration.CSR else 1,
+        )
 
         mod = QuantizedLinear(
             spqr_legacy.m,
@@ -199,7 +189,7 @@ class QuantizedLinear(torch.nn.Module):
             dense_weights,
             row_offsets_output,
             col_vals_output,
-            spqr_legacy.in_perm
+            spqr_legacy.in_perm,
         )
 
         return mod.to(device=device)
@@ -219,7 +209,8 @@ class QuantizedLinear(torch.nn.Module):
             self.row_offsets,
             self.col_vals,
             nnz,
-            deq_w)
+            deq_w,
+        )
         return deq_w
 
     def dequantize_dense_only(self):
@@ -302,9 +293,11 @@ class QuantizedLinear(torch.nn.Module):
                 _x,
                 int(FeatureFlags.SPARSE_FUSED_FP32_ASYNC),
                 _y,
-                _y)
+                _y,
+            )
 
         return y.reshape((1, inner_dim, self.m))
+
 
 def flatten_tensor(W):
     """
@@ -341,9 +334,8 @@ class FeatureFlags(IntEnum):
 
     def pretty(self):
         if self.value == FeatureFlags.TORCH_FP16:
-            return 'Torch FP16'
+            return "Torch FP16"
         elif self.value == FeatureFlags.SPARSE_FUSED_FP32:
-            return 'Sparse Fused FP32'
+            return "Sparse Fused FP32"
         else:
-            raise 'Prettify not found for value {self.value}'
-
+            raise "Prettify not found for value {self.value}"

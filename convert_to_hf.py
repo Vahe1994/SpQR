@@ -25,7 +25,7 @@ def get_int_dtype(nbits: int) -> torch.dtype:
 
 @torch.inference_mode()
 def pack_int_data(data: torch.IntTensor, nbits: int) -> torch.IntTensor:
-    data[data >= 2 ** (nbits - 1)] -= 2 ** nbits
+    data[data >= 2 ** (nbits - 1)] -= 2**nbits
     return data.to(get_int_dtype(nbits))
 
 
@@ -77,11 +77,7 @@ def get_converted_state_dict(config, nbits: int, in_path: os.PathLike) -> [dict,
 
 def get_metadata(args_path: str) -> dict:
     quant_args = torch.load(args_path)
-    return {
-        "bits": quant_args["wbits"],
-        "beta1": quant_args["qq_groupsize"],
-        "beta2": quant_args["groupsize"]
-    }
+    return {"bits": quant_args["wbits"], "beta1": quant_args["qq_groupsize"], "beta2": quant_args["groupsize"]}
 
 
 def update_config(config_dict: dict, spqr_metadata: dict[str, int], linear_weights_not_to_quantize: list[str]):
@@ -103,6 +99,7 @@ def add_inference_code(model_type: str, save_path: os.PathLike):
     else:
         print(f"No predefined PreTrainedModel exists for {model_type}. You'll have to copy-paste some code yourself.")
 
+
 def replace_with_spqr_linear(
     model,
     quantization_config_shapes=None,
@@ -117,11 +114,11 @@ def replace_with_spqr_linear(
         if isinstance(module, QuantizedLinear):
             # Check if the current key is not in the `linear_weights_not_to_quantize`
             if ".".join(current_key_name) + ".weight" not in linear_weights_not_to_quantize:
-                tensor_name = '.'.join(current_key_name)
-                quantization_config_shapes[f'{tensor_name}.dense_weights.shape'] = module.dense_weights.shape[0]
-                quantization_config_shapes[f'{tensor_name}.row_offsets.shape'] = module.row_offsets.shape[0]
-                quantization_config_shapes[f'{tensor_name}.col_vals.shape'] = module.col_vals.shape[0]
-                quantization_config_shapes[f'{tensor_name}.in_perm.shape'] = module.in_perm.shape[0]
+                tensor_name = ".".join(current_key_name)
+                quantization_config_shapes[f"{tensor_name}.dense_weights.shape"] = module.dense_weights.shape[0]
+                quantization_config_shapes[f"{tensor_name}.row_offsets.shape"] = module.row_offsets.shape[0]
+                quantization_config_shapes[f"{tensor_name}.col_vals.shape"] = module.col_vals.shape[0]
+                quantization_config_shapes[f"{tensor_name}.in_perm.shape"] = module.in_perm.shape[0]
                 # Store the module class in case we need to transpose the weight later
                 model._modules[name].source_cls = type(module)
                 # Force requires grad to False to avoid unexpected errors
@@ -136,6 +133,7 @@ def replace_with_spqr_linear(
         # Remove the last key for recursion
         current_key_name.pop(-1)
     return model, True
+
 
 if __name__ == "__main__":
     import argparse
@@ -185,8 +183,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     old_config = AutoConfig.from_pretrained(args.model, trust_remote_code=args.trust_remote_code)
-    metadata = get_metadata(os.path.join(args.config_path, 'args.pt'))
-    linear_weights_not_to_quantize = torch.load(os.path.join(args.config_path, 'not_quantized_weights.pt')).keys()
+    metadata = get_metadata(os.path.join(args.config_path, "args.pt"))
+    linear_weights_not_to_quantize = torch.load(os.path.join(args.config_path, "not_quantized_weights.pt")).keys()
 
     model = torch.load(args.in_path_pt)
 
@@ -201,9 +199,11 @@ if __name__ == "__main__":
         tokenizer.save_pretrained(args.out_path)
 
     new_config_dict = update_config(old_config.to_diff_dict(), metadata, list(linear_weights_not_to_quantize))
-    new_config_dict['quantization_config']['linear_weights_not_to_quantize'] = list(linear_weights_not_to_quantize)
+    new_config_dict["quantization_config"]["linear_weights_not_to_quantize"] = list(linear_weights_not_to_quantize)
 
-    new_config_dict['quantization_config']['shapes'] = {}
-    replace_with_spqr_linear(model, new_config_dict['quantization_config']['shapes'], set(linear_weights_not_to_quantize))
+    new_config_dict["quantization_config"]["shapes"] = {}
+    replace_with_spqr_linear(
+        model, new_config_dict["quantization_config"]["shapes"], set(linear_weights_not_to_quantize)
+    )
     with open(os.path.join(args.out_path, "config.json"), "w") as config_file:
         json.dump(new_config_dict, config_file, indent=4)

@@ -15,7 +15,7 @@ from typing import Tuple
 
 import torch
 
-from spqr import updiv, SparseStorageConfiguration, QuantizedLinear, SPQRLegacy, ModelArgs
+from spqr import ModelArgs, QuantizedLinear, SparseStorageConfiguration, SPQRLegacy, updiv
 
 
 def generate_x_fp32(n, upper_bound=3):
@@ -54,10 +54,7 @@ def generate_x_int32(n):
 def random_csr_host(m, n, density):
     r = ((torch.rand(m, n) <= density) * (torch.ones(m, n) * 1).int()).to_sparse_csr()
 
-    return r.crow_indices().int(), \
-        r.values().half(), \
-        r.col_indices().short(), \
-        r._nnz()
+    return r.crow_indices().int(), r.values().half(), r.col_indices().short(), r._nnz()
 
 
 @dataclass
@@ -69,7 +66,7 @@ class DenseWeightInitStrategy:
 
 @dataclass
 class SparseWeightInitStrategy:
-    sparsity: float = 0.
+    sparsity: float = 0.0
 
 
 @dataclass
@@ -81,14 +78,16 @@ class MatrixBuilder:
     second_order: DenseWeightInitStrategy
 
 
-def create_spqr_quantized_matrix(m: int,
-                                 n: int,
-                                 weight_init_strategy: int = None,
-                                 first_order_init_strategy: int = None,
-                                 second_order_init_strategy: torch.float16 = None,
-                                 density: float = 0.,
-                                 sparse_storage: SparseStorageConfiguration = SparseStorageConfiguration.CSR,
-                                 in_perm=None) -> Tuple[QuantizedLinear, QuantizedLinear]:
+def create_spqr_quantized_matrix(
+    m: int,
+    n: int,
+    weight_init_strategy: int = None,
+    first_order_init_strategy: int = None,
+    second_order_init_strategy: torch.float16 = None,
+    density: float = 0.0,
+    sparse_storage: SparseStorageConfiguration = SparseStorageConfiguration.CSR,
+    in_perm=None,
+) -> Tuple[QuantizedLinear, QuantizedLinear]:
     beta1, beta2 = 16, 16
 
     if weight_init_strategy is None:
@@ -128,50 +127,38 @@ def create_spqr_quantized_matrix(m: int,
         row_offsets, values, col_ids, nnz = random_csr_host(m, n, density)
 
     spqr_legacy = SPQRLegacy(
-        m,
-        n,
-        3,
-        W,
-        16,
-        16,
-        W_s,
-        W_z,
-        W_s_s,
-        W_s_z,
-        W_z_s,
-        W_z_z,
-        row_offsets,
-        col_ids,
-        values,
-        in_perm
+        m, n, 3, W, 16, 16, W_s, W_z, W_s_s, W_s_z, W_z_s, W_z_z, row_offsets, col_ids, values, in_perm
     )
 
-    mod = QuantizedLinear.from_legacy(spqr_legacy, ModelArgs(3, 16, 16, sparse_storage), 'cpu')
-    mod_device = QuantizedLinear.from_legacy(spqr_legacy, ModelArgs(3, 16, 16, sparse_storage), 'cuda')
+    mod = QuantizedLinear.from_legacy(spqr_legacy, ModelArgs(3, 16, 16, sparse_storage), "cpu")
+    mod_device = QuantizedLinear.from_legacy(spqr_legacy, ModelArgs(3, 16, 16, sparse_storage), "cuda")
 
     return mod, mod_device
 
 
 def create_ones(m, n, sparse_storage: SparseStorageConfiguration = SparseStorageConfiguration.CSR):
-    return create_spqr_quantized_matrix(m, n, 1, 1, 1, 0., sparse_storage, None)
+    return create_spqr_quantized_matrix(m, n, 1, 1, 1, 0.0, sparse_storage, None)
 
 
 def create_random(m, n, density, sparse_storage: SparseStorageConfiguration = SparseStorageConfiguration.CSR):
     return create_spqr_quantized_matrix(m, n, None, None, None, density, sparse_storage, None)
 
 
-def create_random_weights_ones(m, n, density,
-                               sparse_storage: SparseStorageConfiguration = SparseStorageConfiguration.CSR):
+def create_random_weights_ones(
+    m, n, density, sparse_storage: SparseStorageConfiguration = SparseStorageConfiguration.CSR
+):
     return create_spqr_quantized_matrix(m, n, 1, None, None, density, sparse_storage, None)
 
 
-def create_random_first_order_ones(m, n, density,
-                                   sparse_storage: SparseStorageConfiguration = SparseStorageConfiguration.CSR):
+def create_random_first_order_ones(
+    m, n, density, sparse_storage: SparseStorageConfiguration = SparseStorageConfiguration.CSR
+):
     return create_spqr_quantized_matrix(m, n, None, 1, None, density, sparse_storage, None)
 
 
-def create_random_second_order_ones(m, n, density,
-                                    sparse_storage: SparseStorageConfiguration = SparseStorageConfiguration.CSR):
+def create_random_second_order_ones(
+    m, n, density, sparse_storage: SparseStorageConfiguration = SparseStorageConfiguration.CSR
+):
     return create_spqr_quantized_matrix(m, n, None, None, 1, density, sparse_storage, None)
 
 

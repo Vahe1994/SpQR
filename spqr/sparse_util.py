@@ -1,7 +1,6 @@
 from typing import Tuple
 
 import torch
-
 from torch import Tensor as T
 
 
@@ -15,8 +14,13 @@ def merge_col_val(col_ids, values) -> T:
     @return: Merged colvals buffer.
     """
     if values.shape[0] != 0:
-        return values.view(torch.int16).to(torch.int64).bitwise_left_shift(16).bitwise_or(
-            col_ids.view(torch.int16).to(torch.int64)).to(torch.int32)
+        return (
+            values.view(torch.int16)
+            .to(torch.int64)
+            .bitwise_left_shift(16)
+            .bitwise_or(col_ids.view(torch.int16).to(torch.int64))
+            .to(torch.int32)
+        )
     else:
         return torch.zeros(0)
 

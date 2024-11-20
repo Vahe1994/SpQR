@@ -1,14 +1,14 @@
-import numpy as np
-import torch
-import spqr_cuda
-import time
+import argparse
 import os
+import time
 
 import inference
-import tests.test_util as test_util
-
+import numpy as np
+import spqr_cuda
+import torch
 from scipy.stats import gmean
-import argparse
+
+import tests.test_util as test_util
 
 
 def spqr_mul_timer(spqr_device: inference.QuantizedLinear, x, feature_flag: inference.FeatureFlags, num_runs):
@@ -30,7 +30,8 @@ def spqr_mul_timer(spqr_device: inference.QuantizedLinear, x, feature_flag: infe
             x,
             y,
             runs[i],
-            feature_flag)
+            feature_flag,
+        )
 
     return y, runs
 
@@ -42,7 +43,7 @@ def torch_mul_timer(deq_w, x, num_runs):
     else:
         m, n = deq_w.shape
 
-    assert (n == x.shape[0])
+    assert n == x.shape[0]
 
     runs = torch.empty(num_runs).cpu().float()
 
@@ -55,7 +56,7 @@ def torch_mul_timer(deq_w, x, num_runs):
     return y, runs
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     torch_runs = {}
 
     parser = argparse.ArgumentParser(add_help=True)
@@ -65,10 +66,10 @@ if __name__ == '__main__':
         type=str,
         required=True,
         help="Path to folder containing the tensors of the form"
-             "model_path/"
-             "   0/"
-             "       tensor0"
-             "       tensor1"
+        "model_path/"
+        "   0/"
+        "       tensor0"
+        "       tensor1",
     )
 
     parser.add_argument(
@@ -76,12 +77,11 @@ if __name__ == '__main__':
         type=str,
         required=False,
         help="Path to folder containing the tensors of the form"
-             "model_path/"
-             "   0/"
-             "       tensor0"
-             "       tensor1"
+        "model_path/"
+        "   0/"
+        "       tensor0"
+        "       tensor1",
     )
-
 
     parser.add_argument(
         "--output_path",
@@ -91,7 +91,7 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    with open(args.output_path, 'w') as f:
+    with open(args.output_path, "w") as f:
         run_ptcsr = args.ptcsr_path is not None
 
         base_path = args.tensor_path
@@ -104,7 +104,7 @@ if __name__ == '__main__':
         NUM_RUNS = 2
         WARMUP = 1
 
-        device = torch.device('cuda')
+        device = torch.device("cuda")
 
         for m in [4096, 11008]:
             for n in [4096, 11008]:
@@ -118,7 +118,6 @@ if __name__ == '__main__':
 
         csr_folders = os.listdir(base_path)
 
-
         if run_ptcsr:
             folders_modified_csr = os.listdir(base_path_modified_csr)
         else:
@@ -131,14 +130,14 @@ if __name__ == '__main__':
             inference.FeatureFlags.SPARSE_FUSED_FP32,
         ]
 
-        f.write('Layer;Tensor Name;M;N;Sparsity (%)')
+        f.write("Layer;Tensor Name;M;N;Sparsity (%)")
 
         for method in [inference.FeatureFlags.TORCH_FP16] + methods:
-            f.write(f';{method.pretty()} (ms)')
+            f.write(f";{method.pretty()} (ms)")
 
-        f.write(f';{method.pretty()} Modified CSR (ms)')
+        f.write(f";{method.pretty()} Modified CSR (ms)")
 
-        f.write('\n')
+        f.write("\n")
 
         benchmark_results_ms = []
         benchmark_speed_up = []
@@ -166,7 +165,7 @@ if __name__ == '__main__':
 
                 m = spqr_module.m
                 n = spqr_module.n
-                print(f'Running {m} x {n}')
+                print(f"Running {m} x {n}")
 
                 deq_w = spqr_module.dequantize()
 
@@ -185,10 +184,10 @@ if __name__ == '__main__':
 
                 torch_run = torch_runs[(spqr_module_device.m, spqr_module_device.n)]
 
-                f.write(f'{layer_id};{p};{m};{n};{sparsity_perc:.3f};{torch_run:.4f}')
+                f.write(f"{layer_id};{p};{m};{n};{sparsity_perc:.3f};{torch_run:.4f}")
 
                 for flag in methods:
-                    print(f'Running {repr(flag)} on {layer_id}.{p}')
+                    print(f"Running {repr(flag)} on {layer_id}.{p}")
 
                     y, spqr_runs = spqr_mul_timer(spqr_module_device, x_fp16_device, flag, NUM_RUNS)
                     spqr_runs = spqr_runs[WARMUP:]
@@ -197,27 +196,30 @@ if __name__ == '__main__':
                     torch.cuda.empty_cache()
                     time.sleep(1)
 
-                    y, spqr_runs_modified_csr = spqr_mul_timer(spqr_module_device_modified_csr, x_fp16_device, flag, NUM_RUNS)
+                    y, spqr_runs_modified_csr = spqr_mul_timer(
+                        spqr_module_device_modified_csr, x_fp16_device, flag, NUM_RUNS
+                    )
                     spqr_runs_modified_csr = spqr_runs_modified_csr[WARMUP:]
 
                     speed_up = torch_run / this_algorithm
 
                     print(
-                        f'\t{repr(flag)} running {this_algorithm} ms {speed_up:.2f}X speed-up vs torch {torch_run} ms')
+                        f"\t{repr(flag)} running {this_algorithm} ms {speed_up:.2f}X speed-up vs torch {torch_run} ms"
+                    )
 
                     if run_ptcsr:
                         this_algorithm_modified_csr = spqr_runs_modified_csr.min()
                         speed_up_modified_csr = torch_run / this_algorithm_modified_csr
                         print(
-                            f'\t{repr(flag)} modified csr running {this_algorithm_modified_csr} ms {speed_up_modified_csr:.2f}X speed-up vs torch {torch_run} ms')
+                            f"\t{repr(flag)} modified csr running {this_algorithm_modified_csr} ms {speed_up_modified_csr:.2f}X speed-up vs torch {torch_run} ms"
+                        )
 
                     if run_ptcsr:
-                        f.write(f';{this_algorithm:.4f};{this_algorithm_modified_csr:.4f}')
+                        f.write(f";{this_algorithm:.4f};{this_algorithm_modified_csr:.4f}")
                         baseline_speed_up = max(speed_up, speed_up_modified_csr)
                     else:
                         baseline_speed_up = speed_up
-                        f.write(f';{this_algorithm:.4f}')
-
+                        f.write(f";{this_algorithm:.4f}")
 
                     if run_ptcsr:
                         benchmark_results_ms.append(min(this_algorithm, this_algorithm_modified_csr))
@@ -225,14 +227,14 @@ if __name__ == '__main__':
                         benchmark_results_ms.append(this_algorithm)
                     benchmark_speed_up.append(baseline_speed_up)
 
-                f.write('\n')
+                f.write("\n")
                 f.flush()
-                print('\n\n')
+                print("\n\n")
 
-            print(f'Total benchmark geomean = {gmean(benchmark_results_ms)}')
-            print(f'Total benchmark speed-up geomean = {gmean(benchmark_speed_up)}')
+            print(f"Total benchmark geomean = {gmean(benchmark_results_ms)}")
+            print(f"Total benchmark speed-up geomean = {gmean(benchmark_speed_up)}")
 
-            print(f'Total benchmark mean = {np.array(benchmark_results_ms).mean()}')
-            print(f'Total benchmark speed-up mean= {np.array(benchmark_speed_up).mean()}')
+            print(f"Total benchmark mean = {np.array(benchmark_results_ms).mean()}")
+            print(f"Total benchmark speed-up mean= {np.array(benchmark_speed_up).mean()}")
 
-            print('\n\n')
+            print("\n\n")
