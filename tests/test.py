@@ -7,7 +7,8 @@ import torch
 
 from inference_lib.spqr_quant import QuantizedLinear
 from inference_lib.spqr_quant.inference import FeatureFlags, ModelArgs, SparseStorageConfiguration, SPQRLegacy, updiv
-from inference_lib.spqr_quant.inference_kernels.kernel_selector import get_spqr_mul, get_torch_mul_timer
+from inference_lib.spqr_quant.inference_kernels.kernel_selector import get_torch_mul_timer, \
+    get_spqr_mul_fused, get_spqr_mul
 
 
 def generate_x_fp32(n, upper_bound=3):
@@ -164,6 +165,24 @@ torch.random.manual_seed(seed)
 
 DEV = torch.device("cuda:0")
 
+def _spqr_mul_fused(spqr_device: QuantizedLinear, x, y, feature_flag: FeatureFlags):
+    get_spqr_mul_fused()(
+        spqr_device.m,
+        spqr_device.n,
+        spqr_device.bits,
+        spqr_device.beta1,
+        spqr_device.beta2,
+        torch.arange(spqr_device.n, dtype=torch.short, device=x.device),
+        spqr_device.dense_weights,
+        spqr_device.row_offsets,
+        spqr_device.col_vals,
+        spqr_device.nnz,
+        x,
+        int(feature_flag),
+        y,
+        y,
+    )
+
 
 def _spqr_mul(spqr_device: QuantizedLinear, x, y, feature_flag: FeatureFlags):
     get_spqr_mul()(
@@ -292,6 +311,40 @@ class TestSparseFp16Fused(unittest.TestCase):
                             y = torch.zeros(m, dtype=torch.half, device=device)
 
                             _spqr_mul(spqr_module_device, x_fp16_device, y, flag)
+
+                            passed = torch.equal(y, y_true)
+
+                            self.assertTrue(
+                                passed,
+                                msg=f"Failed for m = {m} n = {n} density = {density} compression_strategy = {compression_strategy}\ny={y}\ny_true={y_true}",
+                            )
+
+
+class TestSparseFp16FusedFused(unittest.TestCase):
+    def test_sparse_random(self):
+        print("")
+        # Call this once just to trigger the annoying torch sparse warning.
+        device = torch.device("cuda:0")
+        for m in [16, 32, 64, 128, 256]:
+            for n in [16, 32, 64, 128, 256, 512, 4096, 11008]:
+                for density in [0, 0.01, 0.05, 0.5, 0.9]:
+                    for compression_strategy in [SparseStorageConfiguration.CSR, SparseStorageConfiguration.PTCSR]:
+                        for flag in [
+                            FeatureFlags.SPARSE_FUSED_FP32,
+                        ]:
+                            print(f"Running m = {m} n = {n} density = {density} storage = {compression_strategy}")
+                            # Generate test case
+                            x_fp32 = generate_x_fp32(n)
+                            spqr_module, spqr_module_device = create_random(m, n, density, compression_strategy)
+
+                            x_fp16_device = x_fp32.cuda(device=device).half()
+
+                            deq_w = spqr_module.dequantize().to(device)
+
+                            y_true = torch_mul(deq_w, x_fp16_device)
+                            y = torch.zeros(m, dtype=torch.half, device=device)
+
+                            _spqr_mul_fused(spqr_module_device, x_fp16_device, y, flag)
 
                             passed = torch.equal(y, y_true)
 
