@@ -165,6 +165,50 @@ You can do so by running the following command:
 
 which simply runs the `setup.py` script.
 
+# Conversion From Legacy to Optimized SPQR Storage
+
+After running SpQR which produces the tensors stored in int8, in order to run the efficient inference kernels, 
+one must convert the tensors produces by SpQR (legacy tensors) into the optimized storage format used by 
+the cuda kernel. In order to do so, run the following script:
+
+```bash
+usage: convert_legacy_model_format.py [-h] --base_model BASE_MODEL --legacy_model_path LEGACY_MODEL_PATH [--sparse_strategy {csr,ptcsr,optimize_latency}] [--save_pt SAVE_PT] [--save_per_layer SAVE_PER_LAYER]
+
+options:
+  -h, --help            show this help message and exit
+  --base_model BASE_MODEL
+                        path or name of the unquantized model
+  --legacy_model_path LEGACY_MODEL_PATH
+                        path to legacy model
+  --sparse_strategy {csr,ptcsr,optimize_latency}
+                        Sparse strategy storage. Options: csr, ptcsr, auto. CSR - Compressed Sparse Rows PTCSR - Alternative storage format optimize_latency - Use the current GPU to determine the optimal storage format to reduce
+                        kernel latency
+  --save_pt SAVE_PT     Save the converted quantized .pt model here
+  --save_per_layer SAVE_PER_LAYER
+                        Save the converted quantized m
+```
+
+# Hugginface Conversion
+
+To convert a model into a Hugging Face compatible format, use convert_to_hf.py script:
+
+```bash
+usage: convert_to_hf.py [-h] [--model MODEL] [--config_path CONFIG_PATH] [--in_path_pt IN_PATH_PT] [--out_path OUT_PATH] [--save_safetensors] [--trust_remote_code] [--load_model] [--save_tokenizer]
+
+options:
+  -h, --help            show this help message and exit
+  --model MODEL         Path to the model to base config on, as in AutoConfig.from_pretrained()
+  --config_path CONFIG_PATH
+                        Path to the model to base config on, as in AutoConfig.from_pretrained()
+  --in_path_pt IN_PATH_PT
+                        Path of the checkpoint to convert
+  --out_path OUT_PATH   Path to save HF compatible checkpoint to
+  --save_safetensors    Whether to save in safetensors format
+  --trust_remote_code   Whether to trust remote code
+  --load_model          Whether to load model
+  --save_tokenizer      Whether to save tokenizer
+```
+
 # Benchmarks (matvec kernel)
 
 In order to run the matvec benchmark suite, one should run:

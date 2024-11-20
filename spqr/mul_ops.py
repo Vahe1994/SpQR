@@ -22,7 +22,6 @@ torch.library.impl("spqr_torch_lib::spqr_mul", "default", CUDA_KERNEL.spqr_mul)
 def spqr_mul_meta(m, n, bits, beta1, beta2, buff0, row_offsets, col_vals, nnz, x, f, Y, out):
     """
     There are no allocation performed by this kernel.
-    TODO: Add input sanitation.
     """
     return
 
