@@ -1,8 +1,10 @@
+.vscode/*
 .idea/*
 .ipynb_checkpoints/*
+__pycache__
 __pycache__/*
-SpQR/.ipynb_checkpoints/*
-SpQR/__pycache__/*
+spqr/.ipynb_checkpoints/*
+spqr/__pycache__/*
 outliers/*
 outliers_stru*
 wandb/*
