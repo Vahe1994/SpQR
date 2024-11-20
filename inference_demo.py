@@ -40,7 +40,7 @@ def decode_one_tokens(model, cur_token, input_pos, cache_position, past_key_valu
     return new_token
 
 
-class LLama:
+class InferenceDemo:
     def __init__(self, pretrained_model_path: str, quantized_model_path, flag, device='cuda', torchscript=False,
                  backend=None):
         self.flag = flag
@@ -171,7 +171,7 @@ if __name__ == "__main__":
     m = Mode(args.execution_mode)
 
     with torch.no_grad():
-        model = LLama(args.pretrained_model_path, args.compressed_model_path, m)
+        model = InferenceDemo(args.pretrained_model_path, args.compressed_model_path, m)
         text = 'The recipe for banana bread is '  # input()
         s = time.time()
         generated_text, timings_s = model.generate(text, max_new_tokens=128)
