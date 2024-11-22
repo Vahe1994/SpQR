@@ -4,6 +4,6 @@ sentencepiece==0.1.97
 transformers>=4.36
 accelerate>=0.26.0
 tokenizers>=0.14.1
-torch
+torch>=2.4.0
 # originally tested with transformers=4.28.0.dev0 which handles Llama correctly
 # git+https://github.com/huggingface/transformers/archive/464d420775653885760e30d24d3703e14f4e8a14.zip
