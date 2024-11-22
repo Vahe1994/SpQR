@@ -6,8 +6,7 @@ import numpy as np
 import torch
 from scipy.stats import gmean
 
-
-from inference_lib.src.inference import QuantizedLinear, FeatureFlags
+from inference_lib.src.inference import FeatureFlags, QuantizedLinear
 from inference_lib.src.spqr.inference_kernels.cuda_kernel import call_spqr_mul_timer, call_spqr_torch_mul_timer
 
 

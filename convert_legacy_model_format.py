@@ -4,7 +4,7 @@ import os
 import torch
 from transformers import AutoConfig, AutoModelForCausalLM
 
-from inference_lib.src.inference import ModelArgs, SPQRLegacy, QuantizedLinear
+from inference_lib.src.inference import ModelArgs, QuantizedLinear, SPQRLegacy
 
 
 def load_legacy_tensor(p: str, model_args: ModelArgs) -> SPQRLegacy:
@@ -70,13 +70,13 @@ def load_legacy_tensor(p: str, model_args: ModelArgs) -> SPQRLegacy:
 
 
 def replace_and_save_quantized_layers(
-        model_args: ModelArgs,
-        model_to_be_quantized,
-        legacy_model_path,
-        current_model=None,
-        layer_id: int = -1,
-        parent_tensor_name="",
-        output_per_layer_path=None,
+    model_args: ModelArgs,
+    model_to_be_quantized,
+    legacy_model_path,
+    current_model=None,
+    layer_id: int = -1,
+    parent_tensor_name="",
+    output_per_layer_path=None,
 ):
     """
     This function goes through the @model_to_be_quantized recursively and

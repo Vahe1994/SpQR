@@ -172,7 +172,7 @@ if __name__ == "__main__":
     m = Mode(args.execution_mode)
 
     with torch.no_grad():
-        model = InferenceDemo(args.pretrained_model_path, args.compressed_model_path, m, backend='inductor')
+        model = InferenceDemo(args.pretrained_model_path, args.compressed_model_path, m, backend="inductor")
         text = "The recipe for banana bread is "  # input()
         s = time.time()
         generated_text, timings_s = model.generate(text, max_new_tokens=128)

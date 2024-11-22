@@ -17,9 +17,12 @@ from enum import IntEnum, StrEnum
 import torch
 from torch import Tensor as T, nn
 
-from .sparse_util import merge_col_val, init_ptcsr
-from .spqr.inference_kernels.cuda_kernel import call_spqr_mul, call_tensor_compress_interleaved, \
-    call_dequantize_compressed
+from .sparse_util import init_ptcsr, merge_col_val
+from .spqr.inference_kernels.cuda_kernel import (
+    call_dequantize_compressed,
+    call_spqr_mul,
+    call_tensor_compress_interleaved,
+)
 
 
 # Utility functions
@@ -109,15 +112,15 @@ class QuantizedLinear(torch.nn.Module):
 
     @staticmethod
     def create_placehodler(
-            rows,
-            cols,
-            bits,
-            beta1,
-            beta2,
-            dense_weights_shape: int,
-            row_offsets_shape: int,
-            col_vals_shape: int,
-            in_perm_shape: int,
+        rows,
+        cols,
+        bits,
+        beta1,
+        beta2,
+        dense_weights_shape: int,
+        row_offsets_shape: int,
+        col_vals_shape: int,
+        in_perm_shape: int,
     ):
         dense_weights = nn.Parameter(torch.empty(dense_weights_shape, dtype=torch.int64), requires_grad=False)
         row_offsets = nn.Parameter(torch.empty(row_offsets_shape, dtype=torch.int32), requires_grad=False)

@@ -1,15 +1,19 @@
 import unittest
-
-import numpy as np
-
-from inference_lib.src.spqr.inference_kernels.cuda_kernel import call_spqr_mul, call_torch_mul_timer
 from dataclasses import dataclass
 from typing import Tuple
 
+import numpy as np
 import torch
 
-from inference_lib.src.inference import SparseStorageConfiguration, QuantizedLinear, updiv, SPQRLegacy, ModelArgs, \
-    FeatureFlags
+from inference_lib.src.inference import (
+    FeatureFlags,
+    ModelArgs,
+    QuantizedLinear,
+    SparseStorageConfiguration,
+    SPQRLegacy,
+    updiv,
+)
+from inference_lib.src.spqr.inference_kernels.cuda_kernel import call_spqr_mul, call_torch_mul_timer
 
 
 def generate_x_fp32(n, upper_bound=3):
@@ -73,14 +77,14 @@ class MatrixBuilder:
 
 
 def create_spqr_quantized_matrix(
-        m: int,
-        n: int,
-        weight_init_strategy: int = None,
-        first_order_init_strategy: int = None,
-        second_order_init_strategy: torch.float16 = None,
-        density: float = 0.0,
-        sparse_storage: SparseStorageConfiguration = SparseStorageConfiguration.CSR,
-        in_perm=None,
+    m: int,
+    n: int,
+    weight_init_strategy: int = None,
+    first_order_init_strategy: int = None,
+    second_order_init_strategy: torch.float16 = None,
+    density: float = 0.0,
+    sparse_storage: SparseStorageConfiguration = SparseStorageConfiguration.CSR,
+    in_perm=None,
 ) -> Tuple[QuantizedLinear, QuantizedLinear]:
     beta1, beta2 = 16, 16
 
@@ -139,25 +143,26 @@ def create_random(m, n, density, sparse_storage: SparseStorageConfiguration = Sp
 
 
 def create_random_weights_ones(
-        m, n, density, sparse_storage: SparseStorageConfiguration = SparseStorageConfiguration.CSR
+    m, n, density, sparse_storage: SparseStorageConfiguration = SparseStorageConfiguration.CSR
 ):
     return create_spqr_quantized_matrix(m, n, 1, None, None, density, sparse_storage, None)
 
 
 def create_random_first_order_ones(
-        m, n, density, sparse_storage: SparseStorageConfiguration = SparseStorageConfiguration.CSR
+    m, n, density, sparse_storage: SparseStorageConfiguration = SparseStorageConfiguration.CSR
 ):
     return create_spqr_quantized_matrix(m, n, None, 1, None, density, sparse_storage, None)
 
 
 def create_random_second_order_ones(
-        m, n, density, sparse_storage: SparseStorageConfiguration = SparseStorageConfiguration.CSR
+    m, n, density, sparse_storage: SparseStorageConfiguration = SparseStorageConfiguration.CSR
 ):
     return create_spqr_quantized_matrix(m, n, None, None, 1, density, sparse_storage, None)
 
 
 def create_just_sparse(m, n, density, sparse_storage: SparseStorageConfiguration = SparseStorageConfiguration.CSR):
     return create_spqr_quantized_matrix(m, n, 0, 0, 0, density, sparse_storage, None)
+
 
 seed = 1
 np.random.seed(seed)
@@ -180,7 +185,7 @@ def _spqr_mul(spqr_device: QuantizedLinear, x, y, feature_flag: FeatureFlags):
         x,
         int(feature_flag),
         y,
-        y
+        y,
     )
 
 
@@ -283,9 +288,7 @@ class TestSparseFp16Fused(unittest.TestCase):
                             print(f"Running m = {m} n = {n} density = {density} storage = {compression_strategy}")
                             # Generate test case
                             x_fp32 = generate_x_fp32(n)
-                            spqr_module, spqr_module_device = create_random(
-                                m, n, density, compression_strategy
-                            )
+                            spqr_module, spqr_module_device = create_random(m, n, density, compression_strategy)
 
                             x_fp16_device = x_fp32.cuda(device=device).half()
 
