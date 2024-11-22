@@ -3,8 +3,8 @@
 .ipynb_checkpoints/*
 __pycache__
 __pycache__/*
-spqr/.ipynb_checkpoints/*
-spqr/__pycache__/*
+inference_lib/.ipynb_checkpoints/*
+inference_lib/__pycache__/*
 outliers/*
 outliers_stru*
 wandb/*

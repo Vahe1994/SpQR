@@ -4,7 +4,7 @@ import os
 import torch
 from transformers import AutoConfig, AutoModelForCausalLM
 
-from spqr import ModelArgs, QuantizedLinear, SPQRLegacy, flatten_tensor
+from inference_lib.src.inference import ModelArgs, SPQRLegacy, QuantizedLinear
 
 
 def load_legacy_tensor(p: str, model_args: ModelArgs) -> SPQRLegacy:
@@ -19,6 +19,16 @@ def load_legacy_tensor(p: str, model_args: ModelArgs) -> SPQRLegacy:
     @return: QuantizedLinear object, storing the compressed matrix format ready to be used by the efficient inference
     kernel.
     """
+
+    def flatten_tensor(W):
+        """
+        @return: Utility function: flattens the input tensor.
+        """
+        if torch.is_tensor(W):
+            return W.flatten()
+        else:
+            return torch.cat(W).flatten()
+
     bits = model_args.bits
     beta1 = model_args.beta1
     beta2 = model_args.beta2
@@ -60,13 +70,13 @@ def load_legacy_tensor(p: str, model_args: ModelArgs) -> SPQRLegacy:
 
 
 def replace_and_save_quantized_layers(
-    model_args: ModelArgs,
-    model_to_be_quantized,
-    legacy_model_path,
-    current_model=None,
-    layer_id: int = -1,
-    parent_tensor_name="",
-    output_per_layer_path=None,
+        model_args: ModelArgs,
+        model_to_be_quantized,
+        legacy_model_path,
+        current_model=None,
+        layer_id: int = -1,
+        parent_tensor_name="",
+        output_per_layer_path=None,
 ):
     """
     This function goes through the @model_to_be_quantized recursively and

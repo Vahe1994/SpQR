@@ -1,0 +1,3 @@
+include src/spqr/inference_kernels/*.cpp
+include src/spqr/inference_kernels/*.cu
+include src/spqr/inference_kernels/*.cuh

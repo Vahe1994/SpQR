@@ -31,13 +31,12 @@ template<class T> __host__ __device__ constexpr int get_bits() {
 
 template<class Bit_t, unsigned BITS> struct TileArray {
 private:
-  Bit_t *buffer;
+  Bit_t *buffer{};
 
 public:
-  Bit_t *ptr;
+  Bit_t *ptr{};
 
-  explicit TileArray(Bit_t *ptr) : ptr(ptr), buffer(ptr) {
-  }
+  explicit TileArray(Bit_t *_ptr) : buffer(_ptr), ptr(_ptr) { }
 
   void push(Bit_t s, Bit_t z, Bit_t *x, int n, Bit_t buff = Bit_t{}) {
     Bit_t b = (z << BITS) | s;
@@ -46,13 +45,11 @@ public:
     constexpr int VALUES_PER_ADDR = get_bits<Bit_t>() / BITS;
     const int VALUES_TO_ADD = n;
 
-    Bit_t _b;
     for (; i < VALUES_TO_ADD;) {
       for (; j < VALUES_PER_ADDR && i < VALUES_TO_ADD; j++, i++) {
         b |= (x[i] << (j * BITS));
       }
       *buffer = b | buff;
-      _b = b;
       b = 0;
       j = 0;
       buffer++;

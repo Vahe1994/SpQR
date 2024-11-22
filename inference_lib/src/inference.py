@@ -14,12 +14,12 @@ import os
 from dataclasses import dataclass
 from enum import IntEnum, StrEnum
 
-import spqr_cuda
 import torch
 from torch import Tensor as T, nn
 
-from spqr.mul_ops import call_spqr_mul
-from spqr.sparse_util import init_ptcsr, merge_col_val
+from .sparse_util import merge_col_val, init_ptcsr
+from .spqr.inference_kernels.cuda_kernel import call_spqr_mul, call_tensor_compress_interleaved, \
+    call_dequantize_compressed
 
 
 # Utility functions
@@ -76,7 +76,7 @@ class QuantizedLinear(torch.nn.Module):
         @param bits: Size of the weights and first order data quantization.
         @param beta1: Tile width.
         @param beta2: Tile height (see SpQR publication for more details).
-        @param dense_weights: The weights, first and second order data is stored in buff0. A single row tile
+        @param dense_weights: The weights, first and second order data is stored in dense_weights. A single row tile
         looks is stored in a 64-bit chunk as follows:
 
                    |  w_s  | w_z | w_0 | ... | w_15 | c_0 | unused
@@ -109,15 +109,15 @@ class QuantizedLinear(torch.nn.Module):
 
     @staticmethod
     def create_placehodler(
-        rows,
-        cols,
-        bits,
-        beta1,
-        beta2,
-        dense_weights_shape: int,
-        row_offsets_shape: int,
-        col_vals_shape: int,
-        in_perm_shape: int,
+            rows,
+            cols,
+            bits,
+            beta1,
+            beta2,
+            dense_weights_shape: int,
+            row_offsets_shape: int,
+            col_vals_shape: int,
+            in_perm_shape: int,
     ):
         dense_weights = nn.Parameter(torch.empty(dense_weights_shape, dtype=torch.int64), requires_grad=False)
         row_offsets = nn.Parameter(torch.empty(row_offsets_shape, dtype=torch.int32), requires_grad=False)
@@ -159,7 +159,7 @@ class QuantizedLinear(torch.nn.Module):
         else:
             col_vals_output = col_vals
 
-        spqr_cuda.tensor_compress_interleaved(
+        call_tensor_compress_interleaved(
             spqr_legacy.m,
             spqr_legacy.n,
             model_args.bits,
@@ -176,8 +176,8 @@ class QuantizedLinear(torch.nn.Module):
             row_offsets_output,
             col_vals,
             col_vals_output,
-            dense_weights,
             0 if model_args.sparse_compression == SparseStorageConfiguration.CSR else 1,
+            dense_weights,
         )
 
         mod = QuantizedLinear(
@@ -199,7 +199,7 @@ class QuantizedLinear(torch.nn.Module):
         Internal method, see dequantize and dequantize_dense_only for reference.
         """
         deq_w = torch.zeros(self.m, self.n).half().contiguous()
-        spqr_cuda.spqr_dequantize_compressed(
+        call_dequantize_compressed(
             self.m,
             self.n,
             self.bits,
@@ -297,16 +297,6 @@ class QuantizedLinear(torch.nn.Module):
             )
 
         return y.reshape((1, inner_dim, self.m))
-
-
-def flatten_tensor(W):
-    """
-    @return: Utility function: flattens the input tensor.
-    """
-    if torch.is_tensor(W):
-        return W.flatten()
-    else:
-        return torch.cat(W).flatten()
 
 
 def updiv(x, y):
