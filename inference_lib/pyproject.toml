@@ -4,11 +4,8 @@ requires = [
     "wheel",
     "torch>=2.4.0",
     "safetensors",
-    "datasets>=2.16.1",
-    "sentencepiece==0.1.97",
     "transformers>=4.36",
-    "accelerate>=0.26.0",
-    "tokenizers>=0.14.1"
+    "accelerate>=0.26.0"
 ]
 build-backend = "setuptools.build_meta"
 
