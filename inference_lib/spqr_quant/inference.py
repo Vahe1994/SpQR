@@ -18,7 +18,7 @@ import torch
 from torch import Tensor as T, nn
 
 from .sparse_util import init_ptcsr, merge_col_val
-from .spqr.inference_kernels.cuda_kernel import (
+from .inference_kernels.cuda_kernel import (
     call_dequantize_compressed,
     call_spqr_mul,
     call_tensor_compress_interleaved,

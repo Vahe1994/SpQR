@@ -1,6 +1,5 @@
-include src/spqr/inference_kernels/*.cpp
-include src/spqr/inference_kernels/*.cu
-include src/spqr/inference_kernels/*.cuh
-include src/spqr/inference_kernels/*.cuh
-include src/spqr/inference_kernels/*.py
-include src/*.py
+recursive-include spqr_quant/*.cpp
+recursive-include spqr_quant/*.cu
+recursive-include spqr_quant/*.cuh
+recursive-include spqr_quant/*.cuh
+recursive-include spqr_quant/*.py
