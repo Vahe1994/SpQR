@@ -17,12 +17,8 @@ from enum import IntEnum, StrEnum
 import torch
 from torch import Tensor as T, nn
 
+from .inference_kernels.cuda_kernel import call_dequantize_compressed, call_spqr_mul, call_tensor_compress_interleaved
 from .sparse_util import init_ptcsr, merge_col_val
-from .inference_kernels.cuda_kernel import (
-    call_dequantize_compressed,
-    call_spqr_mul,
-    call_tensor_compress_interleaved,
-)
 
 
 # Utility functions

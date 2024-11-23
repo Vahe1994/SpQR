@@ -6,9 +6,8 @@ import numpy as np
 import torch
 
 from inference_lib.spqr_quant import QuantizedLinear
-from inference_lib.spqr_quant.inference import FeatureFlags, updiv, SparseStorageConfiguration, SPQRLegacy, ModelArgs
-from inference_lib.spqr_quant.inference_kernels.kernel_selector import get_torch_mul_timer, \
-    get_spqr_mul
+from inference_lib.spqr_quant.inference import FeatureFlags, ModelArgs, SparseStorageConfiguration, SPQRLegacy, updiv
+from inference_lib.spqr_quant.inference_kernels.kernel_selector import get_spqr_mul, get_torch_mul_timer
 
 
 def generate_x_fp32(n, upper_bound=3):
