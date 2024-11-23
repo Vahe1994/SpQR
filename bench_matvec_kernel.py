@@ -6,8 +6,9 @@ import numpy as np
 import torch
 from scipy.stats import gmean
 
-from inference_lib.src.inference import FeatureFlags, QuantizedLinear
-from inference_lib.src.spqr.inference_kernels.cuda_kernel import call_spqr_mul_timer, call_spqr_torch_mul_timer
+from inference_lib.spqr_quant import QuantizedLinear
+from inference_lib.spqr_quant.inference import FeatureFlags
+from inference_lib.spqr_quant.inference_kernels.kernel_selector import get_spqr_mul_timer, get_torch_mul_timer
 
 
 def spqr_mul_timer(spqr_device: QuantizedLinear, x, feature_flag: FeatureFlags, num_runs):
@@ -16,7 +17,7 @@ def spqr_mul_timer(spqr_device: QuantizedLinear, x, feature_flag: FeatureFlags, 
 
     for i in range(num_runs):
         y = torch.zeros_like(y)
-        call_spqr_mul_timer(
+        get_spqr_mul_timer()(
             spqr_device.m,
             spqr_device.n,
             spqr_device.bits,
@@ -50,7 +51,7 @@ def torch_mul_timer_runs(deq_w, x, num_runs):
 
     for i in range(num_runs):
         y = torch.zeros_like(y)
-        call_spqr_torch_mul_timer(deq_w, x, y, runs[i])
+        get_torch_mul_timer()(deq_w, x, y, runs[i])
 
     return y, runs
 

@@ -5,15 +5,10 @@ from typing import Tuple
 import numpy as np
 import torch
 
-from inference_lib.src.inference import (
-    FeatureFlags,
-    ModelArgs,
-    QuantizedLinear,
-    SparseStorageConfiguration,
-    SPQRLegacy,
-    updiv,
-)
-from inference_lib.src.spqr.inference_kernels.cuda_kernel import call_spqr_mul, call_torch_mul_timer
+from inference_lib.spqr_quant import QuantizedLinear
+from inference_lib.spqr_quant.inference import FeatureFlags, updiv, SparseStorageConfiguration, SPQRLegacy, ModelArgs
+from inference_lib.spqr_quant.inference_kernels.kernel_selector import get_torch_mul_timer, \
+    get_spqr_mul
 
 
 def generate_x_fp32(n, upper_bound=3):
@@ -172,7 +167,7 @@ DEV = torch.device("cuda:0")
 
 
 def _spqr_mul(spqr_device: QuantizedLinear, x, y, feature_flag: FeatureFlags):
-    call_spqr_mul(
+    get_spqr_mul()(
         spqr_device.m,
         spqr_device.n,
         spqr_device.bits,
@@ -202,7 +197,7 @@ def torch_mul(deq_w, x):
 
     y = torch.zeros(m, dtype=x.dtype, device=x.device)
 
-    call_torch_mul_timer(deq_w, x, y, runs[0])
+    get_torch_mul_timer()(deq_w, x, y, runs[0])
 
     return y
 
