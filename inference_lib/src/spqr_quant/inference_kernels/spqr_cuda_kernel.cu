@@ -16,17 +16,15 @@
 
 #include "common.cuh"
 
-#include <cuda_runtime.h>
 #include <cuda_fp16.h>
 #include <cuda_pipeline.h>
+#include <cuda_runtime.h>
 
 #define DEVICE_INLINE __forceinline__ __device__
 
-
 extern "C" __device__ uint32_t __nvvm_get_smem_pointer(void *);
 
-
-template<class Acc_t> constexpr __device__ __host__ bool is_fp32() {
+template <class Acc_t> constexpr __device__ __host__ bool is_fp32() {
   if constexpr (std::is_same_v<Acc_t, float> || std::is_same_v<Acc_t, float2>) {
     return true;
   }
@@ -50,9 +48,9 @@ union RowBits {
   uint64_t mask;
 
   struct {
-    uint64_t s: 3;
-    uint64_t z: 3;
-    uint64_t w: 48;
+    uint64_t s : 3;
+    uint64_t z : 3;
+    uint64_t w : 48;
   };
 
   __device__ __forceinline__ u16 get_w(u32 i) const {
@@ -64,16 +62,14 @@ union RowBits {
   }
 };
 
-half2 DEVICE_INLINE dequantize2(const half2 &q,
-                                const half2 &s,
+half2 DEVICE_INLINE dequantize2(const half2 &q, const half2 &s,
                                 const half2 &z) {
   const half2 &res = __hmul2(s, __hsub2(q, z));
   return res;
 }
 
-template<class Bit_t, class Scalar_t> DEVICE_INLINE Scalar_t dequantize(Bit_t q,
-                                                                        Scalar_t s,
-                                                                        Scalar_t z) {
+template <class Bit_t, class Scalar_t>
+DEVICE_INLINE Scalar_t dequantize(Bit_t q, Scalar_t s, Scalar_t z) {
   if constexpr (std::is_same<Bit_t, half>::value) {
     return __hmul(s, __hsub(q, z));
   } else {
@@ -83,14 +79,14 @@ template<class Bit_t, class Scalar_t> DEVICE_INLINE Scalar_t dequantize(Bit_t q,
 
 #define CUINLINE __forceinline__
 
-#define UPDIV(X, Y) (((X) + (Y)-1) / (Y))
+#define UPDIV(X, Y) (((X) + (Y) - 1) / (Y))
 #define MAX(X, Y) ((X) < (Y) ? (Y) : (X))
 
 [[nodiscard]] __device__ __host__ CUINLINE int updiv(int x, int y) {
   return (x + y - 1) / y;
 }
 
-template<class Scalar_t> __host__ __device__ auto vectorize(Scalar_t *ptr) {
+template <class Scalar_t> __host__ __device__ auto vectorize(Scalar_t *ptr) {
   if constexpr (std::is_same<Scalar_t, float>::value) {
     return reinterpret_cast<float2 *>(ptr);
   } else if constexpr (std::is_same<Scalar_t, half>::value) {
@@ -100,7 +96,7 @@ template<class Scalar_t> __host__ __device__ auto vectorize(Scalar_t *ptr) {
   }
 }
 
-template<class Vec_t> __host__ __device__ auto scalarize(void *ptr) {
+template <class Vec_t> __host__ __device__ auto scalarize(void *ptr) {
   if constexpr (std::is_same<Vec_t, float>::value ||
                 std::is_same<Vec_t, float2>::value) {
     return reinterpret_cast<float *>(ptr);
@@ -120,7 +116,7 @@ DEVICE_INLINE half add_and_accum(const half2 &a, const half2 &b) {
   return __hadd(r.x, r.y);
 }
 
-template<class T> DEVICE_INLINE u16 get_col(T m) {
+template <class T> DEVICE_INLINE u16 get_col(T m) {
   return static_cast<u16>(m & T((1u << 16u) - 1u));
 }
 
@@ -300,9 +296,6 @@ template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH, clas
 
     if (p) {
       auto in_order = in_order_u32[idx];
-      if (in_order.x != 2 * idx || in_order.y != 2 * idx + 1) {
-        printf("%d %d %d %d\n", 2 * idx, 2 * idx + 1, in_order_u32[idx].x, in_order_u32[idx].y);
-      }
       s_x2[idx] = make_half2(x[in_order.x], x[in_order.y]);
     }
 
@@ -509,7 +502,8 @@ template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH, clas
   constexpr u32 FULL_MASK = 0xffffffff;
   constexpr u32 HALF_MASK = FULL_MASK >> 16u;
 
-  constexpr static unsigned long long int NUM_USEFUL_BITS = 18ull * static_cast<u64>(BITS);
+  constexpr static unsigned long long int NUM_USEFUL_BITS =
+      18ull * static_cast<u64>(BITS);
   constexpr static int OFFSET = BETA1 / SECOND_ORDER_FRAGMENT_SIZE_BITS;
 
   float acc{};
