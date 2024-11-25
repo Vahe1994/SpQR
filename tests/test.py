@@ -7,8 +7,11 @@ import torch
 
 from inference_lib.spqr_quant import QuantizedLinear
 from inference_lib.spqr_quant.inference import FeatureFlags, ModelArgs, SparseStorageConfiguration, SPQRLegacy, updiv
-from inference_lib.spqr_quant.inference_kernels.kernel_selector import get_torch_mul_timer, \
-    get_spqr_mul_fused, get_spqr_mul
+from inference_lib.spqr_quant.inference_kernels.kernel_selector import (
+    get_spqr_mul,
+    get_spqr_mul_fused,
+    get_torch_mul_timer,
+)
 
 
 def generate_x_fp32(n, upper_bound=3):
@@ -164,6 +167,7 @@ np.random.seed(seed)
 torch.random.manual_seed(seed)
 
 DEV = torch.device("cuda:0")
+
 
 def _spqr_mul_fused(spqr_device: QuantizedLinear, x, y, feature_flag: FeatureFlags):
     get_spqr_mul_fused()(

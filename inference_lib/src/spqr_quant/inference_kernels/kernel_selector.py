@@ -18,6 +18,7 @@ def get_torch_mul_timer():
 
     return torch.ops.spqr_cuda.torch_mul_timer
 
+
 def get_spqr_mul():
     from .cuda_kernel import CUDA_FOLDER
 

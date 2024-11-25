@@ -8,7 +8,7 @@ SPQR_CUDA = load(
     name="spqr_cuda",
     sources=[os.path.join(CUDA_FOLDER, "spqr_cuda.cpp"), os.path.join(CUDA_FOLDER, "spqr_cuda_kernel.cu")],
     extra_cflags=["-O3"],
-    extra_cuda_cflags=["-O3", "-arch=native", '-lineinfo'],
+    extra_cuda_cflags=["-O3", "-arch=native", "-lineinfo"],
 )
 
 torch.library.define(
@@ -33,7 +33,7 @@ torch.library.define(
 )
 torch.library.define(
     "spqr_cuda::spqr_mul_fused",
-    "(int m, int n, int bits, int beta1, int beta2, Tensor in_perm, Tensor dense_weights, Tensor row_offsets, Tensor col_vals, int nnz, Tensor x, int f, Tensor Y, Tensor(Y!) out) -> ()"
+    "(int m, int n, int bits, int beta1, int beta2, Tensor in_perm, Tensor dense_weights, Tensor row_offsets, Tensor col_vals, int nnz, Tensor x, int f, Tensor Y, Tensor(Y!) out) -> ()",
 )
 
 torch.library.impl("spqr_cuda::torch_mul_timer", "default", SPQR_CUDA.torch_mul_timer)

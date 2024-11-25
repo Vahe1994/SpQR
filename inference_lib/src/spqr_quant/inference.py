@@ -18,8 +18,12 @@ import numpy as np
 import torch
 from torch import Tensor as T, nn
 
-from .inference_kernels.cuda_kernel import call_dequantize_compressed, call_spqr_mul, call_tensor_compress_interleaved, \
-    call_spqr_mul_fused
+from .inference_kernels.cuda_kernel import (
+    call_dequantize_compressed,
+    call_spqr_mul,
+    call_spqr_mul_fused,
+    call_tensor_compress_interleaved,
+)
 from .sparse_util import init_ptcsr, merge_col_val
 
 
@@ -111,7 +115,7 @@ class QuantizedLinear(torch.nn.Module):
             self.in_perm = None
         else:
             if in_perm.dtype != torch.int32:
-                raise ValueError(f'Invalid dtype={in_perm.dtype} for in_perm passed, torch.uint32 expected')
+                raise ValueError(f"Invalid dtype={in_perm.dtype} for in_perm passed, torch.uint32 expected")
             self.in_perm = nn.Parameter(in_perm, requires_grad=False)
 
     @staticmethod
@@ -219,7 +223,7 @@ class QuantizedLinear(torch.nn.Module):
             dense_weights,
             row_offsets_output,
             col_vals_output,
-            pack_uint16_to_uint32(spqr_legacy.in_perm.to(dtype=torch.uint16))
+            pack_uint16_to_uint32(spqr_legacy.in_perm.to(dtype=torch.uint16)),
         )
 
         return mod.to(device=device)
@@ -323,7 +327,8 @@ class QuantizedLinear(torch.nn.Module):
                     _x,
                     int(FeatureFlags.SPARSE_FUSED_FP32),
                     _y,
-                    _y)
+                    _y,
+                )
             else:
                 call_spqr_mul(
                     self.m,
@@ -338,7 +343,8 @@ class QuantizedLinear(torch.nn.Module):
                     _x,
                     int(FeatureFlags.SPARSE_FUSED_FP32),
                     _y,
-                    _y)
+                    _y,
+                )
 
         return y.reshape((1, inner_dim, self.m))
 
