@@ -1,0 +1,33 @@
+Metadata-Version: 2.1
+Name: spqr_quant
+Version: 0.1.0
+Summary: Efficiently run models quantized with SPQR
+Home-page: https://github.com/Vahe1994/SPQR
+Author: Elvir Crncevic
+Author-email: elvircrn@gmail.com
+Project-URL: Bug Tracker, https://github.com/Vahe1994/SPQR/issues
+Classifier: Development Status :: 4 - Beta
+Classifier: Intended Audience :: Developers
+Classifier: Intended Audience :: Science/Research
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Topic :: Scientific/Engineering
+Classifier: Topic :: Scientific/Engineering :: Mathematics
+Classifier: Topic :: Scientific/Engineering :: Artificial Intelligence
+Classifier: Topic :: Software Development
+Classifier: Topic :: Software Development :: Libraries
+Classifier: Topic :: Software Development :: Libraries :: Python Modules
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: torch>=2.4.0
+Requires-Dist: transformers>=4.44.0
+Requires-Dist: accelerate>=0.27.0
+Provides-Extra: gpu
+Requires-Dist: ninja; extra == "gpu"
+Provides-Extra: dev
+Requires-Dist: pytest==6.2.5; extra == "dev"
+Requires-Dist: pytest-forked; extra == "dev"
+Requires-Dist: pytest-asyncio==0.16.0; extra == "dev"
+Requires-Dist: black==22.3.0; extra == "dev"
+Requires-Dist: isort==5.13.2; extra == "dev"
