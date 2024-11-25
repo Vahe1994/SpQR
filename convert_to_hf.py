@@ -5,10 +5,8 @@ import shutil
 
 import torch
 from safetensors.torch import save_model
-from tqdm.auto import trange
+from spqr_quant import QuantizedLinear
 from transformers import AutoConfig, AutoTokenizer
-
-from spqr import QuantizedLinear
 
 
 def get_int_dtype(nbits: int) -> torch.dtype:
@@ -52,7 +50,7 @@ def get_converted_state_dict(config, nbits: int, in_path: os.PathLike) -> [dict,
     num_layers = get_num_layers(config)
     layers_prefix = get_layers_prefix(config)
 
-    for i in trange(num_layers):
+    for i in range(num_layers):
         layer = torch.load(os.path.join(in_path, f"{i}.pth"))
         for name, p in layer.named_parameters():
             if torch.is_floating_point(p.data):

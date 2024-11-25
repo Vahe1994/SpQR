@@ -2,9 +2,8 @@ import argparse
 import os
 
 import torch
+from spqr_quant.inference import ModelArgs, QuantizedLinear, SPQRLegacy
 from transformers import AutoConfig, AutoModelForCausalLM
-
-from spqr import ModelArgs, QuantizedLinear, SPQRLegacy, flatten_tensor
 
 
 def load_legacy_tensor(p: str, model_args: ModelArgs) -> SPQRLegacy:
@@ -19,6 +18,16 @@ def load_legacy_tensor(p: str, model_args: ModelArgs) -> SPQRLegacy:
     @return: QuantizedLinear object, storing the compressed matrix format ready to be used by the efficient inference
     kernel.
     """
+
+    def flatten_tensor(W):
+        """
+        @return: Utility function: flattens the input tensor.
+        """
+        if torch.is_tensor(W):
+            return W.flatten()
+        else:
+            return torch.cat(W).flatten()
+
     bits = model_args.bits
     beta1 = model_args.beta1
     beta2 = model_args.beta2

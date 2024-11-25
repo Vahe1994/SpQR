@@ -14,12 +14,17 @@ import os
 from dataclasses import dataclass
 from enum import IntEnum, StrEnum
 
-import spqr_cuda
+import numpy as np
 import torch
 from torch import Tensor as T, nn
 
-from spqr.mul_ops import call_spqr_mul
-from spqr.sparse_util import init_ptcsr, merge_col_val
+from .inference_kernels.cuda_kernel import (
+    call_dequantize_compressed,
+    call_spqr_mul,
+    call_spqr_mul_fused,
+    call_tensor_compress_interleaved,
+)
+from .sparse_util import init_ptcsr, merge_col_val
 
 
 # Utility functions
@@ -76,7 +81,7 @@ class QuantizedLinear(torch.nn.Module):
         @param bits: Size of the weights and first order data quantization.
         @param beta1: Tile width.
         @param beta2: Tile height (see SpQR publication for more details).
-        @param dense_weights: The weights, first and second order data is stored in buff0. A single row tile
+        @param dense_weights: The weights, first and second order data is stored in dense_weights. A single row tile
         looks is stored in a 64-bit chunk as follows:
 
                    |  w_s  | w_z | w_0 | ... | w_15 | c_0 | unused
@@ -105,7 +110,13 @@ class QuantizedLinear(torch.nn.Module):
         self.dense_weights = nn.Parameter(dense_weights, requires_grad=False)
         self.row_offsets = nn.Parameter(row_offsets, requires_grad=False)
         self.col_vals = nn.Parameter(col_vals, requires_grad=False)
-        self.in_perm = nn.Parameter(in_perm, requires_grad=False)
+
+        if in_perm is None:
+            self.in_perm = None
+        else:
+            if in_perm.dtype != torch.int32:
+                raise ValueError(f"Invalid dtype={in_perm.dtype} for in_perm passed, torch.uint32 expected")
+            self.in_perm = nn.Parameter(in_perm, requires_grad=False)
 
     @staticmethod
     def create_placehodler(
@@ -122,7 +133,7 @@ class QuantizedLinear(torch.nn.Module):
         dense_weights = nn.Parameter(torch.empty(dense_weights_shape, dtype=torch.int64), requires_grad=False)
         row_offsets = nn.Parameter(torch.empty(row_offsets_shape, dtype=torch.int32), requires_grad=False)
         col_vals = nn.Parameter(torch.empty(col_vals_shape, dtype=torch.int32), requires_grad=False)
-        in_perm = nn.Parameter(torch.empty(in_perm_shape, dtype=torch.int64), requires_grad=False)
+        in_perm = nn.Parameter(torch.empty(in_perm_shape, dtype=torch.int32), requires_grad=False)
 
         return QuantizedLinear(rows, cols, bits, beta1, beta2, dense_weights, row_offsets, col_vals, in_perm)
 
@@ -159,7 +170,7 @@ class QuantizedLinear(torch.nn.Module):
         else:
             col_vals_output = col_vals
 
-        spqr_cuda.tensor_compress_interleaved(
+        call_tensor_compress_interleaved(
             spqr_legacy.m,
             spqr_legacy.n,
             model_args.bits,
@@ -176,9 +187,32 @@ class QuantizedLinear(torch.nn.Module):
             row_offsets_output,
             col_vals,
             col_vals_output,
-            dense_weights,
             0 if model_args.sparse_compression == SparseStorageConfiguration.CSR else 1,
+            dense_weights,
         )
+
+        def pack_uint16_to_uint32(tensor: torch.Tensor) -> torch.Tensor:
+            """
+            Packs a uint16 PyTorch tensor into a uint32 tensor by combining
+            two consecutive uint16 values into a single uint32 value.
+
+            Args:
+                tensor (torch.Tensor): Input uint16 tensor with an even number of elements.
+
+            Returns:
+                torch.Tensor: A uint32 tensor half the size of the input.
+            """
+            if tensor.dtype != torch.uint16:
+                raise TypeError("Input tensor must be of dtype torch.uint16.")
+            if tensor.numel() % 2 != 0:
+                raise ValueError("Tensor length must be even to pair elements.")
+
+            # Convert to NumPy for bitwise operations
+            numpy_array = tensor.numpy().view(np.uint16)
+            packed_array = (numpy_array[1::2].astype(np.uint32) << 16) | numpy_array[0::2]
+
+            # Convert back to PyTorch
+            return torch.from_numpy(packed_array).int()
 
         mod = QuantizedLinear(
             spqr_legacy.m,
@@ -189,7 +223,9 @@ class QuantizedLinear(torch.nn.Module):
             dense_weights,
             row_offsets_output,
             col_vals_output,
-            spqr_legacy.in_perm,
+            pack_uint16_to_uint32(spqr_legacy.in_perm.to(dtype=torch.uint16))
+            if spqr_legacy.in_perm is not None
+            else None,
         )
 
         return mod.to(device=device)
@@ -199,7 +235,7 @@ class QuantizedLinear(torch.nn.Module):
         Internal method, see dequantize and dequantize_dense_only for reference.
         """
         deq_w = torch.zeros(self.m, self.n).half().contiguous()
-        spqr_cuda.spqr_dequantize_compressed(
+        call_dequantize_compressed(
             self.m,
             self.n,
             self.bits,
@@ -279,34 +315,40 @@ class QuantizedLinear(torch.nn.Module):
                 _x = x.view(-1)
                 _y = y
             if self.should_reorder():
-                _x = _x[self.in_perm]
-            call_spqr_mul(
-                self.m,
-                self.n,
-                self.bits,
-                self.beta1,
-                self.beta2,
-                self.dense_weights,
-                self.row_offsets,
-                self.col_vals,
-                self.nnz,
-                _x,
-                int(FeatureFlags.SPARSE_FUSED_FP32_ASYNC),
-                _y,
-                _y,
-            )
+                call_spqr_mul_fused(
+                    self.m,
+                    self.n,
+                    self.bits,
+                    self.beta1,
+                    self.beta2,
+                    self.in_perm,
+                    self.dense_weights,
+                    self.row_offsets,
+                    self.col_vals,
+                    self.nnz,
+                    _x,
+                    int(FeatureFlags.SPARSE_FUSED_FP32),
+                    _y,
+                    _y,
+                )
+            else:
+                call_spqr_mul(
+                    self.m,
+                    self.n,
+                    self.bits,
+                    self.beta1,
+                    self.beta2,
+                    self.dense_weights,
+                    self.row_offsets,
+                    self.col_vals,
+                    self.nnz,
+                    _x,
+                    int(FeatureFlags.SPARSE_FUSED_FP32),
+                    _y,
+                    _y,
+                )
 
         return y.reshape((1, inner_dim, self.m))
-
-
-def flatten_tensor(W):
-    """
-    @return: Utility function: flattens the input tensor.
-    """
-    if torch.is_tensor(W):
-        return W.flatten()
-    else:
-        return torch.cat(W).flatten()
 
 
 def updiv(x, y):
