@@ -4,14 +4,9 @@ from typing import Tuple
 
 import numpy as np
 import torch
-
 from spqr_quant import QuantizedLinear
 from spqr_quant.inference import FeatureFlags, ModelArgs, SparseStorageConfiguration, SPQRLegacy, updiv
-from spqr_quant.inference_kernels.kernel_selector import (
-    get_spqr_mul,
-    get_spqr_mul_fused,
-    get_torch_mul_timer,
-)
+from spqr_quant.inference_kernels.kernel_selector import get_spqr_mul, get_spqr_mul_fused, get_torch_mul_timer
 
 
 def generate_x_fp32(n, upper_bound=3):

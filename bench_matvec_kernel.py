@@ -5,7 +5,6 @@ import time
 import numpy as np
 import torch
 from scipy.stats import gmean
-
 from spqr_quant import QuantizedLinear
 from spqr_quant.inference import FeatureFlags
 from spqr_quant.inference_kernels.kernel_selector import get_spqr_mul_timer, get_torch_mul_timer

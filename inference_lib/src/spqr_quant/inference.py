@@ -223,7 +223,9 @@ class QuantizedLinear(torch.nn.Module):
             dense_weights,
             row_offsets_output,
             col_vals_output,
-            pack_uint16_to_uint32(spqr_legacy.in_perm.to(dtype=torch.uint16)) if spqr_legacy.in_perm is not None else None
+            pack_uint16_to_uint32(spqr_legacy.in_perm.to(dtype=torch.uint16))
+            if spqr_legacy.in_perm is not None
+            else None,
         )
 
         return mod.to(device=device)

@@ -2,9 +2,8 @@ import argparse
 import os
 
 import torch
-from transformers import AutoConfig, AutoModelForCausalLM
-
 from spqr_quant.inference import ModelArgs, QuantizedLinear, SPQRLegacy
+from transformers import AutoConfig, AutoModelForCausalLM
 
 
 def load_legacy_tensor(p: str, model_args: ModelArgs) -> SPQRLegacy:

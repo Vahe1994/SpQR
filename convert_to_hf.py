@@ -5,9 +5,8 @@ import shutil
 
 import torch
 from safetensors.torch import save_model
-from transformers import AutoConfig, AutoTokenizer
-
 from spqr_quant import QuantizedLinear
+from transformers import AutoConfig, AutoTokenizer
 
 
 def get_int_dtype(nbits: int) -> torch.dtype:
