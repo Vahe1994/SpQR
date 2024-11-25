@@ -1,0 +1,13 @@
+MANIFEST.in
+README.md
+__init__.py
+pyproject.toml
+setup.cfg
+spqr_quant/inference_kernels/__init__.py
+spqr_quant/inference_kernels/cuda_kernel.py
+spqr_quant/inference_kernels/kernel_selector.py
+spqr_quant/spqr_quant.egg-info/PKG-INFO
+spqr_quant/spqr_quant.egg-info/SOURCES.txt
+spqr_quant/spqr_quant.egg-info/dependency_links.txt
+spqr_quant/spqr_quant.egg-info/requires.txt
+spqr_quant/spqr_quant.egg-info/top_level.txt

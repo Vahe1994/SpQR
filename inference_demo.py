@@ -1,4 +1,3 @@
-import os
 import time
 from enum import IntEnum
 from typing import Tuple
@@ -75,7 +74,6 @@ class InferenceDemo:
                     self.config = AutoConfig.from_pretrained(
                         pretrained_model_path, torchscript=self.torchscript, return_dict=True
                     )
-                    self.config.max_position_embeddings = 4096
 
                     self.model = AutoModelForCausalLM.from_pretrained(
                         pretrained_model_name_or_path=pretrained_model_path,
@@ -173,7 +171,7 @@ if __name__ == "__main__":
     m = Mode(args.execution_mode)
 
     with torch.no_grad():
-        model = InferenceDemo(args.pretrained_model_path, args.compressed_model_path, m)
+        model = InferenceDemo(args.pretrained_model_path, args.compressed_model_path, m, backend="inductor")
         text = "The recipe for banana bread is "  # input()
         s = time.time()
         generated_text, timings_s = model.generate(text, max_new_tokens=128)
@@ -186,3 +184,4 @@ if __name__ == "__main__":
 
         print(f"Mean duration after caching initial input = {durations.mean()}")
         print(f"Median duration after caching initial input = {np.median(durations)}")
+        print(f"Best duration after caching initial input = {np.min(durations)}")

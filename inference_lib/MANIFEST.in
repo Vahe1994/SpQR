@@ -1,0 +1,4 @@
+include src/spqr_quant/inference_kernels/spqr_cuda.cpp
+include src/spqr_quant/inference_kernels/spqr_cuda_kernel.cu
+include src/spqr_quant/inference_kernels/common.cuh
+recursive-include src/*.py
