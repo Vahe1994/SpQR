@@ -76,6 +76,7 @@ def replace_and_save_quantized_layers(
     layer_id: int = -1,
     parent_tensor_name="",
     output_per_layer_path=None,
+    libtorch_save=None
 ):
     """
     This function goes through the @model_to_be_quantized recursively and
@@ -101,6 +102,8 @@ def replace_and_save_quantized_layers(
             layer_id = int(tensor_name)
             if output_per_layer_path is not None:
                 os.makedirs(os.path.join(output_per_layer_path, str(layer_id)), exist_ok=True)
+            if libtorch_save is not None:
+                os.makedirs(os.path.join(libtorch_save, str(layer_id)), exist_ok=True)
 
         if isinstance(m, torch.nn.Linear):
             assert m.bias is None
@@ -113,10 +116,34 @@ def replace_and_save_quantized_layers(
                         output_per_layer_path, f"{layer_id}", f"{parent_tensor_name}.{tensor_name}"
                     )
                     torch.save(spqr_module, per_layer_tensor_path)
+
+                    libtorch_tensor_path = os.path.join(
+                        libtorch_save, f"{layer_id}", f"{parent_tensor_name}.{tensor_name}.pth"
+                    )
+                    tensor_path = os.path.join(libtorch_save, str(layer_id), f"{parent_tensor_name}.{tensor_name}")
+                    os.makedirs(tensor_path, exist_ok=True)
+
+                    with open(os.path.join(tensor_path, 'dense_weight.bin'), 'wb') as out_file:
+                        out_file.write(spqr_module.dense_weights.numpy().tobytes())
+
+
+                    with open(os.path.join(tensor_path, 'row_offsets.bin'), 'wb') as out_file:
+                        out_file.write(spqr_module.row_offsets.numpy().tobytes())
+
+
+                    with open(os.path.join(tensor_path, 'col_vals.bin'), 'wb') as out_file:
+                        out_file.write(spqr_module.col_vals.numpy().tobytes())
+
+                    with open(os.path.join(tensor_path, 'meta.txt'), 'w') as out_file:
+                        out_file.write(f'{spqr_module.m} {spqr_module.n} {spqr_module.row_offsets.shape[0]}')
+
+
+
                 setattr(current_model, tensor_name, spqr_module)
         else:
             replace_and_save_quantized_layers(
-                model_args, model_to_be_quantized, legacy_model_path, m, layer_id, tensor_name, output_per_layer_path
+                model_args, model_to_be_quantized, legacy_model_path, m, layer_id, tensor_name, output_per_layer_path,
+                libtorch_save
             )
 
 
@@ -141,6 +168,7 @@ if __name__ == "__main__":
         choices=["csr", "ptcsr", "optimize_latency"],
         help="Sparse strategy storage. Options: csr, ptcsr, auto.\nCSR - Compressed Sparse Rows\nPTCSR - Alternative storage format\noptimize_latency - Use the current GPU to determine the optimal storage format to reduce kernel latency",
     )
+    parser.add_argument("--libtorch_save", type=str, required=False, help="Save the converted quantized .pt model here")
     parser.add_argument("--save_pt", type=str, required=False, help="Save the converted quantized .pt model here")
     parser.add_argument(
         "--save_per_layer",
@@ -177,7 +205,8 @@ if __name__ == "__main__":
             os.system(f"cp {os.path.join(args.legacy_model_path, f)} {os.path.join(args.save_per_layer, f)}")
 
     replace_and_save_quantized_layers(
-        model_args, model, args.legacy_model_path, output_per_layer_path=args.save_per_layer
+        model_args, model, args.legacy_model_path, output_per_layer_path=args.save_per_layer,
+        libtorch_save=args.libtorch_save
     )
 
     if args.save_pt is not None:

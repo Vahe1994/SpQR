@@ -16,6 +16,8 @@
 
 #include "common.cuh"
 
+#include <cuda_runtime.h>
+#include <cassert>
 #include <cuda_fp16.h>
 #include <cuda_pipeline.h>
 #include <cuda_runtime.h>
@@ -31,12 +33,82 @@ template <class Acc_t> constexpr __device__ __host__ bool is_fp32() {
   return false;
 }
 
+// Lookup-table based 3-input logical operation; explicitly used for dequantization as the compiler does not seem to
+// automatically recognize it in all cases.
+template <int lut>
+__device__ inline int lop3(int a, int b, int c) {
+  int res;
+  asm volatile(
+    "lop3.b32 %0, %1, %2, %3, %4;\n"
+    : "=r"(res) : "r"(a), "r"(b), "r"(c), "n"(lut)
+  );
+  return res;
+}
+
+
+// Instances of `Vec` are used to organize groups of >>registers<<, as needed for instance as inputs to tensor core
+// operations. Consequently, all corresponding index accesses must be compile-time constants, which is why we
+// extensively use `#pragma unroll` throughout the kernel code to guarantee this.
+template <typename T, int n>
+struct Vec {
+  T elems[n];
+  __device__ T& operator[](int i) {
+    return elems[i];
+  }
+};
+
+using I4 = Vec<int, 4>;
+
+using FragB = Vec<half2, 2>;
+
+// Efficiently dequantize an int32 value into a full B-fragment of 4 fp16 values.
+// We mostly follow the strategy in the link below, with some small changes:
+// https://github.com/NVIDIA/FasterTransformer/blob/main/src/fastertransformer/cutlass_extensions/include/cutlass_extensions/interleaved_numeric_conversion.h
+__device__ inline FragB dequant(int q) {
+  const int LO = 0x000f000f;
+  const int HI = 0x00f000f0;
+  const int EX = 0x64006400;
+  // Guarantee that the `(a & b) | c` operations are LOP3s.
+  int lo = lop3<(0xf0 & 0xcc) | 0xaa>(q, LO, EX);
+  int hi = lop3<(0xf0 & 0xcc) | 0xaa>(q, HI, EX);
+  // We want signed int4 outputs, hence we fuse the `-8` symmetric zero point directly into `SUB` and `ADD`.
+  const int SUB = 0x64086408;
+  const int MUL = 0x2c002c00;
+  const int ADD = 0xd480d480;
+  FragB frag_b;
+  frag_b[0] = __hsub2(
+    *reinterpret_cast<half2*>(&lo),
+    *reinterpret_cast<const half2*>(&SUB)
+  );
+  frag_b[1] = __hfma2(
+    *reinterpret_cast<half2*>(&hi),
+    *reinterpret_cast<const half2*>(&MUL), *reinterpret_cast<const half2*>(&ADD)
+  );
+  return frag_b;
+}
+
 DEVICE_INLINE uint64_t recover_second_order_sync(uint64_t val) {
-  unsigned int FULL_MASK = 0xffffffffu;
+  static constexpr unsigned int FULL_MASK = 0xffffffffu;
+  static constexpr unsigned int LOWER_MASK = FULL_MASK >> 16u;
+  static constexpr unsigned int HIGHER_MASK = (0xffffffffu >> 16u) << 16u;
+  bool higher = threadIdx.x & 0x10;
+  uint64_t lower_result = __reduce_or_sync(LOWER_MASK, val);
+  uint64_t higher_result = __reduce_or_sync(HIGHER_MASK, val);
+  auto result = higher ? higher_result : lower_result;
+  __syncwarp();
+
+
   val |= __shfl_xor_sync(FULL_MASK, val, 2);
   val |= __shfl_xor_sync(FULL_MASK, val, 4);
   val |= __shfl_xor_sync(FULL_MASK, val, 8);
+
+
+  printf("%llu %llu\n", val, result);
+  assert(val == result);
   return val;
+
+
+  return result;
 }
 
 using u64 = unsigned long long;
@@ -187,6 +259,7 @@ constexpr bool PIPELINED_LOAD = false;
 
 // #define DEQUANTIZE(v) make_half2(__int2half_rd((v) & 0b111), __int2half_rd(((v) >> 3) & 0b111))
 #define INT2_TO_HALF2(v) s_half2_lut[v]
+// #define INT2_TO_HALF2(v) s_half2_lut[(thread_xy + v) & 0x2F]
 
 template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH, class W_t /* = uint64_t */, int
   PIPELINE_DEPTH, bool IS_CSR> __global__ void spqr_quantized_matvec_fused(
@@ -595,6 +668,266 @@ template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH, clas
     half2 wz2 = __half2half2(first_order_dequantized.y);
 
     const auto s_x2_ = s_x2 + i * (BETA2 >> 1);
+
+#pragma unroll
+    for (u32 j = 0; j < BETA2 / 2; j++) {
+      half2 w_q = INT2_TO_HALF2(row_bits.get_w2(j + 1u));
+      half2 w = dequantize2(w_q, ws2, wz2);
+      float2 x_fp32 = __half22float2(s_x2_[j]);
+      float2 w_fp32 = __half22float2(w);
+      acc = fmaf(x_fp32.x, w_fp32.x, acc);
+      acc = fmaf(x_fp32.y, w_fp32.y, acc);
+    }
+  }
+
+  cp_async_wait_all();
+  if constexpr (IS_CSR) {
+    u32 t = threadIdx.y * BETA1 + row_pos;
+    u32 s = s_row_offsets[t];
+    u32 e = s_row_offsets[t + 1];
+    half *s_x = reinterpret_cast<half *>(s_x2);
+    for (u32 i = s + subtile_id; i < e; i += BLOCK_WIDTH) {
+      ColVal colval{
+        ._ = __ldg(col_vals + i)
+      };
+      auto c = colval.members.c;
+      auto v = colval.members.v;
+      acc += __half2float(v) * __half2float(s_x[c]);
+    }
+  } else {
+    u32 s = s_row_offsets[0];
+    u32 e = s_row_offsets[1];
+
+    if (e - s) {
+      half *s_x = reinterpret_cast<half *>(s_x2);
+
+      if (s + thread_xy < e) {
+        ColVal colval{._ = col_vals[s + thread_xy]};
+        auto c = colval.members.c;
+        auto v = colval.members.v;
+        acc += __half2float(v) * __half2float(s_x[c]);
+      }
+
+      for (u32 i = s + thread_xy + BLOCK_WIDTH * BETA1; i < e; i += BLOCK_WIDTH * BETA1) {
+        ColVal colval{
+          ._ = col_vals[i]
+        };
+
+        if (!colval._) break;
+
+        auto c = colval.members.c;
+        auto v = colval.members.v;
+        acc += __half2float(v) * __half2float(s_x[c]);
+      }
+    }
+  }
+
+
+
+  __syncthreads();
+  auto other = __shfl_down_sync(HALF_MASK, acc, BETA1);
+  acc = add_and_accum(other, acc);
+
+  auto *s_fp32_buff = reinterpret_cast<float *>(s_half2_lut_global + threadIdx.y * MAX(WARP_SIZE - 1, 1) * BETA1);
+
+  u32 subwarp_id = threadIdx.x / WARP_SIZE;
+  if (subwarp_id >= 1 && threadIdx.x % WARP_SIZE < BETA1) {
+    s_fp32_buff[(subwarp_id - 1) * BETA1 + threadIdx.x % WARP_SIZE] = acc;
+  }
+
+  __syncthreads();
+
+  if (!subtile_id && threadIdx.x < BETA1) {
+    for (int i = 0; i < WARP_COUNT - 1; i++) {
+      acc += s_fp32_buff[i * BETA1 + threadIdx.x];
+    }
+  }
+
+  if (threadIdx.x < BETA1) {
+    y_fp16[tile_row_id * BETA1 + threadIdx.x] = __float2half(acc);
+  }
+}
+
+
+template<int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH, class W_t /* = uint64_t */, int
+  PIPELINE_DEPTH, bool IS_CSR, int BATCH_SIZE> __global__ void spqr_quantized_matvec_batched(
+  // W and meta
+  unsigned int prob_m,
+  unsigned int prob_n,
+  // W 1st order stats
+  const W_t *__restrict__ dense_matrix,
+  const half *__restrict__ x,
+  // Outliers
+  const int *__restrict__ row_offsets,
+  const u32 *__restrict__ col_vals,
+  // Output￼
+  half *__restrict__ y_fp16) {
+  /*
+           ┌─────────────┐ ┌─┐   ┌─┐
+   beta1   │   block 0   │ │ │   │ │
+           ├─────────────┤ │ │   │ │
+   beta1   │   block 1   │ │ │   │ │
+           └─────────────┘ │x│ = │Y│
+           │    ...      │ │ │   │ │
+           ┌─────────────┐ │ │   │ │
+   beta1   │  block m-1  │ │ │   │ │
+           └─────────────┘ └─┘   └─┘
+  */
+  static constexpr u32 WARP_SIZE = 32;
+  static constexpr u32 HALF_WARP_SIZE = WARP_SIZE / 2;
+
+  static constexpr u32 NUM_HALF_WARPS = BLOCK_HEIGHT * BLOCK_WIDTH;
+  static constexpr u32 NUM_WARPS = UPDIV(NUM_HALF_WARPS, 2);
+  static constexpr u32 THREAD_COUNT = BLOCK_HEIGHT * BLOCK_WIDTH * HALF_WARP_SIZE;
+  static constexpr u32 OUTPUT_SIZE = BETA1 * BLOCK_HEIGHT;
+  static constexpr u32 ROW_OFFSETS_SIZE = IS_CSR ? OUTPUT_SIZE : 1;
+
+  extern __shared__ half2 s_x2[];
+  static constexpr u32 LUT_SIZE = 64 * NUM_WARPS;
+  __shared__ half2 s_half2_lut_global[LUT_SIZE];
+
+  __shared__ u32 s_row_offsets[ROW_OFFSETS_SIZE + 1];
+
+  const u32 thread_xy = threadIdx.x + (threadIdx.y * blockDim.x);
+
+  if constexpr (THREAD_COUNT >= 64) {
+    const auto v = make_half2(__int2half_rd(thread_xy & 0b111), __int2half_rd((thread_xy >> 3) & 0b111));
+#pragma unroll
+    for (u32 i = thread_xy; i < LUT_SIZE; i += THREAD_COUNT) { s_half2_lut_global[i] = v; }
+  } else {
+#pragma unroll
+    for (u32 i = thread_xy; i < LUT_SIZE; i += THREAD_COUNT) {
+      const auto v = make_half2(__int2half_rd(i & 0b111u), __int2half_rd((i >> 3u) & 0b111u));
+      s_half2_lut_global[i] = v;
+    }
+  }
+
+  auto s_half2_lut = s_half2_lut_global + ((thread_xy / WARP_SIZE) << 6);
+
+  const half2 *x2 = reinterpret_cast<const half2 *>(x);
+
+
+  const u32 tile_row_id = blockIdx.x * BLOCK_HEIGHT + threadIdx.y;
+
+
+  // Number of SPQR tiles that this CUDA block will process.
+  u32 num_tiles_per_tile_row = UPDIV(prob_n, BETA2);
+
+  // Here is how we organize things here. We have THREAD_COUNT threads in a
+  // block in x-dimension. We distribute 1 thread per tile row. Therefore, we
+  // have BETA1 threads per tile. For now, a block only spans across 1 dimension
+  // of SPQR tiles.
+  constexpr u32 NUM_SPQR_TILES_PER_ITERATION = BLOCK_WIDTH;
+  constexpr u32 WARP_COUNT = UPDIV(BLOCK_WIDTH, 2);
+
+  u32 row_pos = thread_xy & 0xF;
+  const u32 subtile_id = threadIdx.x / BETA1;
+
+  auto raw_data_offset = tile_row_id * prob_n + threadIdx.x;
+
+  constexpr u32 FULL_MASK = 0xffffffff;
+  constexpr u32 HALF_MASK = FULL_MASK >> 16u;
+
+  constexpr static unsigned long long int NUM_USEFUL_BITS =
+      18ull * static_cast<u64>(BITS);
+  constexpr static int OFFSET = BETA1 / SECOND_ORDER_FRAGMENT_SIZE_BITS;
+
+  float acc{};
+
+  __syncthreads();
+
+  // Here we load the row offsets into smem.
+  for (u32 i = thread_xy; i <= ROW_OFFSETS_SIZE; i += THREAD_COUNT) {
+    __pipeline_memcpy_async(s_row_offsets + i, row_offsets + blockIdx.x * ROW_OFFSETS_SIZE + i, sizeof(u32));
+  }
+  __pipeline_commit();
+
+  u32 i = subtile_id, pipeline_id{};
+  const W_t *local_raw_data = dense_matrix + raw_data_offset;
+
+  for (u32 x2_id = thread_xy, it = 0;
+       it < UPDIV(prob_n / X_LOAD_BLOCK_SIZE, BLOCK_HEIGHT * BLOCK_WIDTH * HALF_WARP_SIZE); it++) {
+    u32 idx = pipeline_id * THREAD_COUNT + thread_xy;
+
+    RowBits row_bits{};
+    half2 ws2{};
+    half2 wz2{};
+
+    bool p = idx < (prob_n / X_LOAD_BLOCK_SIZE);
+
+    if (p) {
+      if constexpr (PIPELINED_LOAD) {
+        auto x_global_load_ptr = reinterpret_cast<const Load_t *>(x2);
+        auto x_shared_load_ptr = reinterpret_cast<const Load_t *>(s_x2);
+        size_t smem_ptr = __cvta_generic_to_shared(x_shared_load_ptr + idx);
+        asm volatile("cp.async.ca.shared.global [%0], [%1], 16;\n"::"l"(smem_ptr), "l"(x_global_load_ptr + idx));
+      } else {
+        reinterpret_cast<Load_t *>(s_x2)[idx] = reinterpret_cast<const Load_t *>(x2)[idx];
+      }
+    }
+
+    if constexpr (PIPELINED_LOAD) {
+      __pipeline_commit();
+    }
+
+    auto v = __ldg(local_raw_data);
+    row_bits.mask = v;
+    uint64_t s_order_partial =
+        (row_bits.mask >> NUM_USEFUL_BITS) << (SECOND_ORDER_FRAGMENT_SIZE_BITS * (row_pos / OFFSET));
+    SecondOrder _s{.v = recover_second_order_sync(s_order_partial)};
+    half2 first_order_quantized = INT2_TO_HALF2(row_bits.get_w2(0));
+    half2 first_order_dequantized = dequantize2(first_order_quantized, _s.get_sws2(), _s.get_swz2());
+
+    ws2 = __half2half2(first_order_dequantized.x);
+    wz2 = __half2half2(first_order_dequantized.y);
+
+    const auto s_x2_ = s_x2 + i * (BETA2 >> 1);
+    if constexpr (PIPELINED_LOAD) {
+      cp_async_wait_all();
+    }
+    __syncthreads();
+
+#pragma unroll
+    for (u32 j = 0; j < BETA2 / 2; j++) {
+      half2 w_q = INT2_TO_HALF2(row_bits.get_w2(j + 1));
+      half2 w = dequantize2(w_q, ws2, wz2);
+      float2 x_fp32 = __half22float2(s_x2_[j]);
+      float2 w_fp32 = __half22float2(w);
+      acc = fmaf(x_fp32.x, w_fp32.x, acc);
+      acc = fmaf(x_fp32.y, w_fp32.y, acc);
+    }
+    i += NUM_SPQR_TILES_PER_ITERATION;
+    local_raw_data += NUM_SPQR_TILES_PER_ITERATION * BETA1;
+    x2_id += NUM_SPQR_TILES_PER_ITERATION * BETA1;
+    pipeline_id++;
+  }
+
+  for (; i < num_tiles_per_tile_row; i += NUM_SPQR_TILES_PER_ITERATION, local_raw_data +=
+                                     NUM_SPQR_TILES_PER_ITERATION * BETA1) {
+    auto v = __ldg(local_raw_data);
+    RowBits row_bits{
+      .mask = v
+    };
+    uint64_t s_order_partial =
+        (row_bits.mask >> NUM_USEFUL_BITS) << (SECOND_ORDER_FRAGMENT_SIZE_BITS * (row_pos / OFFSET));
+    SecondOrder _s{.v = recover_second_order_sync(s_order_partial)};
+    half2 first_order_quantized = INT2_TO_HALF2(row_bits.get_w2(0));
+    half2 first_order_dequantized = dequantize2(first_order_quantized, _s.get_sws2(), _s.get_swz2());
+
+    half2 ws2 = __half2half2(first_order_dequantized.x);
+    half2 wz2 = __half2half2(first_order_dequantized.y);
+
+    const auto s_x2_ = s_x2 + i * (BETA2 >> 1);
+
+
+    row_bits.mask = v;
+
+    FragB frag_b0 = dequant(b_quant);
+
+    for () {
+
+    }
+
 
 #pragma unroll
     for (u32 j = 0; j < BETA2 / 2; j++) {

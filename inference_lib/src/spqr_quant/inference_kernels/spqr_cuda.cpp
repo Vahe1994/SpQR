@@ -446,7 +446,7 @@ void spqr_mul_fused(int64_t m,
       at::cuda::getCurrentCUDAStream(dev), nullptr, feature_flag);
 }
 
-
+#ifndef PYBIND_SKIP
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("spqr_mul_timer", &spqr_mul_timer, "SPQR matvec.");
   m.def("dequantize_compressed", &dequantize_compressed, "SPQR dequantize compressed.");
@@ -455,4 +455,25 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("spqr_mul", &spqr_mul, "SPQR matvec.");
   m.def("spqr_mul_fused", &spqr_mul_fused, "");
 }
+#endif
 
+
+#ifdef PYBIND_SKIP
+#include <torch/script.h>
+#include <torch/torch.h>
+#include <unordered_map>
+int main() {
+  std::string tensor_path = "/home/elvircrn/CLionProjects/spqr_kernel/data/output_identity_compressed_libtorch/0/mlp.down_proj.pth";
+  torch::Tensor tensor;
+  std::unordered_map<std::string, torch::Tensor> data;
+  torch::load(data, tensor_path);
+
+
+  torch::serialize::InputArchive archive;
+  archive.load_from("model_state_dict.pt");
+  #if 0
+  model->load(archive);
+#endif
+  return 0;
+}
+#endif
