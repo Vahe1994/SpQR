@@ -22,4 +22,5 @@ lm-evaluation-harness/lm_eval/__pycache__/
 lm-evaluation-harness/lm_cache
 /CMakeLists.txt
 /cmake-build-release/
+/cmake-build-debug/
 inference_lib/spqr_quant/spqr_quant.egg-info/
