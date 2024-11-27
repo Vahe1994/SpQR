@@ -3,8 +3,8 @@
 .ipynb_checkpoints/*
 __pycache__
 __pycache__/*
-spqr/.ipynb_checkpoints/*
-spqr/__pycache__/*
+inference_lib/.ipynb_checkpoints/*
+inference_lib/__pycache__/*
 outliers/*
 outliers_stru*
 wandb/*
@@ -20,3 +20,7 @@ lm-evaluation-harness/lm_eval/datasets/*/__pycache__/
 lm-evaluation-harness/lm_eval/*/__pycache__/
 lm-evaluation-harness/lm_eval/__pycache__/
 lm-evaluation-harness/lm_cache
+/CMakeLists.txt
+/cmake-build-release/
+/cmake-build-debug/
+inference_lib/spqr_quant/spqr_quant.egg-info/
