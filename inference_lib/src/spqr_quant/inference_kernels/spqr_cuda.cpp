@@ -20,48 +20,33 @@
 #include <cuda_fp16.h>
 #include <cuda_runtime.h>
 #include <torch/python.h>
-#include <vector>
 #include <torch/script.h> // One-stop header.
+#include <vector>
 
 int spqr_matvec(
     // W and meta
-    int bits,
-    int prob_m,
-    int prob_n,
+    int bits, int prob_m, int prob_n,
     // Quantization
-    int beta1,
-    int beta2,
-    const void *raw_in_order,
-    const void *raw_dense_data,
+    int beta1, int beta2, const void *raw_in_order, const void *raw_dense_data,
     // 32-bit
-    int row_offsets_len,
-    void *row_offsets,
+    int row_offsets_len, void *row_offsets,
     // 32-bit
-    void *col_vals,
-    int nnz,
+    void *col_vals, int nnz,
     // 16-bit
     // Input
     void *X,
     // Output
     void *y,
     // GPU meta
-    cudaStream_t stream = nullptr,
-    void *measurements = nullptr,
+    cudaStream_t stream = nullptr, void *measurements = nullptr,
     uint32_t feature_flag = 0);
 
-void spqr_mul(int64_t m,
-                 int64_t n,
-                 int64_t bits,
-                 int64_t beta1,
-                 int64_t beta2,
-                 const torch::Tensor &dense_weights,
-                 const torch::Tensor &row_offsets,
-                 const torch::Tensor &col_val_ptr,
-                 int64_t nnz,
-                 const torch::Tensor &X,
-                 int64_t _feature_flag,
-                 const torch::Tensor &Y,
-                 torch::Tensor &out) {
+void spqr_mul(int64_t m, int64_t n, int64_t bits, int64_t beta1, int64_t beta2,
+              const torch::Tensor &dense_weights,
+              const torch::Tensor &row_offsets,
+              const torch::Tensor &col_val_ptr, int64_t nnz,
+              const torch::Tensor &X, int64_t _feature_flag,
+              const torch::Tensor &Y, torch::Tensor &out) {
   uint32_t feature_flag = static_cast<uint32_t>(_feature_flag);
   int dev = dense_weights.get_device();
 
@@ -69,22 +54,12 @@ void spqr_mul(int64_t m,
   int row_offsets_len = row_offsets.sizes()[0];
 
   // TODO: Propagate error one layer up.
-  int err = spqr_matvec(
-      bits, m, n, beta1, beta2,
-      nullptr,
-      dense_weights.data_ptr(),
-      row_offsets_len,
-      row_offsets.data_ptr(),
-      col_val_ptr.data_ptr(),
-      nnz,
-      X.data_ptr(),
-      out.data_ptr(),
-      at::cuda::getCurrentCUDAStream(dev),
-      nullptr,
-      feature_flag);
+  int err =
+      spqr_matvec(bits, m, n, beta1, beta2, nullptr, dense_weights.data_ptr(),
+                  row_offsets_len, row_offsets.data_ptr(),
+                  col_val_ptr.data_ptr(), nnz, X.data_ptr(), out.data_ptr(),
+                  at::cuda::getCurrentCUDAStream(dev), nullptr, feature_flag);
 }
-
-
 
 // Function to convert an integer to half-precision using round-down
 __half int2half_rd(const int value) {
@@ -95,7 +70,8 @@ __half int2half_rd(const int value) {
   return halfValue;
 }
 
-template<class Bit_t, class Scalar_t> Scalar_t host_dequantize(Bit_t q, Scalar_t s, Scalar_t z) {
+template <class Bit_t, class Scalar_t>
+Scalar_t host_dequantize(Bit_t q, Scalar_t s, Scalar_t z) {
   // TODO: Clean up these ifs.
   Scalar_t result;
   if constexpr (std::is_same_v<Scalar_t, half>) {
@@ -109,7 +85,7 @@ template<class Bit_t, class Scalar_t> Scalar_t host_dequantize(Bit_t q, Scalar_t
   return result;
 }
 
-template<class Weight_t> struct Weights2D {
+template <class Weight_t> struct Weights2D {
   int m;
   int n;
   Weight_t *w;
@@ -117,15 +93,13 @@ template<class Weight_t> struct Weights2D {
   Weight_t &operator()(int i, int j) { return w[i * n + j]; }
 };
 
-#define UPDIV(X, Y) (((X) + (Y)-1) / (Y))
+#define UPDIV(X, Y) (((X) + (Y) - 1) / (Y))
 
-void torch_mul_timer(const torch::Tensor &deq_w,
-                     const torch::Tensor &x,
-                     torch::Tensor &y,
-                     torch::Tensor &measurements) {
+void torch_mul_timer(const torch::Tensor &deq_w, const torch::Tensor &x,
+                     torch::Tensor &y, torch::Tensor &measurements) {
   int dev = deq_w.get_device();
   auto stream = at::cuda::getCurrentCUDAStream(dev);
-  float *measurements_ptr = reinterpret_cast<float*>(measurements.data_ptr());
+  float *measurements_ptr = reinterpret_cast<float *>(measurements.data_ptr());
 
   Timer *timer = new Timer(stream);
   timer->start();
@@ -139,32 +113,23 @@ void torch_mul_timer(const torch::Tensor &deq_w,
   delete timer;
 }
 
-int torch_matvec(int m,
-                 int n,
-                 void *dequantized_w,
-                 void *X,
-                 void *y,
-                 void *measurements,
-                 cudaStream_t stream);
+int torch_matvec(int m, int n, void *dequantized_w, void *X, void *y,
+                 void *measurements, cudaStream_t stream);
 
-void dequantize_compressed(int m,
-                           int n,
-                           int bits,
-                           int beta1,
-                           int beta2,
+void dequantize_compressed(int m, int n, int bits, int beta1, int beta2,
                            const torch::Tensor &dense_weights,
                            // Outliers
                            // 32-bit
                            const torch::Tensor &row_offsets,
                            // 32-bit
-                           const torch::Tensor &col_vals,
-                           int nnz,
+                           const torch::Tensor &col_vals, int nnz,
                            const torch::Tensor &deq_w_tensor) {
   half *deq_w = reinterpret_cast<half *>(deq_w_tensor.data_ptr());
   int tile_id{};
   int subtile_id{};
   int w_id{};
-  uint64_t *dense_weights_ptr = reinterpret_cast<uint64_t *>(dense_weights.data_ptr());
+  uint64_t *dense_weights_ptr =
+      reinterpret_cast<uint64_t *>(dense_weights.data_ptr());
 
   std::vector<float> deq_float32(m * n, 0);
 
@@ -174,7 +139,8 @@ void dequantize_compressed(int m,
 
       for (int k = 0; k < beta1; k++) {
         uint64_t partial = (dense_weights_ptr[k] >> (bits * (beta1 + 2)));
-        w2_bits |= (partial << (SECOND_ORDER_FRAGMENT_SIZE_BITS * (k / (SECOND_ORDER_FRAGMENT_SIZE_BITS / 4))));
+        w2_bits |= (partial << (SECOND_ORDER_FRAGMENT_SIZE_BITS *
+                                (k / (SECOND_ORDER_FRAGMENT_SIZE_BITS / 4))));
       }
 
       SecondOrder w2{.v = w2_bits};
@@ -206,7 +172,6 @@ void dequantize_compressed(int m,
     }
   }
 
-
   if (nnz) {
     int row_offsets_len = row_offsets.sizes()[0];
     int *_row_offsets = row_offsets.data_ptr<int>();
@@ -235,71 +200,40 @@ void dequantize_compressed(int m,
   }
 }
 
-void spqr_mul_timer(int m,
-                    int n,
+void spqr_mul_timer(int m, int n,
                     // W and meta
                     int bits,
                     // Quantization
-                    int beta1,
-                    int beta2,
-                    const torch::Tensor &weights,
+                    int beta1, int beta2, const torch::Tensor &weights,
                     // 16-bit
                     const torch::Tensor &row_offsets,
                     // 32-bit
-                    const torch::Tensor &col_val,
-                    int nnz,
+                    const torch::Tensor &col_val, int nnz,
                     // 16-bit
-                    const torch::Tensor &X,
-                    torch::Tensor &Y,
-                    torch::Tensor &measurements,
-                    uint32_t feature_flag) {
+                    const torch::Tensor &X, torch::Tensor &Y,
+                    torch::Tensor &measurements, uint32_t feature_flag) {
   int dev = weights.get_device();
 
   // Choose which algorithm to use
   int row_offsets_len = row_offsets.sizes()[0];
 
-  int err = spqr_matvec(bits,
-                        m,
-                        n,
-                        beta1,
-                        beta2,
-                        nullptr,
-                        weights.data_ptr(),
-                        row_offsets_len,
-                        row_offsets.data_ptr(),
-                        col_val.data_ptr(),
-                        nnz,
-                        X.data_ptr(),
-                        Y.data_ptr(),
+  int err = spqr_matvec(bits, m, n, beta1, beta2, nullptr, weights.data_ptr(),
+                        row_offsets_len, row_offsets.data_ptr(),
+                        col_val.data_ptr(), nnz, X.data_ptr(), Y.data_ptr(),
                         at::cuda::getCurrentCUDAStream(dev),
-                        measurements.data_ptr(),
-                        feature_flag);
+                        measurements.data_ptr(), feature_flag);
 }
 
-enum class SparseCompressionStrategy {
-  CSR = 0,
-  PTCSR = 1
-};
+enum class SparseCompressionStrategy { CSR = 0, PTCSR = 1 };
 
 void tensor_compress_interleaved(
-    int m,
-    int n,
-    int bits,
-    const torch::Tensor &W,
-    int beta1,
-    int beta2,
-    const torch::Tensor &W_s,
-    const torch::Tensor &W_z,
-    const torch::Tensor &W_s_s,
-    const torch::Tensor &W_s_z,
-    const torch::Tensor &W_z_s,
-    const torch::Tensor &W_z_z,
-    const torch::Tensor &row_offsets,
-    const torch::Tensor &row_offsets_output,
-    const torch::Tensor &col_vals,
-    const torch::Tensor &col_vals_interleaved,
-    const int sparse_strategy_compression,
-    const torch::Tensor &out) {
+    int m, int n, int bits, const torch::Tensor &W, int beta1, int beta2,
+    const torch::Tensor &W_s, const torch::Tensor &W_z,
+    const torch::Tensor &W_s_s, const torch::Tensor &W_s_z,
+    const torch::Tensor &W_z_s, const torch::Tensor &W_z_z,
+    const torch::Tensor &row_offsets, const torch::Tensor &row_offsets_output,
+    const torch::Tensor &col_vals, const torch::Tensor &col_vals_interleaved,
+    const int sparse_strategy_compression, const torch::Tensor &out) {
   TORCH_CHECK(W.dtype() == torch::kChar, "W should be of type char")
   TORCH_CHECK(W_s.dtype() == torch::kChar, "W_s should be of type char")
   TORCH_CHECK(W_z.dtype() == torch::kChar, "W_z should be of type char")
@@ -312,10 +246,10 @@ void tensor_compress_interleaved(
   int *r = static_cast<int *>(row_offsets.data_ptr());
   ColVal *cv = static_cast<ColVal *>(col_vals.data_ptr());
 
-
   if (sparse_strategy_compression == 1) {
     int *r_output = static_cast<int *>(row_offsets_output.data_ptr());
-    ColVal *cv_interleaved = static_cast<ColVal *>(col_vals_interleaved.data_ptr());
+    ColVal *cv_interleaved =
+        static_cast<ColVal *>(col_vals_interleaved.data_ptr());
     *r_output = 0;
     auto cv_interleaved_ptr = cv_interleaved;
     int count = 0;
@@ -342,7 +276,6 @@ void tensor_compress_interleaved(
     }
   }
 
-
   using Bit_t = uint64_t;
 
   constexpr int BITS = 3;
@@ -358,7 +291,6 @@ void tensor_compress_interleaved(
   char *w_s_ptr = reinterpret_cast<char *>(W_s.data_ptr());
   char *w_z_ptr = reinterpret_cast<char *>(W_z.data_ptr());
 
-
   for (int i = 0; i < m; i += beta1) {
     for (int j = 0; j < n; j += beta2) {
       int tile_i = i / beta1;
@@ -372,12 +304,7 @@ void tensor_compress_interleaved(
       zz.x = w_s_z_ptr[tile_id];
       zz.y = w_z_z_ptr[tile_id];
 
-      SecondOrder second_order{
-        .members = {
-          .ss = ss,
-          .zz = zz
-        }
-      };
+      SecondOrder second_order{.members = {.ss = ss, .zz = zz}};
       uint64_t v = second_order.v;
 
       int to_add{};
@@ -401,10 +328,12 @@ void tensor_compress_interleaved(
 
         uint64_t PARTIAL_OFFSET = BITS * (beta2 + 2);
 
-        uint64_t FRAG_MASK = Bit_t((1ull << SECOND_ORDER_FRAGMENT_SIZE_BITS) - 1ull);
+        uint64_t FRAG_MASK =
+            Bit_t((1ull << SECOND_ORDER_FRAGMENT_SIZE_BITS) - 1ull);
 
         uint64_t partial =
-            (v >> (Bit_t((k / (SECOND_ORDER_FRAGMENT_SIZE_BITS / 4))) * Bit_t(SECOND_ORDER_FRAGMENT_SIZE_BITS))) &
+            (v >> (Bit_t((k / (SECOND_ORDER_FRAGMENT_SIZE_BITS / 4))) *
+                   Bit_t(SECOND_ORDER_FRAGMENT_SIZE_BITS))) &
             FRAG_MASK;
 
         tile_array.push(ws, wz, tile, to_add, (partial << PARTIAL_OFFSET));
@@ -418,20 +347,13 @@ void tensor_compress_interleaved(
   }
 }
 
-void spqr_mul_fused(int64_t m,
-                 int64_t n,
-                 int64_t bits,
-                 int64_t beta1,
-                 int64_t beta2,
-                 const torch::Tensor &in_order,
-                 const torch::Tensor &dense_weights,
-                 const torch::Tensor &row_offsets,
-                 const torch::Tensor &col_val_ptr,
-                 int64_t nnz,
-                 const torch::Tensor &X,
-                 int64_t _feature_flag,
-                 const torch::Tensor &Y,
-                 torch::Tensor &out) {
+void spqr_mul_fused(int64_t m, int64_t n, int64_t bits, int64_t beta1,
+                    int64_t beta2, const torch::Tensor &in_order,
+                    const torch::Tensor &dense_weights,
+                    const torch::Tensor &row_offsets,
+                    const torch::Tensor &col_val_ptr, int64_t nnz,
+                    const torch::Tensor &X, int64_t _feature_flag,
+                    const torch::Tensor &Y, torch::Tensor &out) {
   uint32_t feature_flag = static_cast<uint32_t>(_feature_flag);
   int dev = dense_weights.get_device();
 
@@ -442,36 +364,79 @@ void spqr_mul_fused(int64_t m,
   int err = spqr_matvec(
       bits, m, n, beta1, beta2, in_order.data_ptr(), dense_weights.data_ptr(),
       row_offsets_len, row_offsets.data_ptr(), col_val_ptr.data_ptr(), nnz,
-      X.data_ptr(), out.data_ptr(),
-      at::cuda::getCurrentCUDAStream(dev), nullptr, feature_flag);
+      X.data_ptr(), out.data_ptr(), at::cuda::getCurrentCUDAStream(dev),
+      nullptr, feature_flag);
 }
 
 #ifndef PYBIND_SKIP
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("spqr_mul_timer", &spqr_mul_timer, "SPQR matvec.");
-  m.def("dequantize_compressed", &dequantize_compressed, "SPQR dequantize compressed.");
+  m.def("dequantize_compressed", &dequantize_compressed,
+        "SPQR dequantize compressed.");
   m.def("torch_mul_timer", &torch_mul_timer, "Torch matvec FP16 device.");
-  m.def("tensor_compress_interleaved", &tensor_compress_interleaved, "Tensor compress.");
+  m.def("tensor_compress_interleaved", &tensor_compress_interleaved,
+        "Tensor compress.");
   m.def("spqr_mul", &spqr_mul, "SPQR matvec.");
   m.def("spqr_mul_fused", &spqr_mul_fused, "");
 }
 #endif
 
-
 #ifdef PYBIND_SKIP
+#include <fstream>
+#include <string>
 #include <torch/script.h>
 #include <torch/torch.h>
 #include <unordered_map>
+
+struct QuantizedLinear {
+  int m, n;
+  uint64_t *dense_weights;
+  uint32_t *col_vals;
+  uint32_t *row_offsets;
+};
+
+torch::Tensor load_tensor_from_bin(const std::string& file_path, const std::vector<int64_t>& shape) {
+  // Open the binary file
+  std::ifstream file(file_path, std::ios::binary | std::ios::ate);
+  if (!file.is_open()) {
+    throw std::runtime_error("Could not open file: " + file_path);
+  }
+
+  // Get the file size
+  std::streamsize size = file.tellg();
+  file.seekg(0, std::ios::beg);
+
+  // Allocate a buffer and read the data
+  std::vector<float> buffer(size / sizeof(float));
+  if (!file.read(reinterpret_cast<char*>(buffer.data()), size)) {
+    throw std::runtime_error("Error reading file: " + file_path);
+  }
+
+  // Create a tensor from the buffer
+  auto tensor = torch::from_blob(buffer.data(), shape, torch::kFloat32).clone();
+  // Clone ensures the tensor owns its data and is not tied to the buffer's lifetime.
+
+  return tensor;
+}
+
+
 int main() {
-  std::string tensor_path = "/home/elvircrn/CLionProjects/spqr_kernel/data/output_identity_compressed_libtorch/0/mlp.down_proj.pth";
+  std::string tensor_path =
+      "/home/elvircrn/CLionProjects/spqr_kernel/data/"
+      "output_identity_compressed_libtorch/0/mlp.down_proj/dense_weight.bin";
+
+  auto tensor = torch::from_blob(raw_data.data(), {2, 3}, torch::kFloat32);
+
+
+  std::ifstream f(tensor_path, std::ios_base::binary);
+
   torch::Tensor tensor;
   std::unordered_map<std::string, torch::Tensor> data;
   torch::load(data, tensor_path);
 
-
   torch::serialize::InputArchive archive;
   archive.load_from("model_state_dict.pt");
-  #if 0
+#if 0
   model->load(archive);
 #endif
   return 0;

@@ -41,7 +41,7 @@ def decode_one_tokens(model, cur_token, input_pos, cache_position, past_key_valu
 
 class InferenceDemo:
     def __init__(
-        self, pretrained_model_path: str, quantized_model_path, flag, device="cuda", torchscript=False, backend=None
+        self, pretrained_model_path: str, quantized_model_path, flag, device="cuda",             torchscript=False, backend=None
     ):
         self.flag = flag
         self.device = device
