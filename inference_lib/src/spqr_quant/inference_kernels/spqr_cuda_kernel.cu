@@ -94,11 +94,11 @@ __device__ inline half2 dequant2(int q) {
   int lo = lop3 < (0xf0 & 0xcc) | 0xaa > (q, LO, EX);
   static constexpr int SUB = 0x64086408;
   return __hsub2(*reinterpret_cast<half2 *>(&lo),
-                      *reinterpret_cast<const half2 *>(&SUB));
+                 *reinterpret_cast<const half2 *>(&SUB));
 }
 
 DEVICE_INLINE uint64_t recover_second_order_sync(uint64_t val) {
-  static constexpr unsigned int FULL_MASK = 0xffffffffu;
+  static constexpr unsigned int FULL_MASK = 0xFFFFFFFFu;
   val |= __shfl_xor_sync(FULL_MASK, val, 2);
   val |= __shfl_xor_sync(FULL_MASK, val, 4);
   val |= __shfl_xor_sync(FULL_MASK, val, 8);
@@ -233,7 +233,7 @@ __device__ __forceinline__ uint32_t __ld_stream(const uint32_t *ptr) {
 
 constexpr int X_LOAD_BLOCK_SIZE = 8;
 using Load_t = __int128_t;
-constexpr bool PIPELINED_LOAD = true;
+constexpr bool PIPELINED_LOAD = false;
 
 #define INT2_TO_HALF2(v)                                                       \
   make_half2(__int2half_rd((v) & 0b111), __int2half_rd(((v) >> 3) & 0b111))
@@ -485,7 +485,6 @@ __global__ void spqr_quantized_matvec_fused(
   }
 }
 
-template <int BETA2>
 __device__ __forceinline__ float accumulate(float acc, u64 b, const half2 &ws2,
                                             const half2 &wz2,
                                             const half2 *__restrict__ s_x2) {
@@ -493,7 +492,7 @@ __device__ __forceinline__ float accumulate(float acc, u64 b, const half2 &ws2,
 
 #pragma unroll
   for (u32 j = 0; j < BETA2 / 2; j++) {
-    half2 w_q = s_lut[row_bits.get_w2(j + 1u)];
+    half2 w_q = INT2_TO_HALF2(b & 0b111111ull);
     half2 w = dequantize2(w_q, ws2, wz2);
     float2 x_fp32 = __half22float2(s_x2[j]);
     float2 w_fp32 = __half22float2(w);
@@ -503,8 +502,6 @@ __device__ __forceinline__ float accumulate(float acc, u64 b, const half2 &ws2,
   return acc;
 
 #else
-  static constexpr u64 LOWER = ((1ull << 6ull) - 1ull);
-
   auto s_x2_ptr = s_x2;
 
 #pragma unroll
@@ -526,6 +523,74 @@ __device__ __forceinline__ float accumulate(float acc, u64 b, const half2 &ws2,
 
 #endif
 }
+
+template <class W_t, int X_LOAD_BLOCK_SIZE, int BLOCK_HEIGHT, int BLOCK_WIDTH,
+          int HALF_WARP_SIZE, int THREAD_COUNT, int NUM_USEFUL_BITS, int OFFSET,
+          int BETA1, int BETA2, int NUM_SPQR_TILES_PER_ITERATION>
+struct DenseMatrixRunner {
+  u32 i;
+  const W_t *__restrict local_raw_data;
+  u32 thread_xy;
+  u32 prob_n;
+  const half2 *__restrict__ x2;
+  half2 *s_x2;
+  u32 row_pos;
+  u32 x2_id;
+  u32 num_tiles_per_row;
+  u32 subtile_id;
+
+  float acc{};
+  u32 pipeline_id{};
+  u32 it{};
+
+  template <bool LOAD_X> __device__ __forceinline__ void process_dense() {
+    const uint64_t SHIFT = SECOND_ORDER_FRAGMENT_SIZE_BITS * (row_pos / OFFSET);
+    const u32 BLOCK_COUNT = (prob_n / X_LOAD_BLOCK_SIZE);
+
+    u32 limit;
+    if constexpr (LOAD_X) {
+      limit = UPDIV(prob_n / X_LOAD_BLOCK_SIZE,
+                    BLOCK_HEIGHT * BLOCK_WIDTH * HALF_WARP_SIZE);
+    } else {
+      limit = num_tiles_per_row / NUM_SPQR_TILES_PER_ITERATION;
+    }
+    for (; it < limit; it++) {
+      if constexpr (LOAD_X) {
+        u32 idx = pipeline_id * THREAD_COUNT + thread_xy;
+        bool p = idx < BLOCK_COUNT;
+        if (p) {
+          reinterpret_cast<Load_t *>(s_x2)[idx] =
+              reinterpret_cast<const Load_t *>(x2)[idx];
+        }
+      }
+
+      auto v = __ldg(local_raw_data);
+      uint64_t s_order_partial = (v >> NUM_USEFUL_BITS) << SHIFT;
+
+      SecondOrder _s{.v = recover_second_order_sync(s_order_partial)};
+
+      half2 first_order_quantized = dequant2(v);
+
+      half2 first_order_dequantized =
+          dequantize2(first_order_quantized, _s.get_sws2(), _s.get_swz2());
+
+      half2 ws2 = __half2half2(first_order_dequantized.x);
+      half2 wz2 = __half2half2(first_order_dequantized.y);
+
+      const auto s_x2_ = s_x2 + i * (BETA2 >> 1);
+      if constexpr (LOAD_X) {
+        __syncthreads();
+      }
+
+      acc = accumulate(acc, v, ws2, wz2, s_x2_);
+
+      i += NUM_SPQR_TILES_PER_ITERATION;
+      local_raw_data += NUM_SPQR_TILES_PER_ITERATION * BETA1;
+      x2_id += NUM_SPQR_TILES_PER_ITERATION * BETA1;
+      pipeline_id++;
+    }
+  }
+};
 
 template <int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH,
           class W_t /* = uint64_t */, int PIPELINE_DEPTH, bool IS_CSR>
@@ -562,9 +627,6 @@ __global__ void spqr_quantized_matvec(
   extern __shared__ half2 s_x2[];
   __shared__ u32 s_row_offsets[ROW_OFFSETS_SIZE + 1];
 
-  static constexpr u32 LUT_SIZE = 64 * NUM_WARPS;
-
-
   const u32 thread_xy = threadIdx.x + (threadIdx.y * blockDim.x);
 
   const half2 *x2 = reinterpret_cast<const half2 *>(x);
@@ -593,8 +655,6 @@ __global__ void spqr_quantized_matvec(
       18ull * static_cast<u64>(BITS);
   constexpr static int OFFSET = BETA1 / SECOND_ORDER_FRAGMENT_SIZE_BITS;
 
-  float acc{};
-
   __syncthreads();
 
   // Here we load the row offsets into smem.
@@ -605,87 +665,25 @@ __global__ void spqr_quantized_matvec(
   }
   __pipeline_commit();
 
-  u32 i = subtile_id, pipeline_id{};
-  const W_t *local_raw_data = dense_matrix + raw_data_offset;
+  DenseMatrixRunner<W_t, X_LOAD_BLOCK_SIZE, BLOCK_HEIGHT, BLOCK_WIDTH,
+                    HALF_WARP_SIZE, THREAD_COUNT, NUM_USEFUL_BITS, OFFSET,
+                    BETA1, BETA2, NUM_SPQR_TILES_PER_ITERATION>
+      dense_matrix_runner{.i = subtile_id,
+                          .local_raw_data = dense_matrix + raw_data_offset,
+                          .thread_xy = thread_xy,
+                          .prob_n = prob_n,
+                          .x2 = x2,
+                          .s_x2 = s_x2,
+                          .row_pos = row_pos,
+                          .x2_id = thread_xy,
+                          .num_tiles_per_row = num_tiles_per_tile_row,
+                          .subtile_id = subtile_id};
 
-  for (u32 x2_id = thread_xy, it = 0;
-       it < UPDIV(prob_n / X_LOAD_BLOCK_SIZE,
-                  BLOCK_HEIGHT * BLOCK_WIDTH * HALF_WARP_SIZE);
-       it++) {
-    u32 idx = pipeline_id * THREAD_COUNT + thread_xy;
+  dense_matrix_runner.template process_dense<true>();
 
-    half2 ws2{};
-    half2 wz2{};
+  dense_matrix_runner.template process_dense<false>();
 
-    bool p = idx < (prob_n / X_LOAD_BLOCK_SIZE);
-
-    if (p) {
-      if constexpr (PIPELINED_LOAD) {
-        auto x_global_load_ptr = reinterpret_cast<const Load_t *>(x2);
-        auto x_shared_load_ptr = reinterpret_cast<const Load_t *>(s_x2);
-        size_t smem_ptr = __cvta_generic_to_shared(x_shared_load_ptr + idx);
-        asm volatile(
-            "cp.async.ca.shared.global [%0], [%1], 16;\n" ::"l"(smem_ptr),
-            "l"(x_global_load_ptr + idx));
-      } else {
-        reinterpret_cast<Load_t *>(s_x2)[idx] =
-            reinterpret_cast<const Load_t *>(x2)[idx];
-      }
-    }
-
-    if constexpr (PIPELINED_LOAD) {
-      __pipeline_commit();
-    }
-
-    auto v = __ldg(local_raw_data);
-    uint64_t s_order_partial =
-        (v >> NUM_USEFUL_BITS)
-        << (SECOND_ORDER_FRAGMENT_SIZE_BITS * (row_pos / OFFSET));
-    SecondOrder _s{.v = recover_second_order_sync(s_order_partial)};
-
-    half2 first_order_quantized = dequant2(v);
-
-    half2 first_order_dequantized =
-        dequantize2(first_order_quantized, _s.get_sws2(), _s.get_swz2());
-
-    ws2 = __half2half2(first_order_dequantized.x);
-    wz2 = __half2half2(first_order_dequantized.y);
-
-    const auto s_x2_ = s_x2 + i * (BETA2 >> 1);
-    if constexpr (PIPELINED_LOAD) {
-      cp_async_wait_all();
-    }
-    __syncthreads();
-
-    acc = accumulate<BETA2>(acc, v, ws2, wz2, s_x2_);
-
-    i += NUM_SPQR_TILES_PER_ITERATION;
-    local_raw_data += NUM_SPQR_TILES_PER_ITERATION * BETA1;
-    x2_id += NUM_SPQR_TILES_PER_ITERATION * BETA1;
-    pipeline_id++;
-  }
-
-  for (; i < num_tiles_per_tile_row;
-       i += NUM_SPQR_TILES_PER_ITERATION,
-       local_raw_data += NUM_SPQR_TILES_PER_ITERATION * BETA1) {
-    auto v = __ldg(local_raw_data);
-    uint64_t s_order_partial =
-        (v >> NUM_USEFUL_BITS)
-        << (SECOND_ORDER_FRAGMENT_SIZE_BITS * (row_pos / OFFSET));
-    SecondOrder _s{.v = recover_second_order_sync(s_order_partial)};
-
-    half2 first_order_quantized = dequant2(v);
-
-    half2 first_order_dequantized =
-        dequantize2(first_order_quantized, _s.get_sws2(), _s.get_swz2());
-
-    half2 ws2 = __half2half2(first_order_dequantized.x);
-    half2 wz2 = __half2half2(first_order_dequantized.y);
-
-    const auto s_x2_ = s_x2 + i * (BETA2 >> 1);
-
-    acc = accumulate<BETA2>(acc, v, ws2, wz2, s_x2_);
-  }
+  float acc = dense_matrix_runner.acc;
 
   cp_async_wait_all();
   if constexpr (IS_CSR) {
@@ -821,7 +819,8 @@ __global__ void spqr_quantized_matvec(
 //
 //   // Here is how we organize things here. We have THREAD_COUNT threads in a
 //   // block in x-dimension. We distribute 1 thread per tile row. Therefore, we
-//   // have BETA1 threads per tile. For now, a block only spans across 1 dimension
+//   // have BETA1 threads per tile. For now, a block only spans across 1
+//   dimension
 //   // of SPQR tiles.
 //   constexpr u32 NUM_SPQR_TILES_PER_ITERATION = BLOCK_WIDTH;
 //   constexpr u32 WARP_COUNT = UPDIV(BLOCK_WIDTH, 2);

@@ -22,6 +22,7 @@
 #include <iomanip>
 #include <iostream>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -48,6 +49,12 @@ struct QuantizedLinear {
   uint64_t *d_dense_weights;
   uint32_t *d_col_vals;
   uint32_t *d_row_offsets;
+
+  void free() {
+    cudaFree(d_dense_weights);
+    cudaFree(d_col_vals);
+    cudaFree(d_row_offsets);
+  }
 };
 
 template <class T> T *device_from_size(int s) {
@@ -57,7 +64,7 @@ template <class T> T *device_from_size(int s) {
 }
 
 template <class T>
-T *device_from_file(const std::string &file_path, T *buff = nullptr) {
+T *device_from_file(const std::string &file_path) {
   // Open the binary file
   std::ifstream file(file_path, std::ios::binary | std::ios::ate);
   if (!file.is_open()) {
@@ -75,10 +82,14 @@ T *device_from_file(const std::string &file_path, T *buff = nullptr) {
   }
 
   T *d_buff;
-  cudaMalloc(reinterpret_cast<void **>(&d_buff), size);
+  cudaMalloc(reinterpret_cast<void **>(&d_buff), sizeof(T) * buffer.size());
 
-  cudaMemcpy(reinterpret_cast<void *>(d_buff), buffer.data(), sizeof(T) * size,
+  cudaDeviceSynchronize();
+
+  cudaMemcpy(d_buff, buffer.data(), sizeof(T) * buffer.size(),
              cudaMemcpyHostToDevice);
+  cudaDeviceSynchronize();
+
 
   return d_buff;
 }
@@ -91,7 +102,7 @@ struct Result {
 };
 
 Result mul_with_time(const QuantizedLinear &d_q, XType *d_x, XType *d_y,
-                   float *measurements, int times) {
+                     float *measurements, int times) {
   float mmin = FLT_MAX;
   float mmean = 0;
   for (int i = 0; i < times; i++) {
@@ -133,8 +144,7 @@ int main() {
       "self_attn.k_proj", "self_attn.o_proj", "self_attn.q_proj",
       "self_attn.v_proj"};
 
-  float *measurements = new float[NUM_REPS];
-
+  auto measurements = new float[NUM_REPS];
 
   float mean_runtime = 0.f;
   int tests{};
@@ -145,16 +155,36 @@ int main() {
           "/home/elvircrn/CLionProjects/spqr_kernel/data/"
           "output_identity_compressed_libtorch/" +
           std::to_string(i) + "/" + layer_name + "/";
+
+      std::string quant_linear_path_ptcsr =
+          "/home/elvircrn/CLionProjects/spqr_kernel/data/"
+          "output_identity_compressed_ptcsr_libtorch/" +
+          std::to_string(i) + "/" + layer_name + "/";
+
       QuantizedLinear quantized_linear = from_path(quant_linear_path);
-      auto result = mul_with_time(quantized_linear, d_x, d_y, measurements, NUM_REPS);
-      mean_runtime += result.min;
+      auto result =
+          mul_with_time(quantized_linear, d_x, d_y, measurements, NUM_REPS);
+
+      QuantizedLinear quantized_linear_ptcsr =
+          from_path(quant_linear_path_ptcsr);
+      auto result_ptcsr = mul_with_time(quantized_linear_ptcsr, d_x, d_y,
+                                        measurements, NUM_REPS);
+
+      mean_runtime += std::min(result_ptcsr.min, result.min);
+
+      std::cout << std::left << std::setw(3) << i << " " << std::left
+                << std::setw(20) << layer_name << "     " << std::setw(5)
+                << std::left << std::setprecision(3)
+                << std::min(result.min, result_ptcsr.min) << std::endl;
       tests++;
 
-      std::cout << std::left << std::setw(3) << i << " " << std::left <<  std::setw(20)<< layer_name << "     " << std::setw(5) << std::left << std::setprecision(3) << result.min << std::endl;
+      quantized_linear.free();
+      quantized_linear_ptcsr.free();
     }
   }
 
-  results << std::left << std::setw(16) <<  tag << " " << (mean_runtime / tests) << std::endl;
+  results << std::left << std::setw(16) << tag << " " << (mean_runtime / tests)
+          << std::endl;
 
   delete[] measurements;
 
