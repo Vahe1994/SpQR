@@ -45,7 +45,7 @@ def get_layers_prefix(config) -> str:
 
 def get_converted_state_dict(config, nbits: int, in_path: os.PathLike) -> [dict, list[str]]:
     state_dict = {}
-    linear_weights_not_to_quantize = []
+    modules_to_not_convert = []
 
     num_layers = get_num_layers(config)
     layers_prefix = get_layers_prefix(config)
@@ -58,19 +58,19 @@ def get_converted_state_dict(config, nbits: int, in_path: os.PathLike) -> [dict,
             else:
                 p.data = pack_int_data(p.data, nbits)
             if "quantized_weight." not in name:
-                linear_weights_not_to_quantize.append(f"{layers_prefix}.{i}.{name}")
+                modules_to_not_convert.append(f"{layers_prefix}.{i}.{name}")
             else:
                 name = re.sub("quantized_weight.", "", name)
             state_dict[f"{layers_prefix}.{i}.{name}"] = p.data
 
     for key, value in torch.load(os.path.join(in_path, "not_quantized_weights.pt")).items():
         state_dict[key] = value.half()
-        linear_weights_not_to_quantize.append(key)
+        modules_to_not_convert.append(key)
 
-    if "lm_head.weight" not in linear_weights_not_to_quantize:
-        linear_weights_not_to_quantize.append("lm_head.weight")
+    if "lm_head.weight" not in modules_to_not_convert:
+        modules_to_not_convert.append("lm_head.weight")
 
-    return state_dict, linear_weights_not_to_quantize
+    return state_dict, modules_to_not_convert
 
 
 def get_metadata(args_path: str) -> dict:
@@ -78,7 +78,7 @@ def get_metadata(args_path: str) -> dict:
     return {"bits": quant_args["wbits"], "beta1": quant_args["qq_groupsize"], "beta2": quant_args["groupsize"]}
 
 
-def update_config(config_dict: dict, spqr_metadata: dict[str, int], linear_weights_not_to_quantize: list[str]):
+def update_config(config_dict: dict, spqr_metadata: dict[str, int], modules_to_not_convert: list[str]):
     config_dict["quantization_config"] = {
         "quant_method": "spqr",
         "beta1": spqr_metadata["beta1"],
@@ -101,7 +101,7 @@ def add_inference_code(model_type: str, save_path: os.PathLike):
 def replace_with_spqr_linear(
     model,
     quantization_config_shapes=None,
-    linear_weights_not_to_quantize=None,
+    modules_to_not_convert=None,
     current_key_name=None,
 ):
     for name, module in model.named_children():
@@ -110,8 +110,8 @@ def replace_with_spqr_linear(
         current_key_name.append(name)
 
         if isinstance(module, QuantizedLinear):
-            # Check if the current key is not in the `linear_weights_not_to_quantize`
-            if ".".join(current_key_name) + ".weight" not in linear_weights_not_to_quantize:
+            # Check if the current key is not in the `modules_to_not_convert`
+            if ".".join(current_key_name) + ".weight" not in modules_to_not_convert:
                 tensor_name = ".".join(current_key_name)
                 quantization_config_shapes[f"{tensor_name}.dense_weights.shape"] = module.dense_weights.shape[0]
                 quantization_config_shapes[f"{tensor_name}.row_offsets.shape"] = module.row_offsets.shape[0]
@@ -125,7 +125,7 @@ def replace_with_spqr_linear(
             _, has_been_replaced = replace_with_spqr_linear(
                 module,
                 quantization_config_shapes=quantization_config_shapes,
-                linear_weights_not_to_quantize=linear_weights_not_to_quantize,
+                modules_to_not_convert=modules_to_not_convert,
                 current_key_name=current_key_name,
             )
         # Remove the last key for recursion
@@ -182,7 +182,7 @@ if __name__ == "__main__":
 
     old_config = AutoConfig.from_pretrained(args.model, trust_remote_code=args.trust_remote_code)
     metadata = get_metadata(os.path.join(args.config_path, "args.pt"))
-    linear_weights_not_to_quantize = torch.load(os.path.join(args.config_path, "not_quantized_weights.pt")).keys()
+    modules_to_not_convert = torch.load(os.path.join(args.config_path, "not_quantized_weights.pt")).keys()
 
     model = torch.load(args.in_path_pt)
 
@@ -196,12 +196,10 @@ if __name__ == "__main__":
         tokenizer = AutoTokenizer.from_pretrained(args.model)
         tokenizer.save_pretrained(args.out_path)
 
-    new_config_dict = update_config(old_config.to_diff_dict(), metadata, list(linear_weights_not_to_quantize))
-    new_config_dict["quantization_config"]["linear_weights_not_to_quantize"] = list(linear_weights_not_to_quantize)
+    new_config_dict = update_config(old_config.to_diff_dict(), metadata, list(modules_to_not_convert))
+    new_config_dict["quantization_config"]["modules_to_not_convert"] = list(modules_to_not_convert)
 
     new_config_dict["quantization_config"]["shapes"] = {}
-    replace_with_spqr_linear(
-        model, new_config_dict["quantization_config"]["shapes"], set(linear_weights_not_to_quantize)
-    )
+    replace_with_spqr_linear(model, new_config_dict["quantization_config"]["shapes"], set(modules_to_not_convert))
     with open(os.path.join(args.out_path, "config.json"), "w") as config_file:
         json.dump(new_config_dict, config_file, indent=4)
