@@ -287,6 +287,7 @@ class QuantizedLinear(torch.nn.Module):
         return 1 - self.density
 
     def should_reorder(self) -> bool:
+        return False
         """
         @return: Input reordering is an optional argument. Check if we should reorder before matvec.
         """

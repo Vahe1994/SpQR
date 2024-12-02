@@ -161,7 +161,7 @@ struct Timer {
 
   inline float end() {
     float time;
-    cudaEventRecord(ce_stop, 0);
+    cudaEventRecord(ce_stop, nullptr);
     cudaEventSynchronize(ce_stop);
     cudaEventElapsedTime(&time, ce_start, ce_stop);
     // Returns ms

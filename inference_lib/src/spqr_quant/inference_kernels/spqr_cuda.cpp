@@ -107,8 +107,6 @@ void torch_mul_timer(const torch::Tensor &deq_w, const torch::Tensor &x,
   // Make sure that the compiler doesn't optimize this away
   torch::mv_out(y, deq_w, x);
 
-  cudaDeviceSynchronize();
-
   measurements_ptr[0] = timer->end();
   delete timer;
 }
