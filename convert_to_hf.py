@@ -200,8 +200,6 @@ if __name__ == "__main__":
     new_config_dict["quantization_config"]["modules_to_not_convert"] = list(modules_to_not_convert)
 
     new_config_dict["quantization_config"]["shapes"] = {}
-    replace_with_spqr_linear(
-        model, new_config_dict["quantization_config"]["shapes"], set(modules_to_not_convert)
-    )
+    replace_with_spqr_linear(model, new_config_dict["quantization_config"]["shapes"], set(modules_to_not_convert))
     with open(os.path.join(args.out_path, "config.json"), "w") as config_file:
         json.dump(new_config_dict, config_file, indent=4)
