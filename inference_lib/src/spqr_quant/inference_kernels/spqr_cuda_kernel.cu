@@ -25,6 +25,25 @@
 
 extern "C" __device__ uint32_t __nvvm_get_smem_pointer(void *);
 
+
+half2 DEVICE_INLINE dequantize2(const half2 &q, const half2 &s,
+                                const half2 &z) {
+  const half2 &res = __hmul2(s, __hsub2(q, z));
+  return res;
+}
+
+template <class Bit_t, class Scalar_t>
+DEVICE_INLINE Scalar_t dequantize(Bit_t q, Scalar_t s, Scalar_t z) {
+  if constexpr (std::is_same<Bit_t, half>::value) {
+    return __hmul(s, __hsub(q, z));
+  } else {
+    return __hmul(s, __hsub(__uint2half_rd(q, z)));
+  }
+}
+
+#define INT2_TO_HALF2(v)                                                       \
+make_half2(__int2half_rd((v) & 0b111), __int2half_rd(((v) >> 3) & 0b111))
+
 template <class Acc_t> constexpr __device__ __host__ bool is_fp32() {
   if constexpr (std::is_same_v<Acc_t, float> || std::is_same_v<Acc_t, float2>) {
     return true;
@@ -62,24 +81,52 @@ using Frag2 = Vec<half2, 1>;
 // values. We mostly follow the strategy in the link below, with some small
 // changes:
 // https://github.com/NVIDIA/FasterTransformer/blob/main/src/fastertransformer/cutlass_extensions/include/cutlass_extensions/interleaved_numeric_conversion.h
-__device__ inline Frag4 dequant(int q) {
-  const int LO = 0x00070007;
-  const int HI = 0x00700070;
-  const int EX = 0x64006400;
+__device__ __forceinline__ Frag4 dequant(int q) {
+  q = (q & 0b111) | ((q & 0b111000000) >> 2) | ((q & 0b111000) << 13) | ((q & 0b111000000000) << 11);
+
+  // q = q0 | (q1 << 8) | (q2 << 16) | (q3 << 24);
+  // q = q0 | (q1 << 8) | (q2 << 16) | (q3 << 24);
+  // q |= 1000;
+
+
+  // q = (q & 0b111) |
+  // ((q & 0b111000) << 1) |
+  //   ((q & 0b111000000) << 2) |
+  //   ((q & 0b111000000000) << 3);
+
+
+
+  // q = (q & 0b111) |
+  //   ((q & 0b111000000) >> 2) |
+  //   ((q & 0b111000) << 5) |
+  //     ((q & 0b111000000000) << 3);
+
+  // q = (q & 0b111) |
+  // ((q & 0b111000) << 1) |
+  //   ((q & 0b111000000) << 2) |
+  //   ((q & 0b111000000000) << 3);
+
+  // q |= 0b1000100010001000;
+
+  constexpr  int LO = 0x000f000f;
+  constexpr int HI = 0x00f000f0;
+  constexpr int EX = 0x64006400;
   // Guarantee that the `(a & b) | c` operations are LOP3s.
-  int lo = lop3 < (0xf0 & 0xcc) | 0xaa > (q, LO, EX);
-  int hi = lop3 < (0xf0 & 0xcc) | 0xaa > (q, HI, EX);
-  // We want signed int4 outputs, hence we fuse the `-8` symmetric zero point
-  // directly into `SUB` and `ADD`.
-  const int SUB = 0x64086408;
-  const int MUL = 0x2c002c00;
-  const int ADD = 0xd480d480;
+  int lo = lop3<(0xf0 & 0xcc) | 0xaa>(q, LO, EX);
+  int hi = lop3<(0xf0 & 0xcc) | 0xaa>(q, HI, EX);
+  // We want signed int4 outputs, hence we fuse the `-8` symmetric zero point directly into `SUB` and `ADD`.
+  constexpr int SUB = 0x64006400;
+  constexpr int MUL = 0x2c002c00;
+  constexpr int ADD = 0xd400d400;
   Frag4 frag_b;
-  frag_b[0] = __hsub2(*reinterpret_cast<half2 *>(&lo),
-                      *reinterpret_cast<const half2 *>(&SUB));
-  frag_b[1] = __hfma2(*reinterpret_cast<half2 *>(&hi),
-                      *reinterpret_cast<const half2 *>(&MUL),
-                      *reinterpret_cast<const half2 *>(&ADD));
+  frag_b[0] = __hsub2(
+    *reinterpret_cast<half2*>(&lo),
+    *reinterpret_cast<const half2*>(&SUB)
+  );
+  frag_b[1] = __hfma2(
+    *reinterpret_cast<half2*>(&hi),
+    *reinterpret_cast<const half2*>(&MUL), *reinterpret_cast<const half2*>(&ADD)
+  );
   return frag_b;
 }
 
@@ -87,14 +134,16 @@ __device__ inline Frag4 dequant(int q) {
 // values. We mostly follow the strategy in the link below, with some small
 // changes:
 // https://github.com/NVIDIA/FasterTransformer/blob/main/src/fastertransformer/cutlass_extensions/include/cutlass_extensions/interleaved_numeric_conversion.h
-__device__ inline half2 dequant2(int q) {
-  const int LO = 0x00070007;
-  const int EX = 0x64006400;
-  // Guarantee that the `(a & b) | c` operations are LOP3s.
-  int lo = lop3 < (0xf0 & 0xcc) | 0xaa > (q, LO, EX);
-  static constexpr int SUB = 0x64086408;
-  return __hsub2(*reinterpret_cast<half2 *>(&lo),
-                 *reinterpret_cast<const half2 *>(&SUB));
+__device__ __forceinline__ half2 dequant2(int q) {
+  return INT2_TO_HALF2(q);
+  // q = (q & 0b111) | ((q & 0b111000) << 13);
+  // const int LO = 0x000f000f;
+  // const int EX = 0x64006400;
+  // // Guarantee that the `(a & b) | c` operations are LOP3s.
+  // int lo = lop3 < (0xf0 & 0xcc) | 0xaa > (q, LO, EX);
+  // static constexpr int SUB = 0x64006400;
+  // return __hsub2(*reinterpret_cast<half2 *>(&lo),
+  //                *reinterpret_cast<const half2 *>(&SUB));
 }
 
 DEVICE_INLINE uint64_t recover_second_order_sync(uint64_t val) {
@@ -128,20 +177,6 @@ union RowBits {
   }
 };
 
-half2 DEVICE_INLINE dequantize2(const half2 &q, const half2 &s,
-                                const half2 &z) {
-  const half2 &res = __hmul2(s, __hsub2(q, z));
-  return res;
-}
-
-template <class Bit_t, class Scalar_t>
-DEVICE_INLINE Scalar_t dequantize(Bit_t q, Scalar_t s, Scalar_t z) {
-  if constexpr (std::is_same<Bit_t, half>::value) {
-    return __hmul(s, __hsub(q, z));
-  } else {
-    return __hmul(s, __hsub(__uint2half_rd(q, z)));
-  }
-}
 
 #define CUINLINE __forceinline__
 
@@ -235,8 +270,6 @@ constexpr int X_LOAD_BLOCK_SIZE = 8;
 using Load_t = __int128_t;
 constexpr bool PIPELINED_LOAD = false;
 
-#define INT2_TO_HALF2(v)                                                       \
-  make_half2(__int2half_rd((v) & 0b111), __int2half_rd(((v) >> 3) & 0b111))
 // #define INT2_TO_HALF2(v) s_half2_lut[v]
 // #define INT2_TO_HALF2(v) s_half2_lut[(thread_xy + v) & 0x2F]
 
@@ -489,9 +522,9 @@ __device__ __forceinline__ float accumulate(float acc, u64 b, const half2 &ws2,
                                             const half2 &wz2,
                                             const half2 *__restrict__ s_x2) {
 #if 0
-
 #pragma unroll
-  for (u32 j = 0; j < BETA2 / 2; j++) {
+  for (u32 j = 0; j < 8; j++) {
+    b >>= 6u;
     half2 w_q = INT2_TO_HALF2(b & 0b111111ull);
     half2 w = dequantize2(w_q, ws2, wz2);
     float2 x_fp32 = __half22float2(s_x2[j]);
@@ -500,19 +533,17 @@ __device__ __forceinline__ float accumulate(float acc, u64 b, const half2 &ws2,
     acc = fmaf(x_fp32.y, w_fp32.y, acc);
   }
   return acc;
-
 #else
-  auto s_x2_ptr = s_x2;
-
+  b >>= 6u;
 #pragma unroll
   for (u32 i = 0; i < 4; i++) {
-    auto frag = dequant(static_cast<int>(b & (0b111111111111u)));
+    auto frag = dequant(b);
 
 #pragma unroll
     for (u32 j = 0; j < 2; j++) {
       auto w_q = frag.elems[j];
       half2 w = dequantize2(w_q, ws2, wz2);
-      float2 x_fp32 = __half22float2(*(s_x2_ptr++));
+      float2 x_fp32 = __half22float2(*(s_x2++));
       float2 w_fp32 = __half22float2(w);
       acc = fmaf(x_fp32.x, w_fp32.x, acc);
       acc = fmaf(x_fp32.y, w_fp32.y, acc);
@@ -520,7 +551,6 @@ __device__ __forceinline__ float accumulate(float acc, u64 b, const half2 &ws2,
     b >>= 12ull;
   }
   return acc;
-
 #endif
 }
 
@@ -535,7 +565,6 @@ struct DenseMatrixRunner {
   const half2 *__restrict__ x2;
   half2 *s_x2;
   u32 row_pos;
-  u32 x2_id;
   u32 num_tiles_per_row;
   u32 subtile_id;
 
@@ -586,7 +615,6 @@ struct DenseMatrixRunner {
 
       i += NUM_SPQR_TILES_PER_ITERATION;
       local_raw_data += NUM_SPQR_TILES_PER_ITERATION * BETA1;
-      x2_id += NUM_SPQR_TILES_PER_ITERATION * BETA1;
       pipeline_id++;
     }
   }
@@ -675,7 +703,6 @@ __global__ void spqr_quantized_matvec(
                           .x2 = x2,
                           .s_x2 = s_x2,
                           .row_pos = row_pos,
-                          .x2_id = thread_xy,
                           .num_tiles_per_row = num_tiles_per_tile_row,
                           .subtile_id = subtile_id};
 
@@ -1119,13 +1146,13 @@ int spqr_matvec(
     }
   }
 
-  if (!features.flags.is_async) {
-    CHECK_CUDA(cudaDeviceSynchronize());
-  }
+
 
   if (measurements) {
     static_cast<float *>(measurements)[0] = timer->end();
     delete timer;
+  } else if (!features.flags.is_async) {
+    CHECK_CUDA(cudaDeviceSynchronize());
   }
 
   return ret;
