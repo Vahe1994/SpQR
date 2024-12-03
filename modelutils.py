@@ -42,10 +42,14 @@ def get_model(model_path, load_quantized=None, dtype="auto"):
             model = load_quantized_model(model, load_quantized)
         else:
             print("Loading pretrained model ...")
+            config = AutoConfig.from_pretrained(
+                model_path, return_dict=True
+            )
             model = AutoModelForCausalLM.from_pretrained(
                 pretrained_model_name_or_path=model_path,
                 trust_remote_code=True,
                 torch_dtype=dtype,
+                config=config
                 # local_files_only=True
             )
     model.seqlen = 2048
