@@ -98,22 +98,8 @@ def get_c4(nsamples, seqlen, tokenizer, eval_mode=False):
         return valenc
 
 def get_red_pajama(nsamples, seqlen, tokenizer, eval_mode=False):
-    traindata = load_dataset("data/red_pajama_n=1024.pth", split="train")
-    tokenizer.bos_token_id = 1
-    tokenizer.eos_token_id = 2
-    trainloader = []
-    for _ in trange(nsamples, desc="Making red_pajama calibration set", leave=False):
-        while True:
-            i = random.randint(0, len(traindata) - 1)
-            trainenc = tokenizer(traindata[i]["text"], return_tensors="pt")
-            if trainenc.input_ids.shape[1] > seqlen:
-                break
-        i = random.randint(0, trainenc.input_ids.shape[1] - seqlen - 1)
-        j = i + seqlen
-        inp = trainenc.input_ids[:, i:j]
-        assert inp.shape[1] == seqlen
-        trainloader.append(inp)
-    return trainloader
+    traindata = torch.load("./data/red_pajama_n=1024.pth")[:nsamples]
+    return traindata
 
 
 
@@ -238,7 +224,7 @@ def get_loaders(name, nsamples=128, seed=0, seqlen=2048, eval_mode=False, model_
         else:
             raise ValueError(
                 f"Failed to load data from {name}.",
-                "Check dataset name or path or use one of [c4, wikitext2, ptb, pajama, refinedweb, none]",
+                "Check dataset name or path or use one of [c4, wikitext2, ptb, pajama, refinedweb, none, red_pajama]",
             )
 
     if hasattr(data, "input_ids"):
