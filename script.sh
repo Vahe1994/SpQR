@@ -2,6 +2,7 @@
 
 export MODEL_PATH=
 export DATASET=
+export OUTPUT_PATH=
 
 PYTHONPATH=. python3 main.py $MODEL_PATH $DATASET \
     --wbits 3 \
@@ -14,4 +15,5 @@ PYTHONPATH=. python3 main.py $MODEL_PATH $DATASET \
     --permutation_order act_order \
     --percdamp 1e0 \
     --nsamples 128 \
-    --save <output_path>
+    --model_seqlen 2048 \
+    --save $OUTPUT_PATH
