@@ -570,8 +570,8 @@ if __name__ == "__main__":
         )
         wandb.run.log_code(".")
 
-    # device = "cuda" if torch.cuda.is_available() else "cpu"
-    device = "cpu"
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    # device = "cpu"
 
     print("============  Loading model... ============")
     model = get_model(args.model_path, args.load, args.dtype).train(False)
