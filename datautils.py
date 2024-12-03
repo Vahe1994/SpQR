@@ -190,7 +190,7 @@ def get_loaders(name, nsamples=128, seed=0, seqlen=2048, eval_mode=False, model_
         except FileNotFoundError:
             raise FileNotFoundError(
                 f"Failed to load custom data from {name}.",
-                "Check data path or use one of [c4, wikitext2, ptb, pajama, refinedweb, none]",
+                "Check data path or use one of [c4, wikitext2, ptb, red_pajama, refinedweb, none]",
             )
     else:
         # for datasets requiring tokenization
@@ -224,7 +224,7 @@ def get_loaders(name, nsamples=128, seed=0, seqlen=2048, eval_mode=False, model_
         else:
             raise ValueError(
                 f"Failed to load data from {name}.",
-                "Check dataset name or path or use one of [c4, wikitext2, ptb, pajama, refinedweb, none, red_pajama]",
+                "Check dataset name or path or use one of [c4, wikitext2, ptb, red_pajama, refinedweb, none]",
             )
 
     if hasattr(data, "input_ids"):

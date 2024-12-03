@@ -429,7 +429,7 @@ if __name__ == "__main__":
         "dataset",
         type=str,
         default="none",
-        help="Dataset name [c4, pajama, refinedweb, none, etc.] or path to data where to extract calibration data from.",
+        help="Dataset name [c4, red_pajama, refinedweb, none, etc.] or path to data where to extract calibration data from.",
     )
     parser.add_argument(
         "--custom_data_path",
