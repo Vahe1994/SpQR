@@ -541,6 +541,12 @@ if __name__ == "__main__":
         choices=["auto", "float16", "float32"],
         help="dtype to load the model.",
     )
+    parser.add_argument(
+        "--model_seqlen",
+        type=int,
+        default=4096,
+        help="Model seqlen and calibration data context length.",
+    )
 
     args = parser.parse_args()
 
@@ -574,7 +580,7 @@ if __name__ == "__main__":
     # device = "cpu"
 
     print("============  Loading model... ============")
-    model = get_model(args.model_path, args.load, args.dtype).train(False)
+    model = get_model(args.model_path, args.load, args.dtype, args.model_seqlen).train(False)
 
     model = model.to(device=device)
     print("\n============ Quantizing model... ============")
