@@ -166,7 +166,6 @@ def get_inps(model, data_iterable, args, dev, nsamples=None):
     torch.cuda.empty_cache()
 
     forward_args = {k: cache[k] for k in forward_arg_names}
-    # forward_args['position_embeddings'] = nn.Embedding(model.config.max_position_embeddings, model.config.hidden_size)
     return inps, forward_args
 
 
@@ -576,13 +575,13 @@ if __name__ == "__main__":
         )
         wandb.run.log_code(".")
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    # device = "cpu"
+    # device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = "cpu"
 
     print("============  Loading model... ============")
     model = get_model(args.model_path, args.load, args.dtype, args.model_seqlen).train(False)
 
-    model = model.to(device=device)
+    # model = model.to(device=device)
     print("\n============ Quantizing model... ============")
     if args.wbits < 16 and args.load:
         print("\n Warning: You are quantizing quantized model!")

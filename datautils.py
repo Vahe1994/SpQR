@@ -4,6 +4,7 @@ import random
 import numpy as np
 import torch
 from datasets import load_dataset
+from tqdm import trange
 from transformers import AutoTokenizer, LlamaTokenizer
 
 
@@ -96,6 +97,25 @@ def get_c4(nsamples, seqlen, tokenizer, eval_mode=False):
         valenc = torch.hstack(valenc)
         return valenc
 
+def get_red_pajama(nsamples, seqlen, tokenizer, eval_mode=False):
+    traindata = load_dataset("data/red_pajama_n=1024.pth", split="train")
+    tokenizer.bos_token_id = 1
+    tokenizer.eos_token_id = 2
+    trainloader = []
+    for _ in trange(nsamples, desc="Making red_pajama calibration set", leave=False):
+        while True:
+            i = random.randint(0, len(traindata) - 1)
+            trainenc = tokenizer(traindata[i]["text"], return_tensors="pt")
+            if trainenc.input_ids.shape[1] > seqlen:
+                break
+        i = random.randint(0, trainenc.input_ids.shape[1] - seqlen - 1)
+        j = i + seqlen
+        inp = trainenc.input_ids[:, i:j]
+        assert inp.shape[1] == seqlen
+        trainloader.append(inp)
+    return trainloader
+
+
 
 def get_ptb_new(nsamples, seqlen, tokenizer, eval_mode=False):
     if not eval_mode:
@@ -173,9 +193,7 @@ def get_loaders(name, nsamples=128, seed=0, seqlen=2048, eval_mode=False, model_
     set_seed(seed)
 
     # for pre-tokenized datasets
-    if name.lower() == "pajama":
-        data = torch.load("./data/red_pajama_n=1024.pth")[:nsamples]
-    elif name.lower() == "refinedweb":
+    if name.lower() == "refinedweb":
         data = torch.load("./data/refined_web_n=128.pth")[:nsamples]
     elif name.lower() == "none":
         print("Not loading any dataset. (OK if you use no compression or methods like RTN.)")
@@ -215,6 +233,8 @@ def get_loaders(name, nsamples=128, seed=0, seqlen=2048, eval_mode=False, model_
             data = get_c4(nsamples, seqlen, tokenizer, eval_mode=eval_mode)
         elif name.lower() == "c4_new":
             data = get_c4_new(nsamples, seqlen, tokenizer, eval_mode=eval_mode)
+        elif name.lower() == "red_pajama":
+            data = get_red_pajama(nsamples, seqlen, tokenizer, eval_mode)
         else:
             raise ValueError(
                 f"Failed to load data from {name}.",
