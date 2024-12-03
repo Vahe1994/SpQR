@@ -576,6 +576,7 @@ if __name__ == "__main__":
     print("============  Loading model... ============")
     model = get_model(args.model_path, args.load, args.dtype).train(False)
 
+    model = model.to(device=device)
     print("\n============ Quantizing model... ============")
     if args.wbits < 16 and args.load:
         print("\n Warning: You are quantizing quantized model!")
