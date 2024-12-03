@@ -97,10 +97,10 @@ def get_c4(nsamples, seqlen, tokenizer, eval_mode=False):
         valenc = torch.hstack(valenc)
         return valenc
 
+
 def get_red_pajama(nsamples, seqlen, tokenizer, eval_mode=False):
     traindata = torch.load("./data/red_pajama_n=1024.pth")[:nsamples]
     return traindata
-
 
 
 def get_ptb_new(nsamples, seqlen, tokenizer, eval_mode=False):
