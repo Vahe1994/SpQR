@@ -33,15 +33,15 @@ except ModuleNotFoundError:
 
 
 def get_average_number_of_bits(
-        wbits: int = 3,
-        qq_scale_bits: int = 3,
-        qq_zero_bits: int = 3,
-        qqq_scale_bits: int = 16,
-        qqq_zero_bits: int = 16,
-        groupsize: int = 16,
-        qq_groupsize: int = 16,
-        round_zero: bool = False,
-        global_ol_n_share: float = 0.00,
+    wbits: int = 3,
+    qq_scale_bits: int = 3,
+    qq_zero_bits: int = 3,
+    qqq_scale_bits: int = 16,
+    qqq_zero_bits: int = 16,
+    groupsize: int = 16,
+    qq_groupsize: int = 16,
+    round_zero: bool = False,
+    global_ol_n_share: float = 0.00,
 ):
     # if not quantized stats are in full precision
     qq_scale_bits = qq_scale_bits or 16
@@ -53,13 +53,13 @@ def get_average_number_of_bits(
         wbits_avg = wbits
     elif round_zero:
         wbits_avg = (
-                wbits + (qq_scale_bits + wbits) / groupsize + (qqq_scale_bits + qqq_zero_bits) / (groupsize * qq_groupsize)
+            wbits + (qq_scale_bits + wbits) / groupsize + (qqq_scale_bits + qqq_zero_bits) / (groupsize * qq_groupsize)
         )
     else:
         wbits_avg = (
-                wbits
-                + (qq_scale_bits + qq_zero_bits) / groupsize
-                + 2 * (qqq_scale_bits + qqq_zero_bits) / (groupsize * qq_groupsize)
+            wbits
+            + (qq_scale_bits + qq_zero_bits) / groupsize
+            + 2 * (qqq_scale_bits + qqq_zero_bits) / (groupsize * qq_groupsize)
         )
 
     # correct accounting for outliers
@@ -125,10 +125,7 @@ def get_inps(model, data_iterable, args, dev, nsamples=None):
     dtype = next(iter(model.parameters())).dtype
     inps = torch.zeros((nsamples, model.seqlen, model.config.hidden_size), dtype=dtype, device=dev)
 
-    forward_arg_names = [
-        "attention_mask",
-        "position_ids"
-    ]
+    forward_arg_names = ["attention_mask", "position_ids"]
     if model.config.model_type.lower() in FALCON_TYPES:
         forward_arg_names.append("alibi")
 
@@ -558,15 +555,15 @@ if __name__ == "__main__":
     if args.wandb:
         assert has_wandb, "`wandb` not installed, try pip install `wandb`"
         args.exp_name = (
-                os.environ.get("WANDB_NAME", "SpQR_run")
-                + f"_wbits_{args.wbits}"
-                + f"_groupsize_{args.groupsize}"
-                + f"_qq_scale_bits_{args.qq_scale_bits}"
-                + f"_qq_zero_bits_{args.qq_zero_bits}"
-                + f"_qq_groupsize_{args.qq_groupsize}"
-                + f"_outl_{args.outlier_threshold}"
-                + f"_permord_{args.permutation_order}"
-                + f"{'_new_eval' if args.new_eval else ''}"
+            os.environ.get("WANDB_NAME", "SpQR_run")
+            + f"_wbits_{args.wbits}"
+            + f"_groupsize_{args.groupsize}"
+            + f"_qq_scale_bits_{args.qq_scale_bits}"
+            + f"_qq_zero_bits_{args.qq_zero_bits}"
+            + f"_qq_groupsize_{args.qq_groupsize}"
+            + f"_outl_{args.outlier_threshold}"
+            + f"_permord_{args.permutation_order}"
+            + f"{'_new_eval' if args.new_eval else ''}"
         )
         wandb.init(
             config={a: getattr(args, a) for a in dir(args) if not a.startswith("_")},
@@ -574,7 +571,7 @@ if __name__ == "__main__":
         wandb.run.log_code(".")
 
     # device = "cuda" if torch.cuda.is_available() else "cpu"
-    device = 'cpu'
+    device = "cpu"
 
     print("============  Loading model... ============")
     model = get_model(args.model_path, args.load, args.dtype).train(False)
