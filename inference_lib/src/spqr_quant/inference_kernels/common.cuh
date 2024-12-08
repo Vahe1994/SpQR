@@ -19,9 +19,14 @@
 #include <cstdio>
 #include <type_traits>
 
+using u64 = unsigned long long;
+using s32 = int;
+using u32 = unsigned int;
+using u16 = unsigned short;
+
 static constexpr uint64_t SECOND_ORDER_FRAGMENT_SIZE_BITS = 8ull;
 
-template<class T> __host__ __device__ constexpr int get_bits() {
+template <class T> __host__ __device__ constexpr int get_bits() {
   if constexpr (std::is_same_v<T, int> || std::is_same_v<T, unsigned int>) {
     return 32;
   } else {
@@ -29,14 +34,14 @@ template<class T> __host__ __device__ constexpr int get_bits() {
   }
 }
 
-template<class Bit_t, unsigned BITS> struct TileArray {
+template <class Bit_t, unsigned BITS> struct TileArray {
 private:
   Bit_t *buffer{};
 
 public:
   Bit_t *ptr{};
 
-  explicit TileArray(Bit_t *_ptr) : buffer(_ptr), ptr(_ptr) { }
+  explicit TileArray(Bit_t *_ptr) : buffer(_ptr), ptr(_ptr) {}
 
   void push(Bit_t s, Bit_t z, Bit_t *x, int n, Bit_t buff = Bit_t{}) {
     Bit_t b = (z << BITS) | s;
@@ -57,7 +62,7 @@ public:
   }
 };
 
-template<class Bit_t, uint64_t BITS> struct BitArray {
+template <class Bit_t, uint64_t BITS> struct BitArray {
   const Bit_t *w;
 
   __host__ __device__ Bit_t operator[](int w_id) {
@@ -67,7 +72,7 @@ template<class Bit_t, uint64_t BITS> struct BitArray {
   }
 };
 
-template<class Bit_t> struct _BitArray {
+template <class Bit_t> struct _BitArray {
   Bit_t *w{};
   const int bits;
   Bit_t *out;
@@ -136,12 +141,10 @@ union SecondOrder {
     half2 zz;
   } members;
 
-
   __device__ __forceinline__ half2 get_sws2() const { return members.ss; }
 
   __device__ __forceinline__ half2 get_swz2() const { return members.zz; }
 };
-
 
 #define CHECK_CUDA(func)                                                       \
   {                                                                            \
@@ -160,7 +163,7 @@ struct Timer {
   inline void start() { cudaEventRecord(ce_start, stream); }
 
   inline float end() {
-    float time;
+    float time{};
     cudaEventRecord(ce_stop, nullptr);
     cudaEventSynchronize(ce_stop);
     cudaEventElapsedTime(&time, ce_start, ce_stop);

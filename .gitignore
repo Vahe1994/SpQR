@@ -24,3 +24,4 @@ lm-evaluation-harness/lm_cache
 /cmake-build-*/
 inference_lib/spqr_quant/spqr_quant.egg-info/
 cmake-build-relwithdebinfo
+*/PKG-INFO

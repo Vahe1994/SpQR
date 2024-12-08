@@ -46,7 +46,7 @@ def torch_mul_timer_runs(deq_w, x, num_runs):
 
     runs = torch.empty(num_runs).cpu().float()
 
-    y = torch.zeros(m, dtype=x.dtype, device=x.device)
+    y = torch.zeros((m, 1), dtype=x.dtype, device=x.device).contiguous()
 
     for i in range(num_runs):
         y = torch.zeros_like(y)
