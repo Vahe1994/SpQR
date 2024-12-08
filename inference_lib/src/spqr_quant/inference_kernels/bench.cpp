@@ -23,8 +23,25 @@
 #include <iostream>
 #include <string>
 #include <thread>
-#include <unordered_map>
 #include <vector>
+
+int spqr_matvec_batched(
+    // W and meta
+    int bits, int prob_m, int prob_n, int prob_k,
+    // Quantization
+    int beta1, int beta2, const void *raw_in_order, const void *raw_dense_data,
+    // 32-bit
+    int row_offsets_len, void *row_offsets,
+    // 32-bit
+    void *col_vals, int nnz,
+    // 16-bit
+    // Input
+    void *X,
+    // Output
+    void *y,
+    // GPU meta
+    cudaStream_t stream = nullptr, void *measurements = nullptr,
+    uint32_t feature_flag = 0);
 
 int spqr_matvec(
     // W and meta
@@ -63,8 +80,7 @@ template <class T> T *device_from_size(int s) {
   return d_buff;
 }
 
-template <class T>
-T *device_from_file(const std::string &file_path) {
+template <class T> T *device_from_file(const std::string &file_path) {
   // Open the binary file
   std::ifstream file(file_path, std::ios::binary | std::ios::ate);
   if (!file.is_open()) {
@@ -90,7 +106,6 @@ T *device_from_file(const std::string &file_path) {
              cudaMemcpyHostToDevice);
   cudaDeviceSynchronize();
 
-
   return d_buff;
 }
 
@@ -102,17 +117,30 @@ struct Result {
 };
 
 Result mul_with_time(const QuantizedLinear &d_q, XType *d_x, XType *d_y,
-                     float *measurements, int times) {
-  float mmin = FLT_MAX;
-  float mmean = 0;
-  for (int i = 0; i < times; i++) {
-    spqr_matvec(3, d_q.m, d_q.n, 16, 16, nullptr, d_q.d_dense_weights,
-                d_q.row_offsets_count, d_q.d_row_offsets, d_q.d_col_vals,
-                d_q.nnz, d_x, d_y, nullptr, measurements + i);
-    mmin = std::min(mmin, measurements[i]);
-    mmean += measurements[i];
+                     float *measurements, int times, int k) {
+  if (k == 1) {
+    float mmin = FLT_MAX;
+    float mmean = 0;
+    for (int i = 0; i < times; i++) {
+      spqr_matvec(3, d_q.m, d_q.n, 16, 16, nullptr, d_q.d_dense_weights,
+                  d_q.row_offsets_count, d_q.d_row_offsets, d_q.d_col_vals,
+                  d_q.nnz, d_x, d_y, nullptr, measurements + i);
+      mmin = std::min(mmin, measurements[i]);
+      mmean += measurements[i];
+    }
+    return Result{.min = mmin, .mean = mmean / times};
+  } else {
+    float mmin = FLT_MAX;
+    float mmean = 0;
+    for (int i = 0; i < times; i++) {
+      spqr_matvec_batched(3, d_q.m, d_q.n, k, 16, 16, nullptr, d_q.d_dense_weights,
+                  d_q.row_offsets_count, d_q.d_row_offsets, d_q.d_col_vals,
+                  d_q.nnz, d_x, d_y, nullptr, measurements + i);
+      mmin = std::min(mmin, measurements[i]);
+      mmean += measurements[i];
+    }
+    return Result{.min = mmin, .mean = mmean / times};
   }
-  return Result{.min = mmin, .mean = mmean / times};
 }
 
 QuantizedLinear from_path(const std::string &base_path) {
@@ -132,6 +160,66 @@ QuantizedLinear from_path(const std::string &base_path) {
 }
 
 int main() {
+  std::string tag = "baseline_csr_v4";
+  std::ofstream results("results.txt", std::ios_base::app);
+  static constexpr int XY_SIZE = 11008 * 4;
+  static constexpr int NUM_REPS = 512;
+  int num_layers = 20;
+  auto d_x = device_from_size<uint16_t>(XY_SIZE);
+  auto d_y = device_from_size<uint16_t>(XY_SIZE);
+  const std::vector<std::string> &layer_names{
+      "mlp.down_proj",    "mlp.gate_proj",    "mlp.up_proj",
+      "self_attn.k_proj", "self_attn.o_proj", "self_attn.q_proj",
+      "self_attn.v_proj"};
+
+  auto measurements = new float[NUM_REPS];
+
+  float mean_runtime = 0.f;
+  int tests{};
+
+  for (int i = 0; i < num_layers; i++) {
+    for (const auto &layer_name : layer_names) {
+      std::string quant_linear_path =
+          "/home/elvircrn/CLionProjects/spqr_kernel/data/"
+          "output_identity_compressed_libtorch/" +
+          std::to_string(i) + "/" + layer_name + "/";
+
+      std::string quant_linear_path_ptcsr =
+          "/home/elvircrn/CLionProjects/spqr_kernel/data/"
+          "output_identity_compressed_ptcsr_libtorch/" +
+          std::to_string(i) + "/" + layer_name + "/";
+
+      QuantizedLinear quantized_linear = from_path(quant_linear_path);
+      auto result =
+          mul_with_time(quantized_linear, d_x, d_y, measurements, NUM_REPS, 2);
+
+      QuantizedLinear quantized_linear_ptcsr =
+          from_path(quant_linear_path_ptcsr);
+      auto result_ptcsr = mul_with_time(quantized_linear_ptcsr, d_x, d_y,
+                                        measurements, NUM_REPS, 2);
+
+      mean_runtime += std::min(result_ptcsr.min, result.min);
+
+      std::cout << std::left << std::setw(3) << i << " " << std::left
+                << std::setw(20) << layer_name << "     " << std::setw(5)
+                << std::left << std::setprecision(3)
+                << std::min(result.min, result_ptcsr.min) << std::endl;
+      tests++;
+
+      quantized_linear.free();
+      quantized_linear_ptcsr.free();
+    }
+  }
+
+  results << std::left << std::setw(16) << tag << " " << (mean_runtime / tests)
+          << std::endl;
+
+  delete[] measurements;
+
+  return 0;
+}
+
+int _main() {
   std::string tag = "baseline_csr_v3";
   std::ofstream results("results.txt", std::ios_base::app);
   static constexpr int XY_SIZE = 11008 * 3;
@@ -163,12 +251,12 @@ int main() {
 
       QuantizedLinear quantized_linear = from_path(quant_linear_path);
       auto result =
-          mul_with_time(quantized_linear, d_x, d_y, measurements, NUM_REPS);
+          mul_with_time(quantized_linear, d_x, d_y, measurements, NUM_REPS, 1);
 
       QuantizedLinear quantized_linear_ptcsr =
           from_path(quant_linear_path_ptcsr);
       auto result_ptcsr = mul_with_time(quantized_linear_ptcsr, d_x, d_y,
-                                        measurements, NUM_REPS);
+                                        measurements, NUM_REPS, 1);
 
       mean_runtime += std::min(result_ptcsr.min, result.min);
 

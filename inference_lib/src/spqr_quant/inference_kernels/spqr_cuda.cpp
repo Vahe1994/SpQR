@@ -23,6 +23,24 @@
 #include <torch/script.h> // One-stop header.
 #include <vector>
 
+int spqr_matvec_batched(
+    // W and meta
+    int bits, int prob_m, int prob_n, int prob_k,
+    // Quantization
+    int beta1, int beta2, const void *raw_in_order, const void *raw_dense_data,
+    // 32-bit
+    int row_offsets_len, void *row_offsets,
+    // 32-bit
+    void *col_vals, int nnz,
+    // 16-bit
+    // Input
+    void *X,
+    // Output
+    void *y,
+    // GPU meta
+    cudaStream_t stream = nullptr, void *measurements = nullptr,
+    uint32_t feature_flag = 0);
+
 int spqr_matvec(
     // W and meta
     int bits, int prob_m, int prob_n,
@@ -95,8 +113,31 @@ template <class Weight_t> struct Weights2D {
 
 #define UPDIV(X, Y) (((X) + (Y) - 1) / (Y))
 
+void torch_mul_timer_batched(const torch::Tensor &deq_w, const torch::Tensor &x,
+                     torch::Tensor &y, torch::Tensor &measurements) {
+  at::globalContext().setAllowFP16ReductionCuBLAS(false);
+  at::globalContext().setAllowTF32CuBLAS(false);
+
+  int dev = deq_w.get_device();
+  auto stream = at::cuda::getCurrentCUDAStream(dev);
+  float *measurements_ptr = reinterpret_cast<float *>(measurements.data_ptr());
+
+  Timer *timer = new Timer(stream); // NOLINT(*-use-auto)
+  timer->start();
+
+  torch::mm_out(y, deq_w, x);
+
+  measurements_ptr[0] = timer->end();
+  delete timer;
+}
+
 void torch_mul_timer(const torch::Tensor &deq_w, const torch::Tensor &x,
                      torch::Tensor &y, torch::Tensor &measurements) {
+  at::globalContext().setAllowFP16ReductionCuBLAS(false);
+  at::globalContext().setAllowTF32CuBLAS(false);
+
+
+
   int dev = deq_w.get_device();
   auto stream = at::cuda::getCurrentCUDAStream(dev);
   float *measurements_ptr = reinterpret_cast<float *>(measurements.data_ptr());
@@ -104,8 +145,7 @@ void torch_mul_timer(const torch::Tensor &deq_w, const torch::Tensor &x,
   Timer *timer = new Timer(stream);
   timer->start();
 
-  // Make sure that the compiler doesn't optimize this away
-  torch::mv_out(y, deq_w, x);
+  torch::mm_out(y, deq_w, x);
 
   measurements_ptr[0] = timer->end();
   delete timer;
@@ -196,6 +236,50 @@ void dequantize_compressed(int m, int n, int bits, int beta1, int beta2,
   for (int i = 0; i < m * n; i++) {
     deq_w[i] = __float2half_rn(deq_float32[i]);
   }
+}
+
+void spqr_mul_batched(int64_t m, int64_t n, int64_t k, int64_t bits, int64_t beta1, int64_t beta2,
+              const torch::Tensor &dense_weights,
+              const torch::Tensor &row_offsets,
+              const torch::Tensor &col_val_ptr, int64_t nnz,
+              const torch::Tensor &X, int64_t _feature_flag,
+              const torch::Tensor &Y, torch::Tensor &out) {
+  uint32_t feature_flag = static_cast<uint32_t>(_feature_flag);
+  int dev = dense_weights.get_device();
+
+  // Choose which algorithm to use
+  int row_offsets_len = row_offsets.sizes()[0];
+
+  // TODO: Propagate error one layer up.
+  int err =
+      spqr_matvec_batched(bits, m, n, k, beta1, beta2, nullptr, dense_weights.data_ptr(),
+                  row_offsets_len, row_offsets.data_ptr(),
+                  col_val_ptr.data_ptr(), nnz, X.data_ptr(), out.data_ptr(),
+                  at::cuda::getCurrentCUDAStream(dev), nullptr, feature_flag);
+}
+
+void spqr_mul_timer_batched(int m, int n, int k,
+                    // W and meta
+                    int bits,
+                    // Quantization
+                    int beta1, int beta2, const torch::Tensor &weights,
+                    // 16-bit
+                    const torch::Tensor &row_offsets,
+                    // 32-bit
+                    const torch::Tensor &col_val, int nnz,
+                    // 16-bit
+                    const torch::Tensor &X, torch::Tensor &Y,
+                    torch::Tensor &measurements, uint32_t feature_flag) {
+  int dev = weights.get_device();
+
+  // Choose which algorithm to use
+  int row_offsets_len = row_offsets.sizes()[0];
+
+  int err = spqr_matvec_batched(bits, m, n, k, beta1, beta2, nullptr, weights.data_ptr(),
+                        row_offsets_len, row_offsets.data_ptr(),
+                        col_val.data_ptr(), nnz, X.data_ptr(), Y.data_ptr(),
+                        at::cuda::getCurrentCUDAStream(dev),
+                        measurements.data_ptr(), feature_flag);
 }
 
 void spqr_mul_timer(int m, int n,
@@ -369,9 +453,12 @@ void spqr_mul_fused(int64_t m, int64_t n, int64_t bits, int64_t beta1,
 #ifndef PYBIND_SKIP
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("spqr_mul_timer", &spqr_mul_timer, "SPQR matvec.");
+  m.def("spqr_mul_timer_batched", &spqr_mul_timer_batched, "SPQR matvec.");
+  m.def("spqr_mul_batched", &spqr_mul_batched, "SPQR matvec.");
   m.def("dequantize_compressed", &dequantize_compressed,
         "SPQR dequantize compressed.");
   m.def("torch_mul_timer", &torch_mul_timer, "Torch matvec FP16 device.");
+  m.def("torch_mul_timer_batched", &torch_mul_timer_batched, "Torch matmul FP16 device.");
   m.def("tensor_compress_interleaved", &tensor_compress_interleaved,
         "Tensor compress.");
   m.def("spqr_mul", &spqr_mul, "SPQR matvec.");

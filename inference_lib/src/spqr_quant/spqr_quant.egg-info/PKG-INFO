@@ -1,6 +1,6 @@
 Metadata-Version: 2.1
 Name: spqr_quant
-Version: 0.1.0
+Version: 0.2.0
 Summary: Efficiently run models quantized with SPQR
 Home-page: https://github.com/Vahe1994/SPQR
 Author: Elvir Crncevic

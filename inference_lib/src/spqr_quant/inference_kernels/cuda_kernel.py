@@ -8,7 +8,7 @@ SPQR_CUDA = load(
     name="spqr_cuda",
     sources=[os.path.join(CUDA_FOLDER, "spqr_cuda.cpp"), os.path.join(CUDA_FOLDER, "spqr_cuda_kernel.cu")],
     extra_cflags=["-O3"],
-    extra_cuda_cflags=["-O3", "-arch=native"],
+    extra_cuda_cflags=["-O3 -arch=native -lineinfo"],
 )
 
 torch.library.define(
@@ -20,11 +20,23 @@ torch.library.define(
     "(int m, int n, int bits, int beta1, int beta2, Tensor dense_weights, Tensor row_offsets, Tensor col_vals, int nnz, Tensor x, int f, Tensor Y, Tensor(Y!) out) -> ()",
 )
 torch.library.define(
+    "spqr_cuda::spqr_mul_batched",
+    "(int m, int n, int k, int bits, int beta1, int beta2, Tensor dense_weights, Tensor row_offsets, Tensor col_vals, int nnz, Tensor x, int f, Tensor Y, Tensor(Y!) out) -> ()",
+)
+torch.library.define(
+    "spqr_cuda::spqr_mul_timer_batched",
+    "(int m, int n, int k, int bits, int beta1, int beta2, Tensor dense_weights, Tensor row_offsets, Tensor col_vals, int nnz, Tensor x, Tensor Y, Tensor measurements, int f) -> ()",
+)
+torch.library.define(
     "spqr_cuda::spqr_mul_timer",
     "(int m, int n, int bits, int beta1, int beta2, Tensor dense_weights, Tensor row_offsets, Tensor col_vals, int nnz, Tensor x, Tensor Y, Tensor measurements, int f) -> ()",
 )
 torch.library.define(
     "spqr_cuda::torch_mul_timer",
+    "(Tensor deq_w, Tensor x, Tensor y, Tensor measurements) -> ()",
+)
+torch.library.define(
+    "spqr_cuda::torch_mul_timer_batched",
     "(Tensor deq_w, Tensor x, Tensor y, Tensor measurements) -> ()",
 )
 torch.library.define(
@@ -37,9 +49,12 @@ torch.library.define(
 )
 
 torch.library.impl("spqr_cuda::torch_mul_timer", "default", SPQR_CUDA.torch_mul_timer)
+torch.library.impl("spqr_cuda::torch_mul_timer_batched", "default", SPQR_CUDA.torch_mul_timer_batched)
 torch.library.impl("spqr_cuda::tensor_compress_interleaved", "default", SPQR_CUDA.tensor_compress_interleaved)
 torch.library.impl("spqr_cuda::spqr_mul_timer", "default", SPQR_CUDA.spqr_mul_timer)
+torch.library.impl("spqr_cuda::spqr_mul_timer_batched", "default", SPQR_CUDA.spqr_mul_timer_batched)
 torch.library.impl("spqr_cuda::spqr_mul", "default", SPQR_CUDA.spqr_mul)
+torch.library.impl("spqr_cuda::spqr_mul_batched", "default", SPQR_CUDA.spqr_mul_batched)
 torch.library.impl("spqr_cuda::dequantize_compressed", "default", SPQR_CUDA.dequantize_compressed)
 torch.library.impl("spqr_cuda::spqr_mul_fused", "default", SPQR_CUDA.spqr_mul_fused)
 
@@ -48,8 +63,22 @@ def call_spqr_mul(*args):
     return torch.ops.spqr_cuda.spqr_mul(*args)
 
 
+def call_spqr_mul_batched(*args):
+    return torch.ops.spqr_cuda.spqr_mul_batched(*args)
+
+
+
+
 def call_spqr_mul_timer(*args):
     return torch.ops.spqr_cuda.spqr_mul_timer(*args)
+
+
+def call_spqr_mul_timer_batched(*args):
+    return torch.ops.spqr_cuda.spqr_mul_timer_batched(*args)
+
+
+def call_torch_mul_timer_batched(*args):
+    return torch.ops.spqr_cuda.torch_mul_timer_batched(*args)
 
 
 def call_torch_mul_timer(*args):
@@ -78,6 +107,16 @@ def spqr_mul_timer_meta(m, n, bits, beta1, beta2, dense_weights, row_offsets, co
     return
 
 
+@torch.library.register_fake("spqr_cuda::spqr_mul_timer_batched")
+def spqr_mul_timer_batched_meta(m, n, k, bits, beta1, beta2, dense_weights, row_offsets, col_vals, nnz, x, f, Y, out):
+    return
+
 @torch.library.register_fake("spqr_cuda::spqr_mul_fused")
 def spqr_mul_fused_meta(m, n, bits, beta1, beta2, in_perm, dense_weights, row_offsets, col_vals, nnz, x, f, Y, out):
+    return
+
+
+
+@torch.library.register_fake("spqr_cuda::spqr_mul_batched")
+def spqr_mul_batched_meta(m, n, k, bits, beta1, beta2, dense_weights, row_offsets, col_vals, nnz, x, f, Y, out):
     return
