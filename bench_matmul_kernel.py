@@ -196,7 +196,7 @@ if __name__ == "__main__":
         benchmark_results_ms = []
         benchmark_speed_up = []
 
-        for k in [2]:
+        for k in [2, 4, 8]:
             for layer_id in csr_folders:
                 folder = os.path.join(base_path, layer_id)
                 folder_ptcsr = os.path.join(base_path_modified_csr, layer_id)
