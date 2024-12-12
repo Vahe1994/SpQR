@@ -6,14 +6,19 @@ import numpy as np
 import torch
 from spqr_quant import QuantizedLinear
 from spqr_quant.inference import FeatureFlags, ModelArgs, SparseStorageConfiguration, SPQRLegacy, updiv
-from spqr_quant.inference_kernels.kernel_selector import get_spqr_mul, get_spqr_mul_fused, get_torch_mul_timer, \
-    get_spqr_mul_batched
+from spqr_quant.inference_kernels.kernel_selector import (
+    get_spqr_mul,
+    get_spqr_mul_batched,
+    get_spqr_mul_fused,
+    get_torch_mul_timer,
+)
 
 torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = False
 torch.backends.cuda.matmul.allow_tf32 = False
 torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = False
 torch.backends.cudnn.allow_tf32 = False
 torch.set_float32_matmul_precision("highest")
+
 
 def generate_x_fp32(n, upper_bound=2):
     x_fp32 = ((torch.rand(n) - 0.5) * 2 * upper_bound).int()
@@ -76,14 +81,14 @@ class MatrixBuilder:
 
 
 def create_spqr_quantized_matrix(
-        m: int,
-        n: int,
-        weight_init_strategy: int = None,
-        first_order_init_strategy: int = None,
-        second_order_init_strategy: torch.float16 = None,
-        density: float = 0.0,
-        sparse_storage: SparseStorageConfiguration = SparseStorageConfiguration.CSR,
-        in_perm=None,
+    m: int,
+    n: int,
+    weight_init_strategy: int = None,
+    first_order_init_strategy: int = None,
+    second_order_init_strategy: torch.float16 = None,
+    density: float = 0.0,
+    sparse_storage: SparseStorageConfiguration = SparseStorageConfiguration.CSR,
+    in_perm=None,
 ) -> Tuple[QuantizedLinear, QuantizedLinear]:
     beta1, beta2 = 16, 16
 
@@ -142,19 +147,19 @@ def create_random(m, n, density, sparse_storage: SparseStorageConfiguration = Sp
 
 
 def create_random_weights_ones(
-        m, n, density, sparse_storage: SparseStorageConfiguration = SparseStorageConfiguration.CSR
+    m, n, density, sparse_storage: SparseStorageConfiguration = SparseStorageConfiguration.CSR
 ):
     return create_spqr_quantized_matrix(m, n, 1, None, None, density, sparse_storage, None)
 
 
 def create_random_first_order_ones(
-        m, n, density, sparse_storage: SparseStorageConfiguration = SparseStorageConfiguration.CSR
+    m, n, density, sparse_storage: SparseStorageConfiguration = SparseStorageConfiguration.CSR
 ):
     return create_spqr_quantized_matrix(m, n, None, 1, None, density, sparse_storage, None)
 
 
 def create_random_second_order_ones(
-        m, n, density, sparse_storage: SparseStorageConfiguration = SparseStorageConfiguration.CSR
+    m, n, density, sparse_storage: SparseStorageConfiguration = SparseStorageConfiguration.CSR
 ):
     return create_spqr_quantized_matrix(m, n, None, None, 1, density, sparse_storage, None)
 
@@ -416,39 +421,40 @@ class TestSparseFp16BatchedRandom(unittest.TestCase):
         # Call this once just to trigger the annoying torch sparse warning.
         device = torch.device("cuda:0")
         for m in [16, 32, 64]:
-            for n in [16, 256, 4096, 11008, 2 ** 13, 2 ** 14, 2 ** 15]:
-                for k in [2, 4, 8]:
-                    for density in [0.01, 0.05]:
+            for n in [16, 256, 4096, 11008, 2**13, 2**14]:
+                for k in [1, 2, 4, 8]:
+                    for density in [0, 0.01, 0.05]:
                         for compression_strategy in [SparseStorageConfiguration.CSR, SparseStorageConfiguration.PTCSR]:
                             for generator_strategy in [
-                                'ones',
-                                'random',
+                                "ones",
+                                "random",
                             ]:
                                 for flag in [
                                     FeatureFlags.SPARSE_FUSED_FP32,
                                 ]:
                                     print(
-                                        f"Running m = {m} n = {n} k = {k} density = {density} storage = {compression_strategy} generator = {generator_strategy}")
+                                        f"Running m = {m} n = {n} k = {k} density = {density} storage = {compression_strategy} generator = {generator_strategy}"
+                                    )
 
                                     # Generate test case
                                     x_fp32 = generate_x_fp32(n * k)
-                                    if generator_strategy == 'ones':
+                                    if generator_strategy == "ones":
                                         x_fp32 = x_fp32 * 0 + 1
                                         spqr_module, spqr_module_device = create_ones(m, n)
                                     else:
                                         x_fp32 = x_fp32 * 0 + 1
-                                        spqr_module, spqr_module_device = create_random(m, n, density,
-                                                                                        compression_strategy)
+                                        spqr_module, spqr_module_device = create_random(
+                                            m, n, density, compression_strategy
+                                        )
                                     x_fp16_device = x_fp32.cuda(device=device).half()
                                     deq_w = spqr_module.dequantize().to(device)
-
-
 
                                     y_true = torch.matmul(deq_w, x_fp16_device.reshape((n, k))).flatten()
                                     y = torch.zeros(m * k, dtype=torch.half, device=device).contiguous().flatten()
 
-                                    _spqr_mul_batched(spqr_module_device,
-                                                      x_fp16_device.flatten().contiguous().flatten(), y, flag, k)
+                                    _spqr_mul_batched(
+                                        spqr_module_device, x_fp16_device.flatten().contiguous().flatten(), y, flag, k
+                                    )
 
                                     passed = torch.equal(y, y_true)
                                     print(y)

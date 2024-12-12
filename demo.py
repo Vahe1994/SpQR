@@ -1,12 +1,10 @@
-import torch
 import sys
 
+import torch
 
-
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     k = 2
-    device = 'cuda'
+    device = "cuda"
     for m in [4096]:
         for n in [4096]:
             for flag in [False, True]:
@@ -14,7 +12,6 @@ if __name__ == '__main__':
                 torch.backends.cudnn.allow_tf32 = flag
                 torch.backends.cuda.matmul.allow_tf32 = flag
                 torch.backends.cudnn.allow_tf32 = flag
-
 
                 d = torch.zeros((m, n), dtype=torch.float16, device=device)
                 x = torch.zeros((n, k), dtype=torch.float16, device=device)

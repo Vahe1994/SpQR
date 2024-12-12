@@ -1,14 +1,13 @@
 # /home/elvircrn/CLionProjects/cutlass/build/tools/profiler/cutlass_profiler --operation=Gemm --m=4096,11008 --n=4096,11008 --k=1,2,4,8 --A=f16:column --B=f16:row --C=f16:column --accum=f32 --profiling-iterations=2000 --stages=3 --warmup-iterations=100
 
 import argparse
+import io
 import os
 import time
 
 import numpy as np
-import torch
 import pandas as pd
-import io
-
+import torch
 
 torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = False
 torch.backends.cuda.matmul.allow_tf32 = False
@@ -20,10 +19,11 @@ torch.set_float32_matmul_precision("highest")
 from scipy.stats import gmean
 from spqr_quant import QuantizedLinear
 from spqr_quant.inference import FeatureFlags
-from spqr_quant.inference_kernels.kernel_selector import get_torch_mul_timer, \
-    get_torch_mul_timer_batched, get_spqr_mul_timer_batched
-
-
+from spqr_quant.inference_kernels.kernel_selector import (
+    get_spqr_mul_timer_batched,
+    get_torch_mul_timer,
+    get_torch_mul_timer_batched,
+)
 
 cutlass_str = """
 m,n,k,Runtime
@@ -51,9 +51,6 @@ m,n,k,Runtime
 
 cutlass_data = io.StringIO(cutlass_str)
 cutlass_runs = pd.read_csv(cutlass_data)
-
-
-
 
 
 def spqr_mul_timer(spqr_device: QuantizedLinear, x, feature_flag: FeatureFlags, num_runs, k):
@@ -119,6 +116,7 @@ def torch_mul_timer_runs(deq_w, x, num_runs, k):
             get_torch_mul_timer_batched()(deq_w, x, y, runs[i])
 
         return y, runs
+
 
 if __name__ == "__main__":
     torch_runs = {}
@@ -225,7 +223,9 @@ if __name__ == "__main__":
                     n = spqr_module.n
                     print(f"Running {m} x {n} x {k}")
 
-                    cutlass_run = cutlass_runs[(cutlass_runs['m'] == m) & (cutlass_runs['n'] == n) & (cutlass_runs['k'] == k)]['Runtime'].item()
+                    cutlass_run = cutlass_runs[
+                        (cutlass_runs["m"] == m) & (cutlass_runs["n"] == n) & (cutlass_runs["k"] == k)
+                    ]["Runtime"].item()
                     deq_w = spqr_module.dequantize()
 
                     spqr_module.to(device=device)
@@ -244,7 +244,6 @@ if __name__ == "__main__":
                     baseline_speed_up = 0
 
                     sparsity_perc = spqr_module_device.sparsity * 100
-
 
                     f.write(f"{layer_id};{p};{m};{n};{sparsity_perc:.3f};{cutlass_run:.4f}")
 

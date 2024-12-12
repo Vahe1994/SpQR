@@ -604,7 +604,11 @@ accumulate_batched(Vec<float, K> acc, u64 b, const half2 &ws2, const half2 &wz2,
       half2 w = dequantize2(w_q, ws2, wz2);
       float2 w_fp32 = __half22float2(w);
 
-      if constexpr (K == 2) {
+      if constexpr (K == 1) {
+        float2 x_fp32 = __half22float2(*(s_x2++));
+        acc[0] = fmaf(x_fp32.x, w_fp32.x, acc[0]);
+        acc[0] = fmaf(x_fp32.y, w_fp32.y, acc[0]);
+      } else if constexpr (K == 2) {
         Vec<half2, 2> x{.elems = {s_x2[0], s_x2[1]}};
         Vec<half2, 2> x_t = transpose_2x2(x);
         s_x2 += 2;
@@ -724,8 +728,6 @@ struct DenseMatrixRunner {
     }
   }
 };
-
-struct PagedXLoader {};
 
 template <class W_t, int X_LOAD_BLOCK_SIZE, int BLOCK_HEIGHT, int BLOCK_WIDTH,
           int HALF_WARP_SIZE, int THREAD_COUNT, int NUM_USEFUL_BITS, int OFFSET,
@@ -994,6 +996,7 @@ __global__ void spqr_quantized_matvec(
   }
 
   __syncthreads();
+
   auto other = __shfl_down_sync(HALF_MASK, acc, BETA1);
   acc = add_and_accum(other, acc);
 
@@ -1124,13 +1127,12 @@ __global__ void spqr_quantized_matvec_batched_v2(
     i = s + thread_xy;
   }
 
-  __syncthreads();
-
   const int total_x_fp32 = n * K / 2;
-  static constexpr int total_x_fp16_per_iteration = BETA1 * BLOCK_WIDTH * K;
-  static constexpr int total_x_fp32_per_iteration =
-      total_x_fp16_per_iteration / 2;
   int pipeline_stages = UPDIV(total_x_fp32, page_size_fp32);
+
+  if (!thread_xy && !blockIdx.x) {
+    printf("total_x_fp32 = %d page_size_fp32 = %d stages = %d\n", total_x_fp32, page_size_fp32, pipeline_stages);
+  }
 
   for (int pipeline_id{}; pipeline_id < pipeline_stages; pipeline_id++) {
     dense_matrix_runner.process_dense();
@@ -1150,12 +1152,19 @@ __global__ void spqr_quantized_matvec_batched_v2(
         auto v = colval.members.v;
         float v_fp32 = __half2float(v);
 
+        if constexpr (K == 1) {
+          half *s_x = reinterpret_cast<half *>(s_x2);
+          int idx = c - pipeline_id * page_size_fp32 * 2;
+          dense_matrix_runner.accs[0] +=
+              __half2float(v) * __half2float(s_x[idx]);
+        } else {
 #pragma loop unroll
-        for (int j = 0; j < K / 2; j++) {
-          int idx = c * K / 2 + j - pipeline_id * page_size_fp32;
-          float2 x2_fp32 = __half22float2(s_x2[idx]);
-          dense_matrix_runner.accs[2 * j] += v_fp32 * x2_fp32.x;
-          dense_matrix_runner.accs[2 * j + 1] += v_fp32 * x2_fp32.y;
+          for (int j = 0; j < K / 2; j++) {
+            int idx = c * K / 2 + j - pipeline_id * page_size_fp32;
+            float2 x2_fp32 = __half22float2(s_x2[idx]);
+            dense_matrix_runner.accs[2 * j] += v_fp32 * x2_fp32.x;
+            dense_matrix_runner.accs[2 * j + 1] += v_fp32 * x2_fp32.y;
+          }
         }
       }
     } else {
@@ -1175,42 +1184,70 @@ __global__ void spqr_quantized_matvec_batched_v2(
         auto v = colval.members.v;
         float v_fp32 = __half2float(v);
 
+        if constexpr (K == 1) {
+          half *s_x = reinterpret_cast<half *>(s_x2);
+          int idx = c - pipeline_id * page_size_fp32 * 2;
+          dense_matrix_runner.accs[0] +=
+              __half2float(v) * __half2float(s_x[idx]);
+        } else {
 #pragma loop unroll
-        for (int j = 0; j < K / 2; j++) {
-          int idx = c * K / 2 + j - pipeline_id * page_size_fp32;
-          float2 x2_fp32 = __half22float2(s_x2[idx]);
-          dense_matrix_runner.accs[2 * j] += v_fp32 * x2_fp32.x;
-          dense_matrix_runner.accs[2 * j + 1] += v_fp32 * x2_fp32.y;
+          for (int j = 0; j < K / 2; j++) {
+            int idx = c * K / 2 + j - pipeline_id * page_size_fp32;
+            float2 x2_fp32 = __half22float2(s_x2[idx]);
+            dense_matrix_runner.accs[2 * j] += v_fp32 * x2_fp32.x;
+            dense_matrix_runner.accs[2 * j + 1] += v_fp32 * x2_fp32.y;
+          }
         }
       }
     }
 
     __syncthreads();
   }
+  if constexpr (K == 1) {
+    auto other = __shfl_down_sync(HALF_MASK, dense_matrix_runner.accs[0], BETA1);
+    dense_matrix_runner.accs[0] = add_and_accum(other, dense_matrix_runner.accs[0]);
 
-  for (int i = 0; i < K; i++) {
-    auto *s_fp32_buff =
-        reinterpret_cast<float *>(s_x2 + (threadIdx.y + i) * K * BETA1);
-    float acc = dense_matrix_runner.accs[i];
-    auto other = __shfl_down_sync(HALF_MASK, acc, BETA1);
-    acc = add_and_accum(other, acc);
+    auto *s_fp32_buff = reinterpret_cast<float *>(s_x2);
+
 
     u32 subwarp_id = threadIdx.x / WARP_SIZE;
     if (subwarp_id >= 1 && threadIdx.x % WARP_SIZE < BETA1) {
-      s_fp32_buff[(subwarp_id - 1) * BETA1 + threadIdx.x % WARP_SIZE] = acc;
+      s_fp32_buff[(subwarp_id - 1) * BETA1 + threadIdx.x % WARP_SIZE] = dense_matrix_runner.accs[0];
     }
 
     __syncthreads();
 
-    if constexpr (THREAD_COUNT > BETA1) {
-      if (!subtile_id && threadIdx.x < BETA1) {
-        for (int j = 0; j < WARP_COUNT - 1; j++) {
-          acc += s_fp32_buff[j * BETA1 + threadIdx.x];
-        }
+    if (!subtile_id && threadIdx.x < BETA1) {
+      for (int i = 0; i < WARP_COUNT - 1; i++) {
+        dense_matrix_runner.accs[0] += s_fp32_buff[i * BETA1 + threadIdx.x];
       }
     }
 
-    dense_matrix_runner.accs[i] = acc;
+  } else {
+    for (int i = 0; i < K; i++) {
+      auto *s_fp32_buff =
+          reinterpret_cast<float *>(s_x2 + (threadIdx.y + i) * K * BETA1);
+      float acc = dense_matrix_runner.accs[i];
+      auto other = __shfl_down_sync(HALF_MASK, acc, BETA1);
+      acc = add_and_accum(other, acc);
+
+      u32 subwarp_id = threadIdx.x / WARP_SIZE;
+      if (subwarp_id >= 1 && threadIdx.x % WARP_SIZE < BETA1) {
+        s_fp32_buff[(subwarp_id - 1) * BETA1 + threadIdx.x % WARP_SIZE] = acc;
+      }
+
+      __syncthreads();
+
+      if constexpr (THREAD_COUNT > BETA1) {
+        if (!subtile_id && threadIdx.x < BETA1) {
+          for (int j = 0; j < WARP_COUNT - 1; j++) {
+            acc += s_fp32_buff[j * BETA1 + threadIdx.x];
+          }
+        }
+      }
+
+      dense_matrix_runner.accs[i] = acc;
+    }
   }
 
   if (threadIdx.x < BETA1) {
@@ -1355,6 +1392,8 @@ int spqr_matvec(
   return ret;
 }
 
+#define CALL_MATVEC_V2
+
 #define CALL_BATCHED_K(K)                                                      \
   if (is_csr) {                                                                \
     if (n >= 256) {                                                            \
@@ -1403,7 +1442,25 @@ int spqr_matvec_batched(
   bool needs_fusion = order_ptr == nullptr;
 
 
-  if (k == 2) {
+  if (k == 1) {
+    // if (n <= 11008) {
+      if (is_csr) {
+        if (n >= 256) {
+          CALL_MATVEC(spqr_quantized_matvec, 1, 16, 1, true);
+        } else {
+          CALL_MATVEC(spqr_quantized_matvec, 1, 1, 1, true);
+        }
+      } else {
+        if (n >= 256) {
+          CALL_MATVEC(spqr_quantized_matvec, 1, 16, 1, false);
+        } else {
+          CALL_MATVEC(spqr_quantized_matvec, 1, 1, 1, false);
+        }
+      }
+    // } else {
+      // CALL_BATCHED_K(1)
+    // }
+  } else if (k == 2) {
     CALL_BATCHED_K(2)
   } else if (k == 4) {
     CALL_BATCHED_K(4)

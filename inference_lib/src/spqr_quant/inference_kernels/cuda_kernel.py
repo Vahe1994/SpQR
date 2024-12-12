@@ -67,8 +67,6 @@ def call_spqr_mul_batched(*args):
     return torch.ops.spqr_cuda.spqr_mul_batched(*args)
 
 
-
-
 def call_spqr_mul_timer(*args):
     return torch.ops.spqr_cuda.spqr_mul_timer(*args)
 
@@ -111,10 +109,10 @@ def spqr_mul_timer_meta(m, n, bits, beta1, beta2, dense_weights, row_offsets, co
 def spqr_mul_timer_batched_meta(m, n, k, bits, beta1, beta2, dense_weights, row_offsets, col_vals, nnz, x, f, Y, out):
     return
 
+
 @torch.library.register_fake("spqr_cuda::spqr_mul_fused")
 def spqr_mul_fused_meta(m, n, bits, beta1, beta2, in_perm, dense_weights, row_offsets, col_vals, nnz, x, f, Y, out):
     return
-
 
 
 @torch.library.register_fake("spqr_cuda::spqr_mul_batched")
