@@ -194,19 +194,19 @@ if __name__ == "__main__":
         benchmark_results_ms = []
         benchmark_speed_up = []
 
-        for k in [2, 4, 8]:
-            for layer_id in csr_folders:
-                folder = os.path.join(base_path, layer_id)
-                folder_ptcsr = os.path.join(base_path_modified_csr, layer_id)
+        for layer_id in csr_folders:
+            folder = os.path.join(base_path, layer_id)
+            folder_ptcsr = os.path.join(base_path_modified_csr, layer_id)
 
-                if run_ptcsr:
-                    folders_modified_csr = os.path.join(base_path_modified_csr, layer_id)
-                else:
-                    folders_modified_csr = os.path.join(base_path, layer_id)
-                if not os.path.isdir(folder):
-                    continue
+            if run_ptcsr:
+                folders_modified_csr = os.path.join(base_path_modified_csr, layer_id)
+            else:
+                folders_modified_csr = os.path.join(base_path, layer_id)
+            if not os.path.isdir(folder):
+                continue
 
-                for p, p_modified_csr in zip(os.listdir(folder), os.listdir(folder_ptcsr)):
+            for p, p_modified_csr in zip(os.listdir(folder), os.listdir(folder_ptcsr)):
+                for k in [1, 2, 4, 8]:
                     tensor_path = os.path.join(folder, p)
                     tensor_path_modified_csr = os.path.join(folder_ptcsr, p_modified_csr)
 
@@ -291,10 +291,10 @@ if __name__ == "__main__":
                     f.flush()
                     print("\n\n")
 
-                print(f"Total benchmark geomean = {gmean(benchmark_results_ms)}")
-                print(f"Total benchmark speed-up geomean = {gmean(benchmark_speed_up)}")
+            print(f"Total benchmark geomean = {gmean(benchmark_results_ms)}")
+            print(f"Total benchmark speed-up geomean = {gmean(benchmark_speed_up)}")
 
-                print(f"Total benchmark mean = {np.array(benchmark_results_ms).mean()}")
-                print(f"Total benchmark speed-up mean= {np.array(benchmark_speed_up).mean()}")
+            print(f"Total benchmark mean = {np.array(benchmark_results_ms).mean()}")
+            print(f"Total benchmark speed-up mean= {np.array(benchmark_speed_up).mean()}")
 
-                print("\n\n")
+            print("\n\n")

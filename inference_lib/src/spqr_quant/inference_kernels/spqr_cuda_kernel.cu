@@ -268,7 +268,7 @@ DEVICE_INLINE half get_val(u32 m) {
   int max_shared_mem_per_block;                                                \
   cudaDeviceGetAttribute(&max_shared_mem_per_block,                            \
                          cudaDevAttrMaxSharedMemoryPerBlock, device);          \
-  static constexpr float COMPACTION = 0.95;                                    \
+  static constexpr float COMPACTION = 0.98;                                    \
   max_shared_mem_per_block /= 4;                                               \
   max_shared_mem_per_block *= COMPACTION;                                      \
   u32 num_fp32_per_iteration = (_BLOCK_WIDTH * 16 * K / 2);                    \
