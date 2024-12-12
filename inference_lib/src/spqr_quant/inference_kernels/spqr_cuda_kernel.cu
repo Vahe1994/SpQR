@@ -1130,10 +1130,6 @@ __global__ void spqr_quantized_matvec_batched_v2(
   const int total_x_fp32 = n * K / 2;
   int pipeline_stages = UPDIV(total_x_fp32, page_size_fp32);
 
-  if (!thread_xy && !blockIdx.x) {
-    printf("total_x_fp32 = %d page_size_fp32 = %d stages = %d\n", total_x_fp32, page_size_fp32, pipeline_stages);
-  }
-
   for (int pipeline_id{}; pipeline_id < pipeline_stages; pipeline_id++) {
     dense_matrix_runner.process_dense();
 
@@ -1204,15 +1200,17 @@ __global__ void spqr_quantized_matvec_batched_v2(
     __syncthreads();
   }
   if constexpr (K == 1) {
-    auto other = __shfl_down_sync(HALF_MASK, dense_matrix_runner.accs[0], BETA1);
-    dense_matrix_runner.accs[0] = add_and_accum(other, dense_matrix_runner.accs[0]);
+    auto other =
+        __shfl_down_sync(HALF_MASK, dense_matrix_runner.accs[0], BETA1);
+    dense_matrix_runner.accs[0] =
+        add_and_accum(other, dense_matrix_runner.accs[0]);
 
     auto *s_fp32_buff = reinterpret_cast<float *>(s_x2);
 
-
     u32 subwarp_id = threadIdx.x / WARP_SIZE;
     if (subwarp_id >= 1 && threadIdx.x % WARP_SIZE < BETA1) {
-      s_fp32_buff[(subwarp_id - 1) * BETA1 + threadIdx.x % WARP_SIZE] = dense_matrix_runner.accs[0];
+      s_fp32_buff[(subwarp_id - 1) * BETA1 + threadIdx.x % WARP_SIZE] =
+          dense_matrix_runner.accs[0];
     }
 
     __syncthreads();
@@ -1443,23 +1441,19 @@ int spqr_matvec_batched(
 
 
   if (k == 1) {
-    // if (n <= 11008) {
-      if (is_csr) {
-        if (n >= 256) {
-          CALL_MATVEC(spqr_quantized_matvec, 1, 16, 1, true);
-        } else {
-          CALL_MATVEC(spqr_quantized_matvec, 1, 1, 1, true);
-        }
+    if (is_csr) {
+      if (n >= 256) {
+        CALL_MATVEC(spqr_quantized_matvec, 1, 16, 1, true);
       } else {
-        if (n >= 256) {
-          CALL_MATVEC(spqr_quantized_matvec, 1, 16, 1, false);
-        } else {
-          CALL_MATVEC(spqr_quantized_matvec, 1, 1, 1, false);
-        }
+        CALL_MATVEC(spqr_quantized_matvec, 1, 1, 1, true);
       }
-    // } else {
-      // CALL_BATCHED_K(1)
-    // }
+    } else {
+      if (n >= 256) {
+        CALL_MATVEC(spqr_quantized_matvec, 1, 16, 1, false);
+      } else {
+        CALL_MATVEC(spqr_quantized_matvec, 1, 1, 1, false);
+      }
+    }
   } else if (k == 2) {
     CALL_BATCHED_K(2)
   } else if (k == 4) {
