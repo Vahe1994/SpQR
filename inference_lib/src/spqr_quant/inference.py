@@ -22,7 +22,7 @@ from .inference_kernels.cuda_kernel import (
     call_dequantize_compressed,
     call_spqr_mul,
     call_spqr_mul_fused,
-    call_tensor_compress_interleaved,
+    call_tensor_compress_interleaved, call_spqr_mul_batched,
 )
 from .sparse_util import init_ptcsr, merge_col_val
 
@@ -308,6 +308,7 @@ class QuantizedLinear(torch.nn.Module):
         else:
             y = torch.empty((1, inner_dim, self.m), dtype=torch.float16, device=self.dense_weights.device)
 
+        k = inner_dim
         for i in range(inner_dim):
             if inner_dim != 1:
                 _x = x[..., i, :].flatten()
@@ -315,39 +316,23 @@ class QuantizedLinear(torch.nn.Module):
             else:
                 _x = x.view(-1)
                 _y = y
-            if self.should_reorder():
-                call_spqr_mul_fused(
-                    self.m,
-                    self.n,
-                    self.bits,
-                    self.beta1,
-                    self.beta2,
-                    self.in_perm,
-                    self.dense_weights,
-                    self.row_offsets,
-                    self.col_vals,
-                    self.nnz,
-                    _x,
-                    int(FeatureFlags.SPARSE_FUSED_FP32),
-                    _y,
-                    _y,
-                )
-            else:
-                call_spqr_mul(
-                    self.m,
-                    self.n,
-                    self.bits,
-                    self.beta1,
-                    self.beta2,
-                    self.dense_weights,
-                    self.row_offsets,
-                    self.col_vals,
-                    self.nnz,
-                    _x,
-                    int(FeatureFlags.SPARSE_FUSED_FP32),
-                    _y,
-                    _y,
-                )
+            call_spqr_mul_batched(
+                self.m,
+                self.n,
+                k,
+                self.bits,
+                self.beta1,
+                self.beta2,
+                self.in_perm,
+                self.dense_weights,
+                self.row_offsets,
+                self.col_vals,
+                self.nnz,
+                _x,
+                int(FeatureFlags.SPARSE_FUSED_FP32),
+                _y,
+                _y,
+            )
 
         return y.reshape((1, inner_dim, self.m))
 

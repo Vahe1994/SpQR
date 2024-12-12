@@ -94,7 +94,6 @@ def call_dequantize_compressed(*args):
 def call_spqr_mul_fused(*args):
     return torch.ops.spqr_cuda.spqr_mul_fused(*args)
 
-
 @torch.library.register_fake("spqr_cuda::spqr_mul")
 def spqr_mul_meta(m, n, bits, beta1, beta2, dense_weights, row_offsets, col_vals, nnz, x, f, Y, out):
     return
