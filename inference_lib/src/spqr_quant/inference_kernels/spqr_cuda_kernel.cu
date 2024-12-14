@@ -141,7 +141,8 @@ DEVICE_INLINE Vec<half2, 2> transpose_4x4(const Vec<half2, 2> &a) {
 // changes:
 // https://github.com/NVIDIA/FasterTransformer/blob/main/src/fastertransformer/cutlass_extensions/include/cutlass_extensions/interleaved_numeric_conversion.h
 __device__ __forceinline__ half2 dequant2(int q) {
-  return INT2_TO_HALF2(q);
+  return dequant(q).elems[0];
+  // return INT2_TO_HALF2(q);
   // q = (q & 0b111) | ((q & 0b111000) << 13);
   // const int LO = 0x000f000f;
   // const int EX = 0x64006400;
@@ -228,7 +229,7 @@ DEVICE_INLINE half get_val(u32 m) {
 #define CALL_FUSED(F, _BLOCK_HEIGHT, _BLOCK_WIDTH, PIPELINE_DEPTH, IS_CSR)     \
   constexpr int BLOCK_HEIGHT = _BLOCK_HEIGHT;                                  \
   constexpr int BLOCK_WIDTH = _BLOCK_WIDTH;                                    \
-  size_t smem_size = max(4096 * sizeof(half2), sizeof(half2) * n / 2);         \
+  size_t smem_size = __max(4096 * sizeof(half2), sizeof(half2) * n / 2);       \
   F<3, 16, 16, BLOCK_HEIGHT, BLOCK_WIDTH, u64, PIPELINE_DEPTH, IS_CSR>         \
       <<<dim3(updiv(m, 16 * BLOCK_HEIGHT), 1, 1),                              \
          dim3(__min(updiv(n, 16), BLOCK_WIDTH) * 16,                           \
@@ -239,7 +240,7 @@ DEVICE_INLINE half get_val(u32 m) {
 #define CALL_MATVEC(F, _BLOCK_HEIGHT, _BLOCK_WIDTH, PIPELINE_DEPTH, IS_CSR)    \
   constexpr int BLOCK_HEIGHT = _BLOCK_HEIGHT;                                  \
   constexpr int BLOCK_WIDTH = _BLOCK_WIDTH;                                    \
-  size_t smem_size = max(4096 * sizeof(half2), sizeof(half2) * n / 2);         \
+  size_t smem_size = __max(4096 * sizeof(half2), sizeof(half2) * n / 2);       \
   F<3, 16, 16, BLOCK_HEIGHT, BLOCK_WIDTH, u64, PIPELINE_DEPTH, IS_CSR>         \
       <<<dim3(updiv(m, 16 * BLOCK_HEIGHT), 1, 1),                              \
          dim3(__min(updiv(n, 16), BLOCK_WIDTH) * 16,                           \
@@ -263,18 +264,7 @@ DEVICE_INLINE half get_val(u32 m) {
                         IS_CSR, K)                                             \
   constexpr int BLOCK_HEIGHT = _BLOCK_HEIGHT;                                  \
   constexpr int BLOCK_WIDTH = _BLOCK_WIDTH;                                    \
-  int device;                                                                  \
-  cudaGetDevice(&device);                                                      \
-  int max_shared_mem_per_block;                                                \
-  cudaDeviceGetAttribute(&max_shared_mem_per_block,                            \
-                         cudaDevAttrMaxSharedMemoryPerBlock, device);          \
-  static constexpr float COMPACTION = 0.98;                                    \
-  max_shared_mem_per_block /= 4;                                               \
-  max_shared_mem_per_block *= COMPACTION;                                      \
-  u32 num_fp32_per_iteration = (_BLOCK_WIDTH * 16 * K / 2);                    \
-  const int page_size_fp32 = int(float(float(max_shared_mem_per_block) /       \
-                                       float(num_fp32_per_iteration))) *       \
-                             num_fp32_per_iteration;                           \
+  const int page_size_fp32 = 4096;                                             \
   F<3, 16, 16, BLOCK_HEIGHT, BLOCK_WIDTH, u64, PIPELINE_DEPTH, IS_CSR, K>      \
       <<<dim3(updiv(m, 16 * BLOCK_HEIGHT), 1, 1),                              \
          dim3(__min(updiv(n, 16), BLOCK_WIDTH) * 16,                           \
@@ -288,6 +278,13 @@ static constexpr u32 SHARED_OFFSET = 32;
 // Wait until at most `n` async copy stages are still pending.
 template <int n> DEVICE_INLINE void cp_async_wait() {
   asm volatile("cp.async.wait_group %0;\n" ::"n"(n));
+}
+
+DEVICE_INLINE void cp_async(half2 *__restrict__ dst,
+                            const half2 *__restrict__ src) {
+  u32 s_dst = u32(__cvta_generic_to_shared(dst));
+  asm volatile("cp.async.ca.shared.global [%0], [%1], 4;\n" ::"r"(s_dst),
+               "l"(src));
 }
 
 DEVICE_INLINE void cp_async_wait_all() { asm volatile("cp.async.wait_all;\n"); }
@@ -608,41 +605,7 @@ accumulate_batched(Vec<float, K> acc, u64 b, const half2 &ws2, const half2 &wz2,
         float2 x_fp32 = __half22float2(*(s_x2++));
         acc[0] = fmaf(x_fp32.x, w_fp32.x, acc[0]);
         acc[0] = fmaf(x_fp32.y, w_fp32.y, acc[0]);
-      } else if constexpr (K == 2) {
-        Vec<half2, 2> x{.elems = {s_x2[0], s_x2[1]}};
-        Vec<half2, 2> x_t = transpose_2x2(x);
-        s_x2 += 2;
-#pragma loop unroll
-        for (int k = 0; k < K; k++) {
-          float2 x_fp32 = __half22float2(x_t[k]);
-          acc[k] = fmaf(x_fp32.x, w_fp32.x, acc[k]);
-          acc[k] = fmaf(x_fp32.y, w_fp32.y, acc[k]);
-        }
-      } else if (K == 4) {
-        {
-          Vec<half2, 2> x{.elems = {s_x2[0], s_x2[2]}};
-          Vec<half2, 2> x_t = transpose_2x2(x);
-#pragma loop unroll
-          for (int k = 0; k < 2; k++) {
-            float2 x_fp32 = __half22float2(x_t[k]);
-            acc[k] = fmaf(x_fp32.x, w_fp32.x, acc[k]);
-            acc[k] = fmaf(x_fp32.y, w_fp32.y, acc[k]);
-          }
-        }
-
-        {
-          Vec<half2, 2> x{.elems = {s_x2[1], s_x2[3]}};
-          Vec<half2, 2> x_t = transpose_2x2(x);
-#pragma loop unroll
-          for (int k = 0; k < 2; k++) {
-            float2 x_fp32 = __half22float2(x_t[k]);
-            acc[k + 2] = fmaf(x_fp32.x, w_fp32.x, acc[k + 2]);
-            acc[k + 2] = fmaf(x_fp32.y, w_fp32.y, acc[k + 2]);
-          }
-        }
-
-        s_x2 += 4;
-      } else if (K == 8) {
+      } else {
 #pragma loop unroll
         for (int l = 0; l < K / 2; l++) {
           Vec<half2, 2> x{.elems = {s_x2[l], s_x2[l + K / 2]}};
@@ -742,7 +705,7 @@ struct DenseMatrixRunnerBatched {
   u32 num_tiles_per_row;
   u32 subtile_id;
 
-  u32 page_size_fp32;
+  int page_size_fp32;
 
   Vec<float, K> accs{};
   u32 pipeline_id{};
@@ -779,6 +742,8 @@ struct DenseMatrixRunnerBatched {
     static constexpr int total_x_fp16_per_iteration = BETA1 * BLOCK_WIDTH * K;
     static constexpr int total_x_fp32_per_iteration =
         total_x_fp16_per_iteration / 2;
+    static constexpr int total_x_fp128_per_iteration =
+        total_x_fp32_per_iteration / 4;
 
 #if 0
     if (!thread_xy && !blockIdx.x)
@@ -817,16 +782,11 @@ struct DenseMatrixRunnerBatched {
     auto s_x2_ = s_x2;
 
     int sx2_count_local{};
+
     for (; sx2_count < total_x_fp32 && sx2_count_local < page_size_fp32;) {
-#if 0
-    printf("page_size_fp32 = %d\n", page_size_fp32);
-      if (!thread_xy && !blockIdx.x) {
-        printf("smem_size = %d per_page = %d sx2_count = %d\n", smem_size,
-               page_size_fp32, sx2_count);
-      }
-#endif
       for (int i = thread_xy;
            i < total_x_fp32_per_iteration && it < total_x_fp32;) {
+//        cp_async(s_x2 + i, x2 + it);
         s_x2_[i] = x2[it];
         it += THREAD_COUNT;
         i += THREAD_COUNT;
@@ -848,7 +808,9 @@ struct DenseMatrixRunnerBatched {
       half2 ws2 = __half2half2(first_order_dequantized.x);
       half2 wz2 = __half2half2(first_order_dequantized.y);
 
-      __syncthreads();
+      // cp_async_wait_all();
+      // asm volatile("cp.async.wait_all;\n" ::);
+       __syncthreads();
 
       accs = accumulate_batched<K>(accs, v, ws2, wz2,
                                    s_x2_ + subtile_id * (BETA2 * K / 2));
@@ -1224,14 +1186,16 @@ __global__ void spqr_quantized_matvec_batched_v2(
   } else {
     for (int i = 0; i < K; i++) {
       auto *s_fp32_buff =
-          reinterpret_cast<float *>(s_x2 + (threadIdx.y + i) * K * BETA1);
+          reinterpret_cast<float *>(s_x2 + threadIdx.y * K * BETA1);
       float acc = dense_matrix_runner.accs[i];
       auto other = __shfl_down_sync(HALF_MASK, acc, BETA1);
       acc = add_and_accum(other, acc);
 
       u32 subwarp_id = threadIdx.x / WARP_SIZE;
-      if (subwarp_id >= 1 && threadIdx.x % WARP_SIZE < BETA1) {
-        s_fp32_buff[(subwarp_id - 1) * BETA1 + threadIdx.x % WARP_SIZE] = acc;
+      u32 lane_id = threadIdx.x & 0x1f;
+
+      if (subwarp_id >= 1 && lane_id < BETA1) {
+        s_fp32_buff[(subwarp_id - 1) * WARP_SIZE + lane_id] = acc;
       }
 
       __syncthreads();
@@ -1239,7 +1203,7 @@ __global__ void spqr_quantized_matvec_batched_v2(
       if constexpr (THREAD_COUNT > BETA1) {
         if (!subtile_id && threadIdx.x < BETA1) {
           for (int j = 0; j < WARP_COUNT - 1; j++) {
-            acc += s_fp32_buff[j * BETA1 + threadIdx.x];
+            acc += s_fp32_buff[j * WARP_SIZE + threadIdx.x];
           }
         }
       }
@@ -1257,10 +1221,13 @@ __global__ void spqr_quantized_matvec_batched_v2(
   }
 }
 
-template <class T> const T &__min(const T &a, const T &b) {
+template <class T> __device__ __host__ const T &__min(const T &a, const T &b) {
   return (b < a) ? b : a;
 }
 
+template <class T> __device__ __host__ const T &__max(const T &a, const T &b) {
+  return (b < a) ? a : b;
+}
 union Features {
   uint32_t _;
 
@@ -1395,13 +1362,15 @@ int spqr_matvec(
 #define CALL_BATCHED_K(K)                                                      \
   if (is_csr) {                                                                \
     if (n >= 256) {                                                            \
-      CALL_BATCHED_V2(spqr_quantized_matvec_batched_v2, 1, 16, 1, true, K);    \
+      CALL_BATCHED_V2(spqr_quantized_matvec_batched_v2, 1, TILE_COUNT, 1,      \
+                      true, K);                                                \
     } else {                                                                   \
       CALL_BATCHED_V2(spqr_quantized_matvec_batched_v2, 1, 1, 1, true, K);     \
     }                                                                          \
   } else {                                                                     \
     if (n >= 256) {                                                            \
-      CALL_BATCHED_V2(spqr_quantized_matvec_batched_v2, 1, 16, 1, false, K);   \
+      CALL_BATCHED_V2(spqr_quantized_matvec_batched_v2, 1, TILE_COUNT, 1,      \
+                      false, K);                                               \
     } else {                                                                   \
       CALL_BATCHED_V2(spqr_quantized_matvec_batched_v2, 1, 1, 1, false, K);    \
     }                                                                          \
@@ -1439,17 +1408,18 @@ int spqr_matvec_batched(
 
   bool needs_fusion = order_ptr == nullptr;
 
+  static constexpr int TILE_COUNT = 16;
 
   if (k == 1) {
     if (is_csr) {
       if (n >= 256) {
-        CALL_MATVEC(spqr_quantized_matvec, 1, 16, 1, true);
+        CALL_MATVEC(spqr_quantized_matvec, 1, TILE_COUNT, 1, true);
       } else {
         CALL_MATVEC(spqr_quantized_matvec, 1, 1, 1, true);
       }
     } else {
       if (n >= 256) {
-        CALL_MATVEC(spqr_quantized_matvec, 1, 16, 1, false);
+        CALL_MATVEC(spqr_quantized_matvec, 1, TILE_COUNT, 1, false);
       } else {
         CALL_MATVEC(spqr_quantized_matvec, 1, 1, 1, false);
       }
