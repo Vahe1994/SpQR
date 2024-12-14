@@ -420,9 +420,9 @@ class TestSparseFp16BatchedRandom(unittest.TestCase):
         print("")
         # Call this once just to trigger the annoying torch sparse warning.
         device = torch.device("cuda:0")
-        for m in [16, 32, 64]:
-            for n in [16, 32, 64, 2 ** 10, 2 ** 11, 2 ** 12, 2 ** 13]:
-                for k in [1, 2, 4, 8]:
+        for m in [16]:
+            for n in [16, 32, 64, 128, 256, 512, 2 ** 10, 2 ** 11, 2 ** 12, 2 ** 13]:
+                for k in [1, 2, 4, 8]: #, 2, 4, 8]:
                     for density in [0, 0.01, 0.05]:
                         for compression_strategy in [SparseStorageConfiguration.CSR, SparseStorageConfiguration.PTCSR]:
                             for generator_strategy in [

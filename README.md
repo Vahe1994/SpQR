@@ -137,7 +137,7 @@ Performance and runtime notes:
 
 This repository also contains an efficient CUDA kernel implementation of the 
 SpQR matvec. The file `inference_demo.py` h orcontains a demo of this functionality 
-by running end-to-end model inference. Below is an example of how to launch it.
+by running end-to-end model inference. Below is an example of how to launch global_x_fp32_loaded_base_id.
 
 ```bash
 usage: inference_demo.py [-h] [--pretrained_model_path PRETRAINED_MODEL_PATH] [--compressed_model_path COMPRESSED_MODEL_PATH] --execution_mode {0,1}

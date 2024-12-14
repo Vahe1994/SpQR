@@ -602,6 +602,7 @@ accumulate_batched(Vec<float, K> acc, u64 b, const half2 &ws2, const half2 &wz2,
       float2 w_fp32 = __half22float2(w);
 
       if constexpr (K == 1) {
+        // printf("%f %f\n", __half2float(s_x2[0].x), __half2float(s_x2[1].y));
         float2 x_fp32 = __half22float2(*(s_x2++));
         acc[0] = fmaf(x_fp32.x, w_fp32.x, acc[0]);
         acc[0] = fmaf(x_fp32.y, w_fp32.y, acc[0]);
@@ -702,19 +703,17 @@ struct DenseMatrixRunnerBatched {
   const half2 *__restrict__ x2;
   half2 *s_x2;
   u32 row_pos;
-  u32 num_tiles_per_row;
   u32 subtile_id;
 
   int page_size_fp32;
 
   Vec<float, K> accs{};
-  u32 pipeline_id{};
-  u32 it;
-  int sx2_count{};
+  u32 global_x_fp32_loaded_base_id;
+  int global_x_fp16_computed_count;
 
   DEVICE_INLINE void init() {
-    it = thread_xy;
-    sx2_count = 0;
+    global_x_fp32_loaded_base_id = 0;
+    global_x_fp16_computed_count = subtile_id * BETA1 * K;
   }
 
   DEVICE_INLINE void process_dense() {
@@ -737,13 +736,10 @@ struct DenseMatrixRunnerBatched {
 
     // We will end up loading this many FP16s while reading X during a single
     // iteration.
-    const int total_x_fp16 = n * K;
     const int total_x_fp32 = n * K / 2;
     static constexpr int total_x_fp16_per_iteration = BETA1 * BLOCK_WIDTH * K;
-    static constexpr int total_x_fp32_per_iteration =
-        total_x_fp16_per_iteration / 2;
-    static constexpr int total_x_fp128_per_iteration =
-        total_x_fp32_per_iteration / 4;
+    static constexpr int total_x_fp32_load_per_iteration = total_x_fp16_per_iteration / 2;
+    static constexpr int total_x_fp128_per_iteration = total_x_fp32_load_per_iteration / 4;
 
 #if 0
     if (!thread_xy && !blockIdx.x)
@@ -779,16 +775,18 @@ struct DenseMatrixRunnerBatched {
     // Therefore, we will page the loads of X, loading fp32s_per_page
     // per iteration.
 
-    auto s_x2_ = s_x2;
+    auto s_x2_load = s_x2;
+    auto s_x2_compute = s_x2;
 
-    int sx2_count_local{};
+    int local_x_fp32_loaded_base_id{};
+    int local_x_fp16_computed_count = subtile_id * BETA1 * K;
 
-    for (; sx2_count < total_x_fp32 && sx2_count_local < page_size_fp32;) {
+    for (;;) {
       for (int i = thread_xy;
-           i < total_x_fp32_per_iteration && it < total_x_fp32;) {
-//        cp_async(s_x2 + i, x2 + it);
-        s_x2_[i] = x2[it];
-        it += THREAD_COUNT;
+           i < total_x_fp32_load_per_iteration &&
+           global_x_fp32_loaded_base_id + i < total_x_fp32;) {
+        s_x2_load[i] = x2[global_x_fp32_loaded_base_id + i];
+
         i += THREAD_COUNT;
       }
 
@@ -808,19 +806,52 @@ struct DenseMatrixRunnerBatched {
       half2 ws2 = __half2half2(first_order_dequantized.x);
       half2 wz2 = __half2half2(first_order_dequantized.y);
 
-      // cp_async_wait_all();
-      // asm volatile("cp.async.wait_all;\n" ::);
-       __syncthreads();
+      __syncthreads();
 
       accs = accumulate_batched<K>(accs, v, ws2, wz2,
-                                   s_x2_ + subtile_id * (BETA2 * K / 2));
+                                   s_x2_compute + subtile_id * (BETA2 * K / 2));
 
       local_raw_data += NUM_SPQR_TILES_PER_ITERATION * BETA1;
 
-      s_x2_ += total_x_fp32_per_iteration;
+      s_x2_compute += BETA2 * K * BLOCK_WIDTH / 2;
+      s_x2_load += total_x_fp32_load_per_iteration;
 
-      sx2_count += total_x_fp32_per_iteration;
-      sx2_count_local += total_x_fp32_per_iteration;
+      local_x_fp32_loaded_base_id += total_x_fp32_load_per_iteration;
+      local_x_fp16_computed_count += BETA2 * K * BLOCK_WIDTH;
+      global_x_fp16_computed_count += BETA2 * K * BLOCK_WIDTH;
+
+      global_x_fp32_loaded_base_id += total_x_fp32_load_per_iteration;
+
+      bool global_load_pred = global_x_fp32_loaded_base_id < total_x_fp32 &&
+                              local_x_fp32_loaded_base_id < page_size_fp32;
+
+      if (!global_load_pred) {
+        break;
+      }
+    }
+
+    for (; local_x_fp16_computed_count < page_size_fp32 * 2 &&
+           global_x_fp16_computed_count < n * K;) {
+      auto v = __ldg(local_raw_data);
+      uint64_t s_order_partial = (v >> NUM_USEFUL_BITS) << SHIFT;
+
+      SecondOrder _s{.v = recover_second_order_sync(s_order_partial)};
+
+      half2 first_order_quantized = dequant2(v);
+
+      half2 first_order_dequantized =
+          dequantize2(first_order_quantized, _s.get_sws2(), _s.get_swz2());
+
+      half2 ws2 = __half2half2(first_order_dequantized.x);
+      half2 wz2 = __half2half2(first_order_dequantized.y);
+
+      accs = accumulate_batched<K>(accs, v, ws2, wz2,
+                                   s_x2_compute + subtile_id * (BETA2 * K / 2));
+
+      local_raw_data += NUM_SPQR_TILES_PER_ITERATION * BETA1;
+      local_x_fp16_computed_count += BETA2 * K * BLOCK_WIDTH;
+      global_x_fp16_computed_count += BETA2 * K * BLOCK_WIDTH;
+      s_x2_compute += BETA2 * K * BLOCK_WIDTH;
     }
   }
 };
@@ -1411,19 +1442,7 @@ int spqr_matvec_batched(
   static constexpr int TILE_COUNT = 16;
 
   if (k == 1) {
-    if (is_csr) {
-      if (n >= 256) {
-        CALL_MATVEC(spqr_quantized_matvec, 1, TILE_COUNT, 1, true);
-      } else {
-        CALL_MATVEC(spqr_quantized_matvec, 1, 1, 1, true);
-      }
-    } else {
-      if (n >= 256) {
-        CALL_MATVEC(spqr_quantized_matvec, 1, TILE_COUNT, 1, false);
-      } else {
-        CALL_MATVEC(spqr_quantized_matvec, 1, 1, 1, false);
-      }
-    }
+    CALL_BATCHED_K(1)
   } else if (k == 2) {
     CALL_BATCHED_K(2)
   } else if (k == 4) {
