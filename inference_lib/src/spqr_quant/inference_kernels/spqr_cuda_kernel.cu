@@ -786,7 +786,7 @@ struct DenseMatrixRunnerBatched {
       // Streaming data - will only be used once and only once
       // by a single thread
       // auto v = __ldcs(local_raw_data);
-      auto v = __ldg(local_raw_data);
+      auto v = __ldcs(local_raw_data);
       uint64_t s_order_partial = (v >> NUM_USEFUL_BITS) << SHIFT;
 
       SecondOrder _s{.v = recover_second_order_sync(s_order_partial)};
@@ -825,7 +825,7 @@ struct DenseMatrixRunnerBatched {
 
     for (; local_x_fp16_computed_count < page_size_fp32 * 2 &&
            global_x_fp16_computed_count < n * K;) {
-      auto v = __ldg(local_raw_data);
+      auto v = __ldcs(local_raw_data);
       uint64_t s_order_partial = (v >> NUM_USEFUL_BITS) << SHIFT;
 
       SecondOrder _s{.v = recover_second_order_sync(s_order_partial)};
