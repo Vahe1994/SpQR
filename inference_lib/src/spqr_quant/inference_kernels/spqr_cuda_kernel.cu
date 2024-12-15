@@ -1118,9 +1118,6 @@ __global__ void spqr_quantized_matvec_batched_v2(
   for (int pipeline_id{}; pipeline_id < pipeline_stages; pipeline_id++) {
     dense_matrix_runner.process_dense();
 
-#if 0
-    printf("accs = %f %f\n", dense_matrix_runner.accs[0], dense_matrix_runner.accs[1]);
-#endif
     if constexpr (IS_CSR) {
       for (; i < e; i += BLOCK_WIDTH) {
         ColVal colval{._ = __ldg(col_vals + i)};
@@ -1140,11 +1137,11 @@ __global__ void spqr_quantized_matvec_batched_v2(
               __half2float(v) * __half2float(s_x[idx]);
         } else {
 #pragma loop unroll
-          for (int j = 0; j < K / 2; j++) {
-            int idx = c * K / 2 + j - pipeline_id * page_size_fp32;
+          for (int j = 0; j < K; j += 2) {
+            int idx = c * K / 2 + j / 2 - pipeline_id * page_size_fp32;
             float2 x2_fp32 = __half22float2(s_x2[idx]);
-            dense_matrix_runner.accs[2 * j] += v_fp32 * x2_fp32.x;
-            dense_matrix_runner.accs[2 * j + 1] += v_fp32 * x2_fp32.y;
+            dense_matrix_runner.accs[j] += v_fp32 * x2_fp32.x;
+            dense_matrix_runner.accs[j + 1] += v_fp32 * x2_fp32.y;
           }
         }
       }
@@ -1172,11 +1169,11 @@ __global__ void spqr_quantized_matvec_batched_v2(
               __half2float(v) * __half2float(s_x[idx]);
         } else {
 #pragma loop unroll
-          for (int j = 0; j < K / 2; j++) {
-            int idx = c * K / 2 + j - pipeline_id * page_size_fp32;
+          for (int j = 0; j < K; j += 2) {
+            int idx = c * K / 2 + j / 2 - pipeline_id * page_size_fp32;
             float2 x2_fp32 = __half22float2(s_x2[idx]);
-            dense_matrix_runner.accs[2 * j] += v_fp32 * x2_fp32.x;
-            dense_matrix_runner.accs[2 * j + 1] += v_fp32 * x2_fp32.y;
+            dense_matrix_runner.accs[j] += v_fp32 * x2_fp32.x;
+            dense_matrix_runner.accs[j + 1] += v_fp32 * x2_fp32.y;
           }
         }
       }
