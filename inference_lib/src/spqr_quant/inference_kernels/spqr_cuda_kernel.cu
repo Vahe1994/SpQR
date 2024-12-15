@@ -784,7 +784,8 @@ struct DenseMatrixRunnerBatched {
     for (;;) {
       for (int i = thread_xy;
            i < total_x_fp32_load_per_iteration &&
-           global_x_fp32_loaded_base_id + i < total_x_fp32;) {
+           global_x_fp32_loaded_base_id + i < total_x_fp32 &&
+           local_x_fp32_loaded_base_id + i < page_size_fp32;) {
         s_x2_load[i] = x2[global_x_fp32_loaded_base_id + i];
 
         i += THREAD_COUNT;
@@ -1099,7 +1100,6 @@ __global__ void spqr_quantized_matvec_batched_v2(
                           .x2 = x2,
                           .s_x2 = s_x2,
                           .row_pos = row_pos,
-                          .num_tiles_per_row = num_tiles_per_tile_row,
                           .subtile_id = subtile_id,
                           .page_size_fp32 = page_size_fp32};
 
