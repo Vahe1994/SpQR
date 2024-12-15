@@ -820,7 +820,10 @@ struct DenseMatrixRunnerBatched {
     int local_x_fp16_computed_count = subtile_id * BETA1 * K;
 
     for (;;) {
-      for (int i = thread_xy; i < total_x_fp32_load_per_iteration;
+      for (int i = thread_xy;
+           i < total_x_fp32_load_per_iteration &&
+           local_x_fp32_loaded_base_id + i < page_size_fp32 &&
+           global_x_fp32_loaded_base_id + i < K * n / 2;
            i += THREAD_COUNT) {
         s_x2_load[i] = x2[global_x_fp32_loaded_base_id + i];
       }
@@ -828,7 +831,7 @@ struct DenseMatrixRunnerBatched {
       // Streaming data - will only be used once and only once
       // by a single thread
       // auto v = __ldcs(local_raw_data);
-      auto v = __ldcs(local_raw_data);
+      auto v = __ldg(local_raw_data);
       uint64_t s_order_partial = (v >> NUM_USEFUL_BITS) << SHIFT;
 
       SecondOrder _s{.v = recover_second_order_sync(s_order_partial)};
@@ -863,26 +866,6 @@ struct DenseMatrixRunnerBatched {
       }
     }
 
-    for (; local_x_fp16_computed_count < min(page_size_fp32 * 2, n * K);) {
-      auto v = __ldcs(local_raw_data);
-      uint64_t s_order_partial = (v >> NUM_USEFUL_BITS) << SHIFT;
-
-      SecondOrder _s{.v = recover_second_order_sync(s_order_partial)};
-
-      half2 first_order_quantized = dequant2(v);
-
-      half2 first_order_dequantized =
-          dequantize2(first_order_quantized, _s.get_sws2(), _s.get_swz2());
-
-      half2 ws2 = __half2half2(first_order_dequantized.x);
-      half2 wz2 = __half2half2(first_order_dequantized.y);
-
-      accs = accumulate_batched_lut<K>(accs, v, ws2, wz2, s_x2_compute, lut);
-
-      local_raw_data += NUM_SPQR_TILES_PER_ITERATION * BETA1;
-      local_x_fp16_computed_count += BETA2 * K * BLOCK_WIDTH;
-      s_x2_compute += BETA2 * K * BLOCK_WIDTH;
-    }
   }
 };
 
@@ -1109,23 +1092,23 @@ __global__ void spqr_quantized_matvec_batched_v2(
       18ull * static_cast<u64>(BITS);
   constexpr static int OFFSET = BETA1 / SECOND_ORDER_FRAGMENT_SIZE_BITS;
 
-
-  static constexpr u32 LUT_SIZE = 64 * 1;
+  static constexpr u32 LUT_SIZE = 64;
   __shared__ half2 lut[LUT_SIZE];
   if constexpr (THREAD_COUNT >= 64) {
-    const auto v = make_half2(__int2half_rd(thread_xy & 0b111), __int2half_rd((thread_xy >> 3) & 0b111));
+    const auto v = make_half2(__int2half_rd(thread_xy & 0b111),
+                              __int2half_rd((thread_xy >> 3) & 0b111));
 #pragma unroll
-    for (u32 i = thread_xy; i < LUT_SIZE; i += THREAD_COUNT) { lut[i] = v; }
+    for (u32 i = thread_xy; i < LUT_SIZE; i += THREAD_COUNT) {
+      lut[i] = v;
+    }
   } else {
 #pragma unroll
     for (u32 i = thread_xy; i < LUT_SIZE; i += THREAD_COUNT) {
-      const auto v = make_half2(__int2half_rd(i & 0b111u), __int2half_rd((i >> 3u) & 0b111u));
+      const auto v = make_half2(__int2half_rd(i & 0b111u),
+                                __int2half_rd((i >> 3u) & 0b111u));
       lut[i] = v;
     }
   }
-
-
-
 
   // Here we load the row offsets into smem.
   for (u32 i = thread_xy; i <= ROW_OFFSETS_SIZE; i += THREAD_COUNT) {
@@ -1230,6 +1213,7 @@ __global__ void spqr_quantized_matvec_batched_v2(
 
     __syncthreads();
   }
+
   if constexpr (K == 1) {
     auto other =
         __shfl_down_sync(HALF_MASK, dense_matrix_runner.accs[0], BETA1);
@@ -1430,14 +1414,14 @@ int spqr_matvec(
 
 #define CALL_BATCHED_K(K)                                                      \
   if (is_csr) {                                                                \
-    if (n >= 256) {                                                            \
+    if (n % (TILE_COUNT * 16) == 0) {                                          \
       CALL_BATCHED_V2(spqr_quantized_matvec_batched_v2, 1, TILE_COUNT, 1,      \
                       true, K);                                                \
     } else {                                                                   \
       CALL_BATCHED_V2(spqr_quantized_matvec_batched_v2, 1, 1, 1, true, K);     \
     }                                                                          \
   } else {                                                                     \
-    if (n >= 256) {                                                            \
+    if (n % (TILE_COUNT * 16) == 0) {                                          \
       CALL_BATCHED_V2(spqr_quantized_matvec_batched_v2, 1, TILE_COUNT, 1,      \
                       false, K);                                               \
     } else {                                                                   \
