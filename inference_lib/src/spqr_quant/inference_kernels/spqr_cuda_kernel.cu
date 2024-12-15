@@ -141,16 +141,15 @@ DEVICE_INLINE Vec<half2, 2> transpose_4x4(const Vec<half2, 2> &a) {
 // changes:
 // https://github.com/NVIDIA/FasterTransformer/blob/main/src/fastertransformer/cutlass_extensions/include/cutlass_extensions/interleaved_numeric_conversion.h
 __device__ __forceinline__ half2 dequant2(int q) {
-  return dequant(q).elems[0];
-  // return INT2_TO_HALF2(q);
-  // q = (q & 0b111) | ((q & 0b111000) << 13);
-  // const int LO = 0x000f000f;
-  // const int EX = 0x64006400;
-  // // Guarantee that the `(a & b) | c` operations are LOP3s.
-  // int lo = lop3 < (0xf0 & 0xcc) | 0xaa > (q, LO, EX);
-  // static constexpr int SUB = 0x64006400;
-  // return __hsub2(*reinterpret_cast<half2 *>(&lo),
-  //                *reinterpret_cast<const half2 *>(&SUB));
+  q = (q & 0b111) | ((q & 0b111000000) >> 2);
+  constexpr int LO = 0x000f000f;
+  constexpr int EX = 0x64006400;
+
+  // Guarantee that the `(a & b) | c` operations are LOP3s.
+  int lo = lop3 < (0xf0 & 0xcc) | 0xaa > (q, LO, EX);
+  constexpr int SUB = 0x64006400;
+  return __hsub2(*reinterpret_cast<half2 *>(&lo),
+                 *reinterpret_cast<const half2 *>(&SUB));
 }
 
 DEVICE_INLINE uint64_t recover_second_order_sync(uint64_t val) {
