@@ -75,7 +75,6 @@ template <typename T, int n> struct Vec {
 using I4 = Vec<int, 4>;
 
 using Frag4 = Vec<half2, 2>;
-using Frag2 = Vec<half2, 1>;
 
 // Efficiently dequantize an int32 value into a full B-fragment of 4 fp16
 // values. We mostly follow the strategy in the link below, with some small
@@ -141,12 +140,9 @@ DEVICE_INLINE Vec<half2, 2> transpose_4x4(const Vec<half2, 2> &a) {
 // changes:
 // https://github.com/NVIDIA/FasterTransformer/blob/main/src/fastertransformer/cutlass_extensions/include/cutlass_extensions/interleaved_numeric_conversion.h
 __device__ __forceinline__ half2 dequant2(int q) {
-  q = (q & 0b111) | ((q & 0b111000000) >> 2);
-  constexpr int LO = 0x000f000f;
   constexpr int EX = 0x64006400;
 
-  // Guarantee that the `(a & b) | c` operations are LOP3s.
-  int lo = lop3 < (0xf0 & 0xcc) | 0xaa > (q, LO, EX);
+  int lo = (q & 0b111) | (((q & 0b111000) << 13)) | EX;
   constexpr int SUB = 0x64006400;
   return __hsub2(*reinterpret_cast<half2 *>(&lo),
                  *reinterpret_cast<const half2 *>(&SUB));
@@ -737,8 +733,10 @@ struct DenseMatrixRunnerBatched {
     // iteration.
     const int total_x_fp32 = n * K / 2;
     static constexpr int total_x_fp16_per_iteration = BETA1 * BLOCK_WIDTH * K;
-    static constexpr int total_x_fp32_load_per_iteration = total_x_fp16_per_iteration / 2;
-    static constexpr int total_x_fp128_per_iteration = total_x_fp32_load_per_iteration / 4;
+    static constexpr int total_x_fp32_load_per_iteration =
+        total_x_fp16_per_iteration / 2;
+    static constexpr int total_x_fp128_per_iteration =
+        total_x_fp32_load_per_iteration / 4;
 
 #if 0
     if (!thread_xy && !blockIdx.x)
@@ -781,13 +779,8 @@ struct DenseMatrixRunnerBatched {
     int local_x_fp16_computed_count = subtile_id * BETA1 * K;
 
     for (;;) {
-      for (int i = thread_xy;
-           i < total_x_fp32_load_per_iteration &&
-           global_x_fp32_loaded_base_id + i < total_x_fp32 &&
-           local_x_fp32_loaded_base_id + i < page_size_fp32;) {
+      for (int i = thread_xy; i < total_x_fp32_load_per_iteration; i += THREAD_COUNT) {
         s_x2_load[i] = x2[global_x_fp32_loaded_base_id + i];
-
-        i += THREAD_COUNT;
       }
 
       // Streaming data - will only be used once and only once
