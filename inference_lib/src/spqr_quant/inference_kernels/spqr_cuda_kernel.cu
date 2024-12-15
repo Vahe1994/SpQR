@@ -1076,11 +1076,8 @@ __global__ void spqr_quantized_matvec_batched_v2(
 
   // Here we load the row offsets into smem.
   for (u32 i = thread_xy; i <= ROW_OFFSETS_SIZE; i += THREAD_COUNT) {
-    __pipeline_memcpy_async(s_row_offsets + i,
-                            row_offsets + blockIdx.x * ROW_OFFSETS_SIZE + i,
-                            sizeof(u32));
+    s_row_offsets[i] = row_offsets[blockIdx.x * ROW_OFFSETS_SIZE + i];
   }
-  __pipeline_commit();
 
   DenseMatrixRunnerBatched<W_t, X_LOAD_BLOCK_SIZE, BLOCK_HEIGHT, BLOCK_WIDTH,
                            HALF_WARP_SIZE, THREAD_COUNT, NUM_USEFUL_BITS,
@@ -1097,7 +1094,6 @@ __global__ void spqr_quantized_matvec_batched_v2(
 
   dense_matrix_runner.init();
 
-  cp_async_wait_all();
   __syncthreads();
 
   u32 t = threadIdx.y * BETA1 + row_pos;
