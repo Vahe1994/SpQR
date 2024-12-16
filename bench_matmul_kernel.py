@@ -133,7 +133,7 @@ def bench_random():
     for p in [SparseStorageConfiguration.CSR,
               SparseStorageConfiguration.PTCSR]:
         for d in [0., 0.01, 0.02, 0.03]:
-            for k in [1, 2, 4, 8]:
+            for k in [4, 8]:
                 seed = 1337
                 np.random.seed(seed)
                 torch.random.manual_seed(seed)

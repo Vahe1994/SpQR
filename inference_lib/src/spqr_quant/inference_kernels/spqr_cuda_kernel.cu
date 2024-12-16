@@ -283,7 +283,7 @@ DEVICE_INLINE void cp_async(half2 *__restrict__ dst,
 
 using Load_t = __int128_t;
 DEVICE_INLINE void cp_async128(Load_t *__restrict__ dst,
-                            const Load_t *__restrict__ src) {
+                               const Load_t *__restrict__ src) {
   u32 s_dst = u32(__cvta_generic_to_shared(dst));
   asm volatile("cp.async.cg.shared.global [%0], [%1], 16;\n" ::"r"(s_dst),
                "l"(src));
@@ -752,11 +752,13 @@ struct DenseMatrixRunnerBatched {
 
   Vec<float, K> accs{};
   u32 global_x_fp128_loaded_base_id;
-  int global_x_fp16_computed_count;
+  u32 global_computed_tile{};
+  u32 pipeline_id;
 
   DEVICE_INLINE void init() {
     global_x_fp128_loaded_base_id = 0;
-    global_x_fp16_computed_count = subtile_id * BETA1 * K;
+    global_computed_tile = 0;
+    pipeline_id = 0;
   }
 
   DEVICE_INLINE void process_dense() {
@@ -820,62 +822,99 @@ struct DenseMatrixRunnerBatched {
     // Therefore, we will page the loads of X, loading fp32s_per_page
     // per iteration.
 
-    auto s_x2_load = s_x2;
     auto s_x2_compute = s_x2 + subtile_id * (BETA2 * K / 2);
 
     int local_x_fp128_loaded_base_id{};
 
+    auto s_x128 = reinterpret_cast<Load_t *>(s_x2);
+    const auto x128 = reinterpret_cast<const Load_t *>(x2);
 
-    auto s_x128 = reinterpret_cast<Load_t*>(s_x2);
-    const auto x128 = reinterpret_cast<const Load_t*>(x2);
+    for (int i = thread_xy;
+         local_x_fp128_loaded_base_id + i < page_size_fp32 / 4 &&
+         global_x_fp128_loaded_base_id + i < K * n / 8;
+         i += THREAD_COUNT) {
+      cp_async128(s_x128 + i, x128 + global_x_fp128_loaded_base_id + i);
+    }
+    __pipeline_commit();
 
-    for (;;) {
-      for (int i = thread_xy;
-           i < total_x_fp32_load_per_iteration / 4 &&
-           local_x_fp128_loaded_base_id + i < page_size_fp32 / 4 &&
-           global_x_fp128_loaded_base_id + i < K * n / 8;
-           i += THREAD_COUNT) {
-        cp_async128(s_x128 + i, x128 + global_x_fp128_loaded_base_id + i);
-        // s_x2_load[i] = x2[global_x_fp32_loaded_base_id + i];
+    global_x_fp128_loaded_base_id += page_size_fp32 / 4;
+
+    unsigned int upper_limit_fp16 =
+        min((pipeline_id + 1) * page_size_fp32 * 2, n * K);
+
+    {
+      uint64_t v{};
+      bool p = global_computed_tile + thread_xy * K / 2 < upper_limit_fp16;
+      bool global_p = global_computed_tile < upper_limit_fp16;
+
+      if (p) {
+        v = __ldcs(local_raw_data);
       }
-      __pipeline_commit();
 
-      // Streaming data - will only be used once and only once
-      // by a single thread
-      // auto v = __ldcs(local_raw_data);
-      auto v = __ldcs(local_raw_data);
       uint64_t s_order_partial = (v >> NUM_USEFUL_BITS) << SHIFT;
 
       SecondOrder _s{.v = recover_second_order_sync(s_order_partial)};
 
-      half2 first_order_quantized = dequant2(v);
+      half2 ws2, wz2;
+      if (p) {
+        half2 first_order_quantized = dequant2(v);
 
-      half2 first_order_dequantized =
-          dequantize2(first_order_quantized, _s.get_sws2(), _s.get_swz2());
+        half2 first_order_dequantized =
+            dequantize2(first_order_quantized, _s.get_sws2(), _s.get_swz2());
 
-      half2 ws2 = __half2half2(first_order_dequantized.x);
-      half2 wz2 = __half2half2(first_order_dequantized.y);
+        ws2 = __half2half2(first_order_dequantized.x);
+        wz2 = __half2half2(first_order_dequantized.y);
+      }
 
-      cp_async_wait<0>();
+      cp_async_wait_all();
       __syncthreads();
 
-      accs = accumulate_batched_lut<K>(accs, v, ws2, wz2, s_x2_compute, lut);
+      if (p) {
+        accs = accumulate_batched_lut<K>(accs, v, ws2, wz2, s_x2_compute, lut);
+      }
 
       local_raw_data += NUM_SPQR_TILES_PER_ITERATION * BETA1;
-
+      global_computed_tile += THREAD_COUNT * K;
       s_x2_compute += BETA2 * K * BLOCK_WIDTH / 2;
-      s_x128 += total_x_fp32_load_per_iteration / 4;
 
-      local_x_fp128_loaded_base_id += total_x_fp32_load_per_iteration / 4;
+      if (!global_p) {
+        return;
+      }
+    }
 
-      global_x_fp128_loaded_base_id += total_x_fp32_load_per_iteration / 4;
+    for (;;) {
+      uint64_t v{};
+      bool p = global_computed_tile + thread_xy * K / 2 < upper_limit_fp16;
+      bool global_p = global_computed_tile < upper_limit_fp16;
 
-      bool global_load_pred = global_x_fp128_loaded_base_id < total_x_fp32 / 4 &&
-                              local_x_fp128_loaded_base_id < page_size_fp32 / 4;
+      if (p) {
+        v = __ldcs(local_raw_data);
+      }
 
-      if (!global_load_pred) {
+      uint64_t s_order_partial = (v >> NUM_USEFUL_BITS) << SHIFT;
+
+      __syncthreads();
+      SecondOrder _s{.v = recover_second_order_sync(s_order_partial)};
+
+      if (p) {
+        half2 first_order_quantized = dequant2(v);
+
+        half2 first_order_dequantized =
+            dequantize2(first_order_quantized, _s.get_sws2(), _s.get_swz2());
+
+        half2 ws2 = __half2half2(first_order_dequantized.x);
+        half2 wz2 = __half2half2(first_order_dequantized.y);
+
+        accs = accumulate_batched_lut<K>(accs, v, ws2, wz2, s_x2_compute, lut);
+      }
+
+      if (!global_p) {
         break;
       }
+
+      local_raw_data += NUM_SPQR_TILES_PER_ITERATION * BETA1;
+      global_computed_tile += THREAD_COUNT * K;
+      s_x2_compute += BETA2 * K * BLOCK_WIDTH / 2;
     }
   }
 };
@@ -1159,7 +1198,8 @@ __global__ void spqr_quantized_matvec_batched_v2(
   const int total_x_fp32 = n * K / 2;
   int pipeline_stages = UPDIV(total_x_fp32, page_size_fp32);
 
-  for (int pipeline_id{}; pipeline_id < pipeline_stages; pipeline_id++) {
+  for (; dense_matrix_runner.pipeline_id < pipeline_stages;
+       dense_matrix_runner.pipeline_id++) {
     dense_matrix_runner.process_dense();
 
     if constexpr (IS_CSR) {
@@ -1167,7 +1207,8 @@ __global__ void spqr_quantized_matvec_batched_v2(
         ColVal colval{._ = __ldg(col_vals + i)};
         auto c = colval.members.c;
 
-        if (c * K / 2 >= (pipeline_id + 1) * page_size_fp32) {
+        if (c * K / 2 >=
+            (dense_matrix_runner.pipeline_id + 1) * page_size_fp32) {
           break;
         }
 
@@ -1176,13 +1217,14 @@ __global__ void spqr_quantized_matvec_batched_v2(
 
         if constexpr (K == 1) {
           half *s_x = reinterpret_cast<half *>(s_x2);
-          int idx = c - pipeline_id * page_size_fp32 * 2;
+          int idx = c - dense_matrix_runner.pipeline_id * page_size_fp32 * 2;
           dense_matrix_runner.accs[0] +=
               __half2float(v) * __half2float(s_x[idx]);
         } else {
 #pragma loop unroll
           for (int j = 0; j < K; j += 2) {
-            int idx = c * K / 2 + j / 2 - pipeline_id * page_size_fp32;
+            int idx = c * K / 2 + j / 2 -
+                      dense_matrix_runner.pipeline_id * page_size_fp32;
             float2 x2_fp32 = __half22float2(s_x2[idx]);
             dense_matrix_runner.accs[j] += v_fp32 * x2_fp32.x;
             dense_matrix_runner.accs[j + 1] += v_fp32 * x2_fp32.y;
@@ -1199,7 +1241,8 @@ __global__ void spqr_quantized_matvec_batched_v2(
 
         auto c = colval.members.c;
 
-        if (c * K / 2 >= (pipeline_id + 1) * page_size_fp32) {
+        if (c * K / 2 >=
+            (dense_matrix_runner.pipeline_id + 1) * page_size_fp32) {
           break;
         }
 
@@ -1208,13 +1251,14 @@ __global__ void spqr_quantized_matvec_batched_v2(
 
         if constexpr (K == 1) {
           half *s_x = reinterpret_cast<half *>(s_x2);
-          int idx = c - pipeline_id * page_size_fp32 * 2;
+          int idx = c - dense_matrix_runner.pipeline_id * page_size_fp32 * 2;
           dense_matrix_runner.accs[0] +=
               __half2float(v) * __half2float(s_x[idx]);
         } else {
 #pragma loop unroll
           for (int j = 0; j < K; j += 2) {
-            int idx = c * K / 2 + j / 2 - pipeline_id * page_size_fp32;
+            int idx = c * K / 2 + j / 2 -
+                      dense_matrix_runner.pipeline_id * page_size_fp32;
             float2 x2_fp32 = __half22float2(s_x2[idx]);
             dense_matrix_runner.accs[j] += v_fp32 * x2_fp32.x;
             dense_matrix_runner.accs[j + 1] += v_fp32 * x2_fp32.y;
@@ -1227,6 +1271,7 @@ __global__ void spqr_quantized_matvec_batched_v2(
   }
 
   auto addr = tile_row_id * BETA1 + threadIdx.x;
+  const u32 lane_id = threadIdx.x & 0x1f;
   if constexpr (K == 1) {
     auto other =
         __shfl_down_sync(HALF_MASK, dense_matrix_runner.accs[0], BETA1);
@@ -1236,9 +1281,8 @@ __global__ void spqr_quantized_matvec_batched_v2(
     auto *s_fp32_buff = reinterpret_cast<float *>(s_x2);
 
     u32 subwarp_id = threadIdx.x / WARP_SIZE;
-    if (subwarp_id >= 1 && threadIdx.x % WARP_SIZE < BETA1) {
-      s_fp32_buff[(subwarp_id - 1) * BETA1 + threadIdx.x % WARP_SIZE] =
-          dense_matrix_runner.accs[0];
+    if (subwarp_id && lane_id < BETA1) {
+      s_fp32_buff[(subwarp_id - 1) * BETA1 + lane_id] = dense_matrix_runner.accs[0];
     }
 
     __syncthreads();
@@ -1248,10 +1292,8 @@ __global__ void spqr_quantized_matvec_batched_v2(
         dense_matrix_runner.accs[0] += s_fp32_buff[i * BETA1 + threadIdx.x];
       }
     }
-
   } else {
     const u32 subwarp_id = threadIdx.x / WARP_SIZE;
-    const u32 lane_id = threadIdx.x & 0x1f;
     for (int i = 0; i < K; i++) {
       auto *s_fp32_buff = reinterpret_cast<float *>(s_x2);
       float acc = dense_matrix_runner.accs[i];
@@ -1271,7 +1313,6 @@ __global__ void spqr_quantized_matvec_batched_v2(
           }
         }
       }
-
       dense_matrix_runner.accs[i] = acc;
     }
   }
