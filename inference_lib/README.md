@@ -97,7 +97,7 @@ options:
 In order to run the matvec benchmark suite, one should run:
 
 ```bash 
-bench_spqr.py [-h] --tensor_path TENSOR_PATH [--ptcsr_path PTCSR_PATH] [--output_path OUTPUT_PATH]
+python3 bench_matvec_kernel.py [-h] --tensor_path TENSOR_PATH [--ptcsr_path PTCSR_PATH] [--output_path OUTPUT_PATH]
 
 options:
   -h, --help            show this help message and exit
