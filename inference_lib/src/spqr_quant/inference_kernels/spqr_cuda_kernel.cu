@@ -281,6 +281,14 @@ DEVICE_INLINE void cp_async(half2 *__restrict__ dst,
                "l"(src));
 }
 
+using Load_t = __int128_t;
+DEVICE_INLINE void cp_async128(Load_t *__restrict__ dst,
+                            const Load_t *__restrict__ src) {
+  u32 s_dst = u32(__cvta_generic_to_shared(dst));
+  asm volatile("cp.async.cg.shared.global [%0], [%1], 16;\n" ::"r"(s_dst),
+               "l"(src));
+}
+
 DEVICE_INLINE void cp_async_wait_all() { asm volatile("cp.async.wait_all;\n"); }
 
 __device__ __forceinline__ uint32_t __ld_stream(const uint32_t *ptr) {
@@ -294,7 +302,6 @@ __device__ __forceinline__ uint32_t __ld_stream(const uint32_t *ptr) {
 }
 
 constexpr int X_LOAD_BLOCK_SIZE = 8;
-using Load_t = __int128_t;
 constexpr bool PIPELINED_LOAD = false;
 
 // #define INT2_TO_HALF2(v) s_half2_lut[v]
@@ -744,11 +751,11 @@ struct DenseMatrixRunnerBatched {
   half2 *__restrict__ lut;
 
   Vec<float, K> accs{};
-  u32 global_x_fp32_loaded_base_id;
+  u32 global_x_fp128_loaded_base_id;
   int global_x_fp16_computed_count;
 
   DEVICE_INLINE void init() {
-    global_x_fp32_loaded_base_id = 0;
+    global_x_fp128_loaded_base_id = 0;
     global_x_fp16_computed_count = subtile_id * BETA1 * K;
   }
 
@@ -816,22 +823,27 @@ struct DenseMatrixRunnerBatched {
     auto s_x2_load = s_x2;
     auto s_x2_compute = s_x2 + subtile_id * (BETA2 * K / 2);
 
-    int local_x_fp32_loaded_base_id{};
-    int local_x_fp16_computed_count = subtile_id * BETA1 * K;
+    int local_x_fp128_loaded_base_id{};
+
+
+    auto s_x128 = reinterpret_cast<Load_t*>(s_x2);
+    const auto x128 = reinterpret_cast<const Load_t*>(x2);
 
     for (;;) {
       for (int i = thread_xy;
-           i < total_x_fp32_load_per_iteration &&
-           local_x_fp32_loaded_base_id + i < page_size_fp32 &&
-           global_x_fp32_loaded_base_id + i < K * n / 2;
+           i < total_x_fp32_load_per_iteration / 4 &&
+           local_x_fp128_loaded_base_id + i < page_size_fp32 / 4 &&
+           global_x_fp128_loaded_base_id + i < K * n / 8;
            i += THREAD_COUNT) {
-        s_x2_load[i] = x2[global_x_fp32_loaded_base_id + i];
+        cp_async128(s_x128 + i, x128 + global_x_fp128_loaded_base_id + i);
+        // s_x2_load[i] = x2[global_x_fp32_loaded_base_id + i];
       }
+      __pipeline_commit();
 
       // Streaming data - will only be used once and only once
       // by a single thread
       // auto v = __ldcs(local_raw_data);
-      auto v = __ldg(local_raw_data);
+      auto v = __ldcs(local_raw_data);
       uint64_t s_order_partial = (v >> NUM_USEFUL_BITS) << SHIFT;
 
       SecondOrder _s{.v = recover_second_order_sync(s_order_partial)};
@@ -844,6 +856,7 @@ struct DenseMatrixRunnerBatched {
       half2 ws2 = __half2half2(first_order_dequantized.x);
       half2 wz2 = __half2half2(first_order_dequantized.y);
 
+      cp_async_wait<0>();
       __syncthreads();
 
       accs = accumulate_batched_lut<K>(accs, v, ws2, wz2, s_x2_compute, lut);
@@ -851,21 +864,19 @@ struct DenseMatrixRunnerBatched {
       local_raw_data += NUM_SPQR_TILES_PER_ITERATION * BETA1;
 
       s_x2_compute += BETA2 * K * BLOCK_WIDTH / 2;
-      s_x2_load += total_x_fp32_load_per_iteration;
+      s_x128 += total_x_fp32_load_per_iteration / 4;
 
-      local_x_fp32_loaded_base_id += total_x_fp32_load_per_iteration;
-      local_x_fp16_computed_count += BETA2 * K * BLOCK_WIDTH;
+      local_x_fp128_loaded_base_id += total_x_fp32_load_per_iteration / 4;
 
-      global_x_fp32_loaded_base_id += total_x_fp32_load_per_iteration;
+      global_x_fp128_loaded_base_id += total_x_fp32_load_per_iteration / 4;
 
-      bool global_load_pred = global_x_fp32_loaded_base_id < total_x_fp32 &&
-                              local_x_fp32_loaded_base_id < page_size_fp32;
+      bool global_load_pred = global_x_fp128_loaded_base_id < total_x_fp32 / 4 &&
+                              local_x_fp128_loaded_base_id < page_size_fp32 / 4;
 
       if (!global_load_pred) {
         break;
       }
     }
-
   }
 };
 
@@ -1061,6 +1072,7 @@ __global__ void spqr_quantized_matvec_batched_v2(
   static constexpr u32 OUTPUT_SIZE = BETA1 * BLOCK_HEIGHT;
   static constexpr u32 ROW_OFFSETS_SIZE = IS_CSR ? OUTPUT_SIZE : 1;
 
+  half2 *y_fp32 = reinterpret_cast<half2 *>(y_fp16);
   extern __shared__ half2 s_x2[];
   __shared__ u32 s_row_offsets[ROW_OFFSETS_SIZE + 1];
 
@@ -1214,6 +1226,7 @@ __global__ void spqr_quantized_matvec_batched_v2(
     __syncthreads();
   }
 
+  auto addr = tile_row_id * BETA1 + threadIdx.x;
   if constexpr (K == 1) {
     auto other =
         __shfl_down_sync(HALF_MASK, dense_matrix_runner.accs[0], BETA1);
@@ -1237,15 +1250,13 @@ __global__ void spqr_quantized_matvec_batched_v2(
     }
 
   } else {
+    const u32 subwarp_id = threadIdx.x / WARP_SIZE;
+    const u32 lane_id = threadIdx.x & 0x1f;
     for (int i = 0; i < K; i++) {
-      auto *s_fp32_buff =
-          reinterpret_cast<float *>(s_x2 + threadIdx.y * K * BETA1);
+      auto *s_fp32_buff = reinterpret_cast<float *>(s_x2);
       float acc = dense_matrix_runner.accs[i];
       auto other = __shfl_down_sync(HALF_MASK, acc, BETA1);
       acc = add_and_accum(other, acc);
-
-      u32 subwarp_id = threadIdx.x / WARP_SIZE;
-      u32 lane_id = threadIdx.x & 0x1f;
 
       if (subwarp_id >= 1 && lane_id < BETA1) {
         s_fp32_buff[(subwarp_id - 1) * WARP_SIZE + lane_id] = acc;
@@ -1254,7 +1265,7 @@ __global__ void spqr_quantized_matvec_batched_v2(
       __syncthreads();
 
       if constexpr (THREAD_COUNT > BETA1) {
-        if (!subtile_id && threadIdx.x < BETA1) {
+        if (!subtile_id && thread_xy < BETA1) {
           for (int j = 0; j < WARP_COUNT - 1; j++) {
             acc += s_fp32_buff[j * WARP_SIZE + threadIdx.x];
           }
@@ -1267,9 +1278,16 @@ __global__ void spqr_quantized_matvec_batched_v2(
 
   if (threadIdx.x < BETA1) {
     auto addr = tile_row_id * BETA1 + threadIdx.x;
+
+    if constexpr (K == 1) {
+      y_fp16[K * addr] = __float2half(dense_matrix_runner.accs[0]);
+    } else {
 #pragma loop unroll
-    for (int i = 0; i < K; i++) {
-      y_fp16[K * addr + i] = __float2half(dense_matrix_runner.accs[i]);
+      for (int i = 0; i < K; i += 2) {
+        y_fp32[(K * addr + i) / 2] =
+            make_half2(__float2half_rd(dense_matrix_runner.accs[i]),
+                       __float2half_rd(dense_matrix_runner.accs[i + 1]));
+      }
     }
   }
 }
