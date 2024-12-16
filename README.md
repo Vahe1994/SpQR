@@ -85,7 +85,7 @@ The command above runs near-lossless compression as described in the article. Ad
 
 Note the launch arguments:
 - `<PATH_TO_MODEL_DIR>` - path to model folder, which contains `config.json `
-- `one of [c4, ptb, wikitext2, pajama, refinedweb, none]` -- name of dataset to use for compression, or path to an alternative preprocessed and tokenized dataset.
+- `one of [c4, ptb, wikitext2, red_pajama, refinedweb, none]` -- name of dataset to use for compression, or path to an alternative preprocessed and tokenized dataset.
 - `--wbits 3` -- number of bits for quantized weights representation
 - `--groupsize 16` -- size of first-order groups for compression
 - `--qq_groupsize 16` -- size of second-order (quantized) groups for compression
