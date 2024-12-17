@@ -125,13 +125,11 @@ def get_inps(model, data_iterable, args, dev, nsamples=None):
     dtype = next(iter(model.parameters())).dtype
     inps = torch.zeros((nsamples, model.seqlen, model.config.hidden_size), dtype=dtype, device=dev)
 
-    forward_arg_names = [
-        "attention_mask",
-    ]
+    forward_arg_names = ["attention_mask", "position_ids"]
     if model.config.model_type.lower() in FALCON_TYPES:
         forward_arg_names.append("alibi")
 
-    cache = {"i": 0, "attention_mask": None, "alibi": None}
+    cache = {"i": 0, "attention_mask": None, "alibi": None, "position_ids": torch.arange(model.seqlen).to(device=dev)}
 
     class Catcher(nn.Module):
         def __init__(self, module):
@@ -431,7 +429,7 @@ if __name__ == "__main__":
         "dataset",
         type=str,
         default="none",
-        help="Dataset name [c4, pajama, refinedweb, none, etc.] or path to data where to extract calibration data from.",
+        help="Dataset name [c4, red_pajama, refinedweb, none, etc.] or path to data where to extract calibration data from.",
     )
     parser.add_argument(
         "--custom_data_path",
@@ -542,6 +540,12 @@ if __name__ == "__main__":
         choices=["auto", "float16", "float32"],
         help="dtype to load the model.",
     )
+    parser.add_argument(
+        "--model_seqlen",
+        type=int,
+        default=4096,
+        help="Model seqlen and calibration data context length.",
+    )
 
     args = parser.parse_args()
 
@@ -572,10 +576,12 @@ if __name__ == "__main__":
         wandb.run.log_code(".")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    # device = "cpu"
 
     print("============  Loading model... ============")
-    model = get_model(args.model_path, args.load, args.dtype).train(False)
+    model = get_model(args.model_path, args.load, args.dtype, args.model_seqlen).train(False)
 
+    model = model.to(device=device)
     print("\n============ Quantizing model... ============")
     if args.wbits < 16 and args.load:
         print("\n Warning: You are quantizing quantized model!")
