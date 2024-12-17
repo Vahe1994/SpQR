@@ -162,13 +162,13 @@ struct Timer {
 
   inline void start() { cudaEventRecord(ce_start, stream); }
 
-  inline float end() {
-    float time{};
+  inline float end_and_measure() {
+    float time_ms{};
     cudaEventRecord(ce_stop, nullptr);
     cudaEventSynchronize(ce_stop);
-    cudaEventElapsedTime(&time, ce_start, ce_stop);
+    cudaEventElapsedTime(&time_ms, ce_start, ce_stop);
     // Returns ms
-    return time;
+    return time_ms;
   }
 
   inline Timer(cudaStream_t stream) : stream(stream) {

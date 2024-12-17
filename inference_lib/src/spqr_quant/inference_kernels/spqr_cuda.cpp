@@ -127,7 +127,7 @@ void torch_mul_timer_batched(const torch::Tensor &deq_w, const torch::Tensor &x,
 
   torch::mm_out(y, deq_w, x);
 
-  measurements_ptr[0] = timer->end();
+  measurements_ptr[0] = timer->end_and_measure();
   delete timer;
 }
 
@@ -147,7 +147,7 @@ void torch_mul_timer(const torch::Tensor &deq_w, const torch::Tensor &x,
 
   torch::mm_out(y, deq_w, x);
 
-  measurements_ptr[0] = timer->end();
+  measurements_ptr[0] = timer->end_and_measure();
   delete timer;
 }
 

@@ -1,5 +1,6 @@
 # /home/elvircrn/CLionProjects/cutlass/build/tools/profiler/cutlass_profiler --operation=Gemm --m=4096,11008 --n=4096,11008 --k=1,2,4,8 --A=f16:column --B=f16:row --C=f16:column --accum=f32 --profiling-iterations=2000 --stages=3 --warmup-iterations=100
 import warnings
+
 warnings.filterwarnings("ignore")
 
 import io
@@ -25,62 +26,44 @@ from spqr_quant.inference_kernels.kernel_selector import (
 from spqr_quant.inference import SparseStorageConfiguration
 from tests.test import create_random, generate_x_fp32
 
-cutlass_str = """
-m,n,k,Runtime
-4096,4096,1,0.139133
-4096,4096,2,0.13965
-4096,4096,4,0.139508
-4096,4096,8,0.140223
-4096,4096,16,0.141828
-4096,11008,1,0.366857
-4096,11008,2,0.368438
-4096,11008,4,0.369755
-4096,11008,8,0.372519
-4096,11008,16,0.379609
-11008,4096,1,0.368447
-11008,4096,2,0.370071
-11008,4096,4,0.371965
-11008,4096,8,0.379108
-11008,4096,16,0.389834
-11008,11008,1,0.985347
-11008,11008,2,0.985883
-11008,11008,4,0.988083
-11008,11008,8,1.00129
-11008,11008,16,1.02741
-16384,16384,1,2.16175
-16384,16384,2,2.16977
-16384,16384,4,2.18473
-16384,16384,8,2.19353
+
+# $ ,cutlass.sh --operation=Gemm --m=16384 --n=16384 --k=1,2,4,8,16 --A=f16:column --B=f16:row --C=f16:column --accum=f32 --profiling-iterations=500 --stages=3 --warmup-iterations=200 --output=multibatch16k --verbose=false && mlr --csv sort -f m,n,k then cut -f m,n,k,Runtime multibatch16k.gemm.csv
+cutlass_str = """m,n,k,Runtime
+16384,16384,1,2.32776
+16384,16384,2,2.33508
+16384,16384,4,2.37545
+16384,16384,8,2.60773
+16384,16384,16,2.77253
+16384,16384,32,2.82022
+16384,16384,64,2.91817
 """
 
 cutlass_data = io.StringIO(cutlass_str)
 cutlass_runs = pd.read_csv(cutlass_data)
 
 
-def spqr_mul_timer(spqr_device: QuantizedLinear, x, feature_flag: FeatureFlags, num_runs, k):
-    runs = torch.empty(num_runs).cpu().float()
+def spqr_mul_timer(spqr_device: QuantizedLinear, x, feature_flag: FeatureFlags, k):
+    result = torch.empty(1).cpu().float()
     y = torch.zeros(spqr_device.m * k, dtype=x.dtype, device=x.device).flatten().contiguous()
 
-    for i in range(num_runs):
-        y = torch.zeros_like(y)
-        get_spqr_mul_timer_batched()(
-            spqr_device.m,
-            spqr_device.n,
-            k,
-            spqr_device.bits,
-            spqr_device.beta1,
-            spqr_device.beta2,
-            spqr_device.dense_weights,
-            spqr_device.row_offsets,
-            spqr_device.col_vals,
-            spqr_device.nnz,
-            x,
-            y,
-            runs[i],
-            feature_flag,
-        )
+    get_spqr_mul_timer_batched()(
+        spqr_device.m,
+        spqr_device.n,
+        k,
+        spqr_device.bits,
+        spqr_device.beta1,
+        spqr_device.beta2,
+        spqr_device.dense_weights,
+        spqr_device.row_offsets,
+        spqr_device.col_vals,
+        spqr_device.nnz,
+        x,
+        y,
+        result,
+        feature_flag
+    )
 
-    return y, runs
+    return y, result
 
 
 def torch_mul_timer_runs(deq_w, x, num_runs, k):
@@ -125,15 +108,13 @@ def torch_mul_timer_runs(deq_w, x, num_runs, k):
 def bench_random():
     m = 2 ** 14
     n = 2 ** 14
-    NUM_RUNS = 2000
+    NUM_RUNS = 10000
     device = 'cuda'
     flag = FeatureFlags.SPARSE_FUSED_FP32
 
-    print('m,n,k,Density,Sparse Storage,Speed-Up (X)')
-    for p in [SparseStorageConfiguration.CSR,
-              SparseStorageConfiguration.PTCSR]:
-        for d in [0., 0.01, 0.02, 0.03]:
-            for k in [4, 8]:
+    for p in [SparseStorageConfiguration.CSR]:
+        for d in [0.]:
+            for k in [1]:
                 seed = 1337
                 np.random.seed(seed)
                 torch.random.manual_seed(seed)
@@ -144,7 +125,25 @@ def bench_random():
                 )
                 x_fp16_device = x_fp32.cuda(device=device).half()
 
-                y_csr, spqr_runs = spqr_mul_timer(spqr_module_device, x_fp16_device, flag, NUM_RUNS, k)
+                y_csr, spqr_runs = spqr_mul_timer(spqr_module_device, x_fp16_device, flag, k)
+
+
+    print('m,n,k,Density,Sparse Storage,Speed-Up (X)')
+    for p in [SparseStorageConfiguration.CSR,
+              SparseStorageConfiguration.PTCSR]:
+        for d in [0., 0.01, 0.02, 0.03]:
+            for k in [1, 2, 4, 8]:
+                seed = 1337
+                np.random.seed(seed)
+                torch.random.manual_seed(seed)
+
+                x_fp32 = generate_x_fp32(n * k)
+                spqr_module, spqr_module_device = create_random(
+                    m, n, d, p
+                )
+                x_fp16_device = x_fp32.cuda(device=device).half()
+
+                y_csr, spqr_runs = spqr_mul_timer(spqr_module_device, x_fp16_device, flag, k)
 
                 cutlass_run = cutlass_runs[
                     (cutlass_runs["m"] == m) &

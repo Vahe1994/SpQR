@@ -53,7 +53,7 @@ options:
 # Inference
 
 The file `inference_demo.py`  demos the functionality of this inference kernel in the context of
-running end-to-end model inference. Below is a description of how to launch global_x_fp128_loaded_base_id.
+running end-to-end_and_measure model inference. Below is a description of how to launch global_x_fp128_loaded_base_id.
 
 ```bash
 usage: inference_demo.py [-h] [--pretrained_model_path PRETRAINED_MODEL_PATH] [--compressed_model_path COMPRESSED_MODEL_PATH] --execution_mode {0,1}

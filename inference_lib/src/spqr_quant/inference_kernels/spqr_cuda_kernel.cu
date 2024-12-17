@@ -1282,7 +1282,8 @@ __global__ void spqr_quantized_matvec_batched_v2(
 
     u32 subwarp_id = threadIdx.x / WARP_SIZE;
     if (subwarp_id && lane_id < BETA1) {
-      s_fp32_buff[(subwarp_id - 1) * BETA1 + lane_id] = dense_matrix_runner.accs[0];
+      s_fp32_buff[(subwarp_id - 1) * BETA1 + lane_id] =
+          dense_matrix_runner.accs[0];
     }
 
     __syncthreads();
@@ -1460,7 +1461,7 @@ int spqr_matvec(
   }
 
   if (measurements) {
-    static_cast<float *>(measurements)[0] = timer->end();
+    static_cast<float *>(measurements)[0] = timer->end_and_measure();
     delete timer;
   } else if (!features.flags.is_async) {
     CHECK_CUDA(cudaDeviceSynchronize());
@@ -1488,6 +1489,27 @@ int spqr_matvec(
     }                                                                          \
   }
 
+#define F                                                                      \
+  const auto *raw_data_ptr = (const u64 *)raw_dense_data;                      \
+  const half *X_ptr = (const half *)X;                                         \
+  const int *row_offsets_ptr = (const int *)row_offsets;                       \
+  half *y_ptr = (half *)y;                                                     \
+  const auto *col_vals_ptr = (const u32 *)col_vals;                            \
+  const auto *order_ptr = (const uint16_t *)raw_in_order;                      \
+  int ret = 0;                                                                 \
+  bool is_csr = m + 1 == row_offsets_len;                                      \
+  bool needs_fusion = order_ptr == nullptr;                                    \
+  static constexpr int TILE_COUNT = 16;                                        \
+  if (k == 1) {                                                                \
+    CALL_BATCHED_K(1)                                                          \
+  } else if (k == 2) {                                                         \
+    CALL_BATCHED_K(2)                                                          \
+  } else if (k == 4) {                                                         \
+    CALL_BATCHED_K(4)                                                          \
+  } else if (k == 8) {                                                         \
+    CALL_BATCHED_K(8)                                                          \
+  }
+
 int spqr_matvec_batched(
     // W and meta
     int bits, int m, int n, int k,
@@ -1501,43 +1523,30 @@ int spqr_matvec_batched(
     void *X,
     // Output
     void *y, cudaStream_t stream, void *measurements, uint32_t feature_flag) {
+  constexpr int NUM_RUNS = 200;
+  constexpr int WARMUPS = 200;
+
+  Features features{._ = feature_flag};
   Timer *timer{};
   if (measurements) {
+    for (int i = 0; i < WARMUPS; i++) {
+      F;
+    }
+
     timer = new Timer(stream);
     timer->start();
-  }
-  Features features{._ = feature_flag};
 
-  const auto *raw_data_ptr = (const u64 *)raw_dense_data;
-  const half *X_ptr = (const half *)X;
-  const int *row_offsets_ptr = (const int *)row_offsets;
-  half *y_ptr = (half *)y;
-  const auto *col_vals_ptr = (const u32 *)col_vals;
-  const auto *order_ptr = (const uint16_t *)raw_in_order;
+    for (int i = 0; i < NUM_RUNS; i++) {
+      F;
+    }
 
-  int ret = 0;
-  bool is_csr = m + 1 == row_offsets_len;
-
-  bool needs_fusion = order_ptr == nullptr;
-
-  static constexpr int TILE_COUNT = 16;
-
-  if (k == 1) {
-    CALL_BATCHED_K(1)
-  } else if (k == 2) {
-    CALL_BATCHED_K(2)
-  } else if (k == 4) {
-    CALL_BATCHED_K(4)
-  } else if (k == 8) {
-    CALL_BATCHED_K(8)
-  }
-
-  if (measurements) {
-    static_cast<float *>(measurements)[0] = timer->end();
+    static_cast<float *>(measurements)[0] = timer->end_and_measure() / NUM_RUNS;
     delete timer;
-  } else if (!features.flags.is_async) {
-    CHECK_CUDA(cudaDeviceSynchronize());
+  } else {
+    F;
+    if (!features.flags.is_async) {
+      CHECK_CUDA(cudaDeviceSynchronize());
+    }
   }
-
-  return ret;
+  return 0;
 }
