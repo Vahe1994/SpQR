@@ -1508,6 +1508,14 @@ int spqr_matvec(
     CALL_BATCHED_K(4)                                                          \
   } else if (k == 8) {                                                         \
     CALL_BATCHED_K(8)                                                          \
+  } else if (k == 16) {                                                        \
+    CALL_BATCHED_K(16)                                                         \
+  } else if (k == 32) {                                                        \
+    CALL_BATCHED_K(32)                                                         \
+  } else if (k == 64) {                                                        \
+    CALL_BATCHED_K(64)                                                         \
+  } else if (k == 128) {                                                       \
+    CALL_BATCHED_K(128)                                                        \
   }
 
 int spqr_matvec_batched(

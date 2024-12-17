@@ -120,15 +120,15 @@ class QuantizedLinear(torch.nn.Module):
 
     @staticmethod
     def create_placehodler(
-        rows,
-        cols,
-        bits,
-        beta1,
-        beta2,
-        dense_weights_shape: int,
-        row_offsets_shape: int,
-        col_vals_shape: int,
-        in_perm_shape: int,
+            rows,
+            cols,
+            bits,
+            beta1,
+            beta2,
+            dense_weights_shape: int,
+            row_offsets_shape: int,
+            col_vals_shape: int,
+            in_perm_shape: int,
     ):
         dense_weights = nn.Parameter(torch.empty(dense_weights_shape, dtype=torch.int64), requires_grad=False)
         row_offsets = nn.Parameter(torch.empty(row_offsets_shape, dtype=torch.int32), requires_grad=False)
@@ -301,40 +301,26 @@ class QuantizedLinear(torch.nn.Module):
         @param x: Input tensor.
         @return: A tensor resulting from a multiplication between the SpQR tensor and input tensor x.
         """
-        inner_dim = x.shape[1]
-
-        if inner_dim == 1:
-            y = torch.empty(self.m, dtype=torch.float16, device=self.dense_weights.device)
-        else:
-            y = torch.empty((1, inner_dim, self.m), dtype=torch.float16, device=self.dense_weights.device)
-
-        k = inner_dim
-        for i in range(inner_dim):
-            if inner_dim != 1:
-                _x = x[..., i, :].flatten()
-                _y = y[0, i]
-            else:
-                _x = x.view(-1)
-                _y = y
-            call_spqr_mul_batched(
-                self.m,
-                self.n,
-                k,
-                self.bits,
-                self.beta1,
-                self.beta2,
-                self.in_perm,
-                self.dense_weights,
-                self.row_offsets,
-                self.col_vals,
-                self.nnz,
-                _x,
-                int(FeatureFlags.SPARSE_FUSED_FP32),
-                _y,
-                _y,
-            )
-
-        return y.reshape((1, inner_dim, self.m))
+        k = x.shape[1]
+        y = torch.empty((k * self.m), dtype=torch.float16, device=self.dense_weights.device).contiguous()
+        x_contiguous = x.transpose(1, 2).contiguous()
+        call_spqr_mul_batched(
+            self.m,
+            self.n,
+            k,
+            self.bits,
+            self.beta1,
+            self.beta2,
+            self.dense_weights,
+            self.row_offsets,
+            self.col_vals,
+            self.nnz,
+            x_contiguous,
+            int(FeatureFlags.SPARSE_FUSED_FP32),
+            y,
+            y
+        )
+        return y.view((1, self.m, k)).transpose(1, 2)
 
 
 def updiv(x, y):
