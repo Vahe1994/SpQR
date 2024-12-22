@@ -1,3 +1,5 @@
+#pragma clang diagnostic push
+#pragma ide diagnostic ignored "modernize-use-auto"
 /*
  * Copyright (C) SPQR Kernel.2024 Elvir Crncevic (elvircrn@gmail.com)
  *
@@ -551,40 +553,20 @@ __global__ void spqr_quantized_matvec_fused(
   }
 }
 
-__device__ __forceinline__ float accumulate(float acc, u64 b, const half2 &ws2,
-                                            const half2 &wz2,
-                                            const half2 *__restrict__ s_x2) {
-#if 0
+DEVICE_INLINE float accumulate(float acc, u64 b, const half2 &ws2,
+                               const half2 &wz2, const half2 *__restrict__ s_x2,
+                               const half2 *__restrict__ lut) {
 #pragma unroll
-  for (u32 j = 0; j < 8; j++) {
-    b >>= 6u;
-    half2 w_q = INT2_TO_HALF2(b & 0b111111ull);
+  for (u32 i = 0; i < 8; i++) {
+    auto w_q = lut[(b >>= 6u) & 0b111111u];
     half2 w = dequantize2(w_q, ws2, wz2);
-    float2 x_fp32 = __half22float2(s_x2[j]);
     float2 w_fp32 = __half22float2(w);
+    float2 x_fp32 = __half22float2(*s_x2);
     acc = fmaf(x_fp32.x, w_fp32.x, acc);
     acc = fmaf(x_fp32.y, w_fp32.y, acc);
+    s_x2++;
   }
   return acc;
-#else
-  b >>= 6u;
-#pragma unroll
-  for (u32 i = 0; i < 4; i++) {
-    auto frag = dequant(b);
-
-#pragma unroll
-    for (u32 j = 0; j < 2; j++) {
-      auto w_q = frag.elems[j];
-      half2 w = dequantize2(w_q, ws2, wz2);
-      float2 x_fp32 = __half22float2(*(s_x2++));
-      float2 w_fp32 = __half22float2(w);
-      acc = fmaf(x_fp32.x, w_fp32.x, acc);
-      acc = fmaf(x_fp32.y, w_fp32.y, acc);
-    }
-    b >>= 12ull;
-  }
-  return acc;
-#endif
 }
 
 template <int K>
@@ -633,39 +615,30 @@ __device__ __forceinline__ Vec<float, K>
 accumulate_batched_lut(Vec<float, K> acc, u64 b, const half2 &ws2,
                        const half2 &wz2, const half2 *__restrict__ s_x2,
                        const half2 *__restrict__ lut) {
-  b >>= 6u;
 #pragma unroll
-  for (u32 i = 0; i < 4; i++) {
-    //    auto frag = dequant(b);
-    Frag4 frag{lut[b & 0b111111u], lut[(b & 0b111111000000) >> 6]};
-
-#pragma unroll
-    for (int j = 0; j < 2; j++) {
-      auto w_q = frag.elems[j];
-      half2 w = dequantize2(w_q, ws2, wz2);
-      float2 w_fp32 = __half22float2(w);
-
-      if constexpr (K == 1) {
-        float2 x_fp32 = __half22float2(*(s_x2++));
-        acc[0] = fmaf(x_fp32.x, w_fp32.x, acc[0]);
-        acc[0] = fmaf(x_fp32.y, w_fp32.y, acc[0]);
-      } else {
+  for (u32 i = 0; i < 8; i++) {
+    auto w_q = lut[(b >>= 6u) & 0b111111u];
+    half2 w = dequantize2(w_q, ws2, wz2);
+    float2 w_fp32 = __half22float2(w);
+    if constexpr (K == 1) {
+      float2 x_fp32 = __half22float2(*s_x2);
+      acc[0] = fmaf(x_fp32.x, w_fp32.x, acc[0]);
+      acc[0] = fmaf(x_fp32.y, w_fp32.y, acc[0]);
+    } else {
 #pragma loop unroll
-        for (int l = 0; l < K / 2; l++) {
-          Vec<half2, 2> x{.elems = {s_x2[l], s_x2[l + K / 2]}};
-          Vec<half2, 2> x_t = transpose_2x2(x);
-
+      for (int l = 0; l < K / 2; l++) {
+        Vec<half2, 2> x{.elems = {s_x2[l], s_x2[l + K / 2]}};
+        Vec<half2, 2> x_t = transpose_2x2(x);
 #pragma loop unroll
-          for (int k = 0; k < 2; k++) {
-            float2 x_fp32 = __half22float2(x_t[k]);
-            acc[2 * l + k] = fmaf(x_fp32.x, w_fp32.x, acc[2 * l + k]);
-            acc[2 * l + k] = fmaf(x_fp32.y, w_fp32.y, acc[2 * l + k]);
-          }
+        for (int k = 0; k < 2; k++) {
+          float2 x_fp32 = __half22float2(x_t[k]);
+          acc[2 * l + k] = fmaf(x_fp32.x, w_fp32.x, acc[2 * l + k]);
+          acc[2 * l + k] = fmaf(x_fp32.y, w_fp32.y, acc[2 * l + k]);
         }
         s_x2 += K;
       }
     }
-    b >>= 12ull;
+    s_x2 += K;
   }
   return acc;
 }
@@ -683,6 +656,7 @@ struct DenseMatrixRunner {
   u32 row_pos;
   u32 num_tiles_per_row;
   u32 subtile_id;
+  const half2 *__restrict__ lut;
 
   float acc{};
   u32 pipeline_id{};
@@ -727,7 +701,7 @@ struct DenseMatrixRunner {
         __syncthreads();
       }
 
-      acc = accumulate(acc, v, ws2, wz2, s_x2_);
+      acc = accumulate(acc, v, ws2, wz2, s_x2_, lut);
 
       i += NUM_SPQR_TILES_PER_ITERATION;
       local_raw_data += NUM_SPQR_TILES_PER_ITERATION * BETA1;
@@ -763,6 +737,7 @@ struct DenseMatrixRunnerBatched {
 
   DEVICE_INLINE void process_dense() {
     const uint64_t SHIFT = SECOND_ORDER_FRAGMENT_SIZE_BITS * (row_pos / OFFSET);
+    //                                                                    = 2
 
     // For higher batch sizes, we don't have any guarantees that smem will be
     // large enough to fit x.
@@ -982,6 +957,24 @@ __global__ void spqr_quantized_matvec(
       18ull * static_cast<u64>(BITS);
   constexpr static int OFFSET = BETA1 / SECOND_ORDER_FRAGMENT_SIZE_BITS;
 
+  static constexpr u32 LUT_SIZE = 64;
+  __shared__ half2 lut[LUT_SIZE];
+  if constexpr (THREAD_COUNT >= 64) {
+    const auto v = make_half2(__int2half_rd(thread_xy & 0b111),
+                              __int2half_rd((thread_xy >> 3) & 0b111));
+#pragma unroll
+    for (u32 i = thread_xy; i < LUT_SIZE; i += THREAD_COUNT) {
+      lut[i] = v;
+    }
+  } else {
+#pragma unroll
+    for (u32 i = thread_xy; i < LUT_SIZE; i += THREAD_COUNT) {
+      const auto v = make_half2(__int2half_rd(i & 0b111u),
+                                __int2half_rd((i >> 3u) & 0b111u));
+      lut[i] = v;
+    }
+  }
+
   __syncthreads();
 
   // Here we load the row offsets into smem.
@@ -1003,7 +996,8 @@ __global__ void spqr_quantized_matvec(
                           .s_x2 = s_x2,
                           .row_pos = row_pos,
                           .num_tiles_per_row = num_tiles_per_tile_row,
-                          .subtile_id = subtile_id};
+                          .subtile_id = subtile_id,
+                          .lut = lut};
 
   dense_matrix_runner.template process_dense<true>();
 
@@ -1475,15 +1469,23 @@ int spqr_matvec(
 #define CALL_BATCHED_K(K)                                                      \
   if (is_csr) {                                                                \
     if (n % (TILE_COUNT * 16) == 0) {                                          \
-      CALL_BATCHED_V2(spqr_quantized_matvec_batched_v2, 1, TILE_COUNT, 1,      \
-                      true, K);                                                \
+      if (n <= (1 << 14)) {                                                    \
+        CALL_MATVEC(spqr_quantized_matvec, 1, 16, 1, true);                    \
+      } else {                                                                 \
+        CALL_BATCHED_V2(spqr_quantized_matvec_batched_v2, 1, TILE_COUNT, 1,    \
+                        true, K);                                              \
+      }                                                                        \
     } else {                                                                   \
       CALL_BATCHED_V2(spqr_quantized_matvec_batched_v2, 1, 1, 1, true, K);     \
     }                                                                          \
   } else {                                                                     \
     if (n % (TILE_COUNT * 16) == 0) {                                          \
-      CALL_BATCHED_V2(spqr_quantized_matvec_batched_v2, 1, TILE_COUNT, 1,      \
-                      false, K);                                               \
+      if (n <= (1 << 14)) {                                                    \
+        CALL_MATVEC(spqr_quantized_matvec, 1, 16, 1, false);                   \
+      } else {                                                                 \
+        CALL_BATCHED_V2(spqr_quantized_matvec_batched_v2, 1, TILE_COUNT, 1,    \
+                        false, K);                                             \
+      }                                                                        \
     } else {                                                                   \
       CALL_BATCHED_V2(spqr_quantized_matvec_batched_v2, 1, 1, 1, false, K);    \
     }                                                                          \
@@ -1558,3 +1560,5 @@ int spqr_matvec_batched(
   }
   return 0;
 }
+
+#pragma clang diagnostic pop

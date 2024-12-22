@@ -7,32 +7,35 @@ import torch
 from scipy.stats import gmean
 from spqr_quant import QuantizedLinear
 from spqr_quant.inference import FeatureFlags
-from spqr_quant.inference_kernels.kernel_selector import get_spqr_mul_timer, get_torch_mul_timer
+from spqr_quant.inference_kernels.kernel_selector import (
+    get_spqr_mul_timer_batched,
+)
+import io
+import pandas as pd
 
-
-def spqr_mul_timer(spqr_device: QuantizedLinear, x, feature_flag: FeatureFlags, num_runs):
-    runs = torch.empty(num_runs).cpu().float()
-    y = torch.zeros(spqr_device.m, dtype=x.dtype, device=x.device)
-
-    for i in range(num_runs):
-        y = torch.zeros_like(y)
-        get_spqr_mul_timer()(
-            spqr_device.m,
-            spqr_device.n,
-            spqr_device.bits,
-            spqr_device.beta1,
-            spqr_device.beta2,
-            spqr_device.dense_weights,
-            spqr_device.row_offsets,
-            spqr_device.col_vals,
-            spqr_device.nnz,
-            x,
-            y,
-            runs[i],
-            feature_flag,
-        )
-
-    return y, runs
+# def spqr_mul_timer(spqr_device: QuantizedLinear, x, feature_flag: FeatureFlags, num_runs):
+#     runs = torch.empty(num_runs).cpu().float()
+#     y = torch.zeros(spqr_device.m, dtype=x.dtype, device=x.device)
+#
+#     for i in range(num_runs):
+#         y = torch.zeros_like(y)
+#         get_spqr_mul_timer()(
+#             spqr_device.m,
+#             spqr_device.n,
+#             spqr_device.bits,
+#             spqr_device.beta1,
+#             spqr_device.beta2,
+#             spqr_device.dense_weights,
+#             spqr_device.row_offsets,
+#             spqr_device.col_vals,
+#             spqr_device.nnz,
+#             x,
+#             y,
+#             runs[i],
+#             feature_flag,
+#         )
+#
+#     return y, runs
 
 
 def torch_mul_timer_runs(deq_w, x, num_runs):
@@ -55,6 +58,48 @@ def torch_mul_timer_runs(deq_w, x, num_runs):
     return y, runs
 
 
+cutlass_str = """m,n,k,Runtime
+11008,11008,1,1.04814
+11008,11008,2,1.05525
+11008,11008,4,1.05238
+11008,4096,1,0.390799
+11008,4096,2,0.392292
+11008,4096,4,0.394158
+4096,11008,1,0.390623
+4096,11008,2,0.391989
+4096,11008,4,0.393089
+4096,4096,1,0.160678
+4096,4096,2,0.147487
+4096,4096,4,0.149273
+"""
+
+cutlass_data = io.StringIO(cutlass_str)
+cutlass_runs = pd.read_csv(cutlass_data)
+
+
+def spqr_mul_timer(spqr_device: QuantizedLinear, x, feature_flag: FeatureFlags, k):
+    result = torch.empty(1).cpu().float()
+    y = torch.zeros(spqr_device.m * k, dtype=x.dtype, device=x.device).flatten().contiguous()
+
+    get_spqr_mul_timer_batched()(
+        spqr_device.m,
+        spqr_device.n,
+        k,
+        spqr_device.bits,
+        spqr_device.beta1,
+        spqr_device.beta2,
+        spqr_device.dense_weights,
+        spqr_device.row_offsets,
+        spqr_device.col_vals,
+        spqr_device.nnz,
+        x,
+        y,
+        result,
+        feature_flag
+    )
+
+    return y, result.item()
+
 if __name__ == "__main__":
     torch_runs = {}
 
@@ -65,10 +110,10 @@ if __name__ == "__main__":
         type=str,
         required=True,
         help="Path to folder containing the tensors of the form"
-        "model_path/"
-        "   0/"
-        "       tensor0"
-        "       tensor1",
+             "model_path/"
+             "   0/"
+             "       tensor0"
+             "       tensor1",
     )
 
     parser.add_argument(
@@ -76,10 +121,10 @@ if __name__ == "__main__":
         type=str,
         required=False,
         help="Path to folder containing the tensors of the form"
-        "model_path/"
-        "   0/"
-        "       tensor0"
-        "       tensor1",
+             "model_path/"
+             "   0/"
+             "       tensor0"
+             "       tensor1",
     )
 
     parser.add_argument(
@@ -107,11 +152,14 @@ if __name__ == "__main__":
 
         for m in [4096, 11008]:
             for n in [4096, 11008]:
-                d = torch.zeros((m, n), dtype=torch.float16, device=device)
-                x = torch.zeros(n, dtype=torch.float16, device=device)
-                y, dense_runs = torch_mul_timer_runs(d, x, NUM_RUNS)
-                this_algorithm = dense_runs[WARMUP:].min()
-                torch_runs[(m, n)] = this_algorithm
+                # d = torch.zeros((m, n), dtype=torch.float16, device=device)
+                # x = torch.zeros(n, dtype=torch.float16, device=device)
+                # y, dense_runs = torch_mul_timer_runs(d, x, NUM_RUNS)
+                cutlass_run = cutlass_runs[
+                    (cutlass_runs["m"] == m) &
+                    (cutlass_runs["n"] == n) &
+                    (cutlass_runs["k"] == 1)]["Runtime"].item()
+                torch_runs[(m, n)] = cutlass_run
                 torch.cuda.empty_cache()
                 time.sleep(2)
 
@@ -132,9 +180,9 @@ if __name__ == "__main__":
         f.write("Layer;Tensor Name;M;N;Sparsity (%)")
 
         for method in [FeatureFlags.TORCH_FP16] + methods:
-            f.write(f";{method.pretty()} (ms)")
+            f.write(f";{method.pretty()} CSR (ms)")
 
-        f.write(f";{method.pretty()} Modified CSR (ms)")
+        f.write(f";{method.pretty()} PTCSR (ms)")
 
         f.write("\n")
 
@@ -174,9 +222,11 @@ if __name__ == "__main__":
                 spqr_module.to(device=device)
                 spqr_module_device = spqr_module
 
+
                 def generate_x_fp32(n, upper_bound=3):
                     x_fp32 = ((torch.rand(n) - 0.5) * 4 * upper_bound).int()
                     return x_fp32.float()
+
 
                 x_fp32 = generate_x_fp32(n)
                 x_fp16_device = x_fp32.cuda(device=device).half()
@@ -195,19 +245,14 @@ if __name__ == "__main__":
                 for flag in methods:
                     print(f"Running {repr(flag)} on {layer_id}.{p}")
 
-                    y_csr, spqr_runs = spqr_mul_timer(spqr_module_device, x_fp16_device, flag, NUM_RUNS)
-                    spqr_runs = spqr_runs[WARMUP:]
-                    this_algorithm = spqr_runs.min()
+                    y_csr, this_algorithm = spqr_mul_timer(spqr_module_device, x_fp16_device, flag, 1)
 
                     torch.cuda.empty_cache()
                     time.sleep(1)
 
-                    y_ptcsr, spqr_runs_modified_csr = spqr_mul_timer(
-                        spqr_module_device_modified_csr, x_fp16_device, flag, NUM_RUNS
+                    y_ptcsr, this_algorithm_modified_csr = spqr_mul_timer(
+                        spqr_module_device_modified_csr, x_fp16_device, flag, 1
                     )
-
-                    # assert torch.allclose(y_csr, y_ptcsr)
-                    spqr_runs_modified_csr = spqr_runs_modified_csr[WARMUP:]
 
                     speed_up = torch_run / this_algorithm
 
@@ -216,7 +261,6 @@ if __name__ == "__main__":
                     )
 
                     if run_ptcsr:
-                        this_algorithm_modified_csr = spqr_runs_modified_csr.min()
                         speed_up_modified_csr = torch_run / this_algorithm_modified_csr
                         print(
                             f"\t{repr(flag)} modified csr running {this_algorithm_modified_csr} ms {speed_up_modified_csr:.2f}X speed-up vs torch {torch_run} ms"

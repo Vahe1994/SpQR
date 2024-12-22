@@ -350,6 +350,6 @@ class FeatureFlags(IntEnum):
         if self.value == FeatureFlags.TORCH_FP16:
             return "Torch FP16"
         elif self.value == FeatureFlags.SPARSE_FUSED_FP32:
-            return "Sparse Fused FP32"
+            return "Fused"
         else:
             raise "Prettify not found for value {self.value}"
