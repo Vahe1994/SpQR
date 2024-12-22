@@ -128,7 +128,7 @@ union ColVal {
   uint32_t _;
 
   struct {
-    short c;
+    unsigned short c;
     half v;
   } members;
 };

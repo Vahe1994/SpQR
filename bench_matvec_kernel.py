@@ -59,18 +59,10 @@ def torch_mul_timer_runs(deq_w, x, num_runs):
 
 
 cutlass_str = """m,n,k,Runtime
-11008,11008,1,1.04814
-11008,11008,2,1.05525
-11008,11008,4,1.05238
-11008,4096,1,0.390799
-11008,4096,2,0.392292
-11008,4096,4,0.394158
-4096,11008,1,0.390623
-4096,11008,2,0.391989
-4096,11008,4,0.393089
-4096,4096,1,0.160678
-4096,4096,2,0.147487
-4096,4096,4,0.149273
+11008,11008,1,1.04251
+11008,4096,1,0.395374
+4096,11008,1,0.385591
+4096,4096,1,0.148815
 """
 
 cutlass_data = io.StringIO(cutlass_str)
@@ -160,8 +152,8 @@ if __name__ == "__main__":
                     (cutlass_runs["n"] == n) &
                     (cutlass_runs["k"] == 1)]["Runtime"].item()
                 torch_runs[(m, n)] = cutlass_run
-                torch.cuda.empty_cache()
-                time.sleep(2)
+                # torch.cuda.empty_cache()
+                # time.sleep(2)
 
         csr_folders = os.listdir(base_path)
 
@@ -189,6 +181,13 @@ if __name__ == "__main__":
         benchmark_results_ms = []
         benchmark_speed_up = []
 
+
+        def generate_x_fp32(n, upper_bound=3):
+            x_fp32 = ((torch.rand(n) - 0.5) * 4 * upper_bound).int()
+            return x_fp32.float()
+        x_fp32 = generate_x_fp32(n)
+        x_fp16_device = x_fp32.cuda(device=device).half()
+
         for layer_id in csr_folders:
             folder = os.path.join(base_path, layer_id)
             folder_ptcsr = os.path.join(base_path_modified_csr, layer_id)
@@ -204,12 +203,12 @@ if __name__ == "__main__":
                 tensor_path = os.path.join(folder, p)
                 tensor_path_modified_csr = os.path.join(folder_ptcsr, p_modified_csr)
 
-                spqr_module_modified_csr = torch.load(tensor_path_modified_csr)
+                spqr_module_ptcsr = torch.load(tensor_path_modified_csr)
 
-                deq_w_modified_csr = spqr_module_modified_csr.dequantize()
+                # deq_w_modified_csr = spqr_module_modified_csr.dequantize()
 
-                spqr_module_modified_csr.to(device=device)
-                spqr_module_device_modified_csr = spqr_module_modified_csr
+                spqr_module_ptcsr.to(device=device)
+                spqr_module_device_ptcsr = spqr_module_ptcsr
 
                 spqr_module = torch.load(tensor_path)
 
@@ -217,21 +216,14 @@ if __name__ == "__main__":
                 n = spqr_module.n
                 print(f"Running {m} x {n}")
 
-                deq_w = spqr_module.dequantize()
+                # deq_w = spqr_module.dequantize()
 
                 spqr_module.to(device=device)
                 spqr_module_device = spqr_module
 
 
-                def generate_x_fp32(n, upper_bound=3):
-                    x_fp32 = ((torch.rand(n) - 0.5) * 4 * upper_bound).int()
-                    return x_fp32.float()
 
-
-                x_fp32 = generate_x_fp32(n)
-                x_fp16_device = x_fp32.cuda(device=device).half()
-
-                deq_w_device = deq_w.to(device).half().flatten()
+                # deq_w_device = deq_w.to(device).half().flatten()
 
                 dense_speed_up = 0
                 baseline_speed_up = 0
@@ -247,11 +239,10 @@ if __name__ == "__main__":
 
                     y_csr, this_algorithm = spqr_mul_timer(spqr_module_device, x_fp16_device, flag, 1)
 
-                    torch.cuda.empty_cache()
-                    time.sleep(1)
+                    time.sleep(0.01)
 
                     y_ptcsr, this_algorithm_modified_csr = spqr_mul_timer(
-                        spqr_module_device_modified_csr, x_fp16_device, flag, 1
+                        spqr_module_device_ptcsr, x_fp16_device, flag, 1
                     )
 
                     speed_up = torch_run / this_algorithm

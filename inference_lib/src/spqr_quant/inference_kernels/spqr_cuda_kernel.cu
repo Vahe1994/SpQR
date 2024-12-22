@@ -624,6 +624,7 @@ accumulate_batched_lut(Vec<float, K> acc, u64 b, const half2 &ws2,
       float2 x_fp32 = __half22float2(*s_x2);
       acc[0] = fmaf(x_fp32.x, w_fp32.x, acc[0]);
       acc[0] = fmaf(x_fp32.y, w_fp32.y, acc[0]);
+      s_x2++;
     } else {
 #pragma loop unroll
       for (int l = 0; l < K / 2; l++) {
@@ -635,10 +636,9 @@ accumulate_batched_lut(Vec<float, K> acc, u64 b, const half2 &ws2,
           acc[2 * l + k] = fmaf(x_fp32.x, w_fp32.x, acc[2 * l + k]);
           acc[2 * l + k] = fmaf(x_fp32.y, w_fp32.y, acc[2 * l + k]);
         }
-        s_x2 += K;
       }
+      s_x2 += K;
     }
-    s_x2 += K;
   }
   return acc;
 }
@@ -1013,7 +1013,7 @@ __global__ void spqr_quantized_matvec(
     half *s_x = reinterpret_cast<half *>(s_x2);
     for (u32 i = s + subtile_id; i < e; i += BLOCK_WIDTH) {
       ColVal colval{._ = __ldg(col_vals + i)};
-      auto c = colval.members.c;
+      unsigned short c = colval.members.c;
       auto v = colval.members.v;
       acc += __half2float(v) * __half2float(s_x[c]);
     }
@@ -1026,21 +1026,22 @@ __global__ void spqr_quantized_matvec(
 
       if (s + thread_xy < e) {
         ColVal colval{._ = col_vals[s + thread_xy]};
-        auto c = colval.members.c;
+        unsigned short c = colval.members.c;
         auto v = colval.members.v;
-        acc += __half2float(v) * __half2float(s_x[c]);
+        acc = fmaf(__half2float(v), __half2float(s_x[c]), acc);
       }
 
       for (u32 i = s + thread_xy + BLOCK_WIDTH * BETA1; i < e;
            i += BLOCK_WIDTH * BETA1) {
         ColVal colval{._ = col_vals[i]};
 
-        if (!colval._)
+        if (!colval._) {
           break;
+        }
 
-        auto c = colval.members.c;
+        unsigned short c = colval.members.c;
         auto v = colval.members.v;
-        acc += __half2float(v) * __half2float(s_x[c]);
+        acc = fmaf(__half2float(v), __half2float(s_x[c]), acc);
       }
     }
   }
@@ -1316,7 +1317,7 @@ __global__ void spqr_quantized_matvec_batched_v2(
     auto addr = tile_row_id * BETA1 + threadIdx.x;
 
     if constexpr (K == 1) {
-      y_fp16[K * addr] = __float2half(dense_matrix_runner.accs[0]);
+      y_fp16[addr] = __float2half(dense_matrix_runner.accs[0]);
     } else {
 #pragma loop unroll
       for (int i = 0; i < K; i += 2) {
@@ -1469,7 +1470,7 @@ int spqr_matvec(
 #define CALL_BATCHED_K(K)                                                      \
   if (is_csr) {                                                                \
     if (n % (TILE_COUNT * 16) == 0) {                                          \
-      if (n <= (1 << 14)) {                                                    \
+      if ((K) == 1 && n <= (1 << 14)) {                                        \
         CALL_MATVEC(spqr_quantized_matvec, 1, 16, 1, true);                    \
       } else {                                                                 \
         CALL_BATCHED_V2(spqr_quantized_matvec_batched_v2, 1, TILE_COUNT, 1,    \
@@ -1480,7 +1481,7 @@ int spqr_matvec(
     }                                                                          \
   } else {                                                                     \
     if (n % (TILE_COUNT * 16) == 0) {                                          \
-      if (n <= (1 << 14)) {                                                    \
+      if ((K) == 1 && n <= (1 << 14)) {                                        \
         CALL_MATVEC(spqr_quantized_matvec, 1, 16, 1, false);                   \
       } else {                                                                 \
         CALL_BATCHED_V2(spqr_quantized_matvec_batched_v2, 1, TILE_COUNT, 1,    \
@@ -1533,8 +1534,8 @@ int spqr_matvec_batched(
     void *X,
     // Output
     void *y, cudaStream_t stream, void *measurements, uint32_t feature_flag) {
-  constexpr int NUM_RUNS = 200;
-  constexpr int WARMUPS = 200;
+  constexpr int NUM_RUNS = 3000;
+  constexpr int WARMUPS = 1000;
 
   Features features{._ = feature_flag};
   Timer *timer{};
