@@ -39,7 +39,7 @@ int spqr_matvec_batched(
     void *y,
     // GPU meta
     cudaStream_t stream = nullptr, void *measurements = nullptr,
-    uint32_t feature_flag = 0);
+    u32 feature_flag = 0);
 
 int spqr_matvec(
     // W and meta
@@ -57,15 +57,15 @@ int spqr_matvec(
     void *y,
     // GPU meta
     cudaStream_t stream = nullptr, void *measurements = nullptr,
-    uint32_t feature_flag = 0);
+    u32 feature_flag = 0);
 
-void spqr_mul(int64_t m, int64_t n, int64_t bits, int64_t beta1, int64_t beta2,
+void spqr_mul(s64 m, s64 n, s64 bits, s64 beta1, s64 beta2,
               const torch::Tensor &dense_weights,
               const torch::Tensor &row_offsets,
-              const torch::Tensor &col_val_ptr, int64_t nnz,
-              const torch::Tensor &X, int64_t _feature_flag,
+              const torch::Tensor &col_val_ptr, s64 nnz,
+              const torch::Tensor &X, s64 _feature_flag,
               const torch::Tensor &Y, torch::Tensor &out) {
-  uint32_t feature_flag = static_cast<uint32_t>(_feature_flag);
+  u32 feature_flag = static_cast<u32>(_feature_flag);
   int dev = dense_weights.get_device();
 
   // Choose which algorithm to use
@@ -166,17 +166,17 @@ void dequantize_compressed(int m, int n, int bits, int beta1, int beta2,
   int tile_id{};
   int subtile_id{};
   int w_id{};
-  uint64_t *dense_weights_ptr =
-      reinterpret_cast<uint64_t *>(dense_weights.data_ptr());
+  u64 *dense_weights_ptr =
+      reinterpret_cast<u64 *>(dense_weights.data_ptr());
 
   std::vector<float> deq_float32(m * n, 0);
 
   for (int ii = 0; ii < m; ii += beta1) {
     for (int jj = 0; jj < n; jj += beta2) {
-      uint64_t w2_bits{};
+      u64 w2_bits{};
 
       for (int k = 0; k < beta1; k++) {
-        uint64_t partial = (dense_weights_ptr[k] >> (bits * (beta1 + 2)));
+        u64 partial = (dense_weights_ptr[k] >> (bits * (beta1 + 2)));
         w2_bits |= (partial << (SECOND_ORDER_FRAGMENT_SIZE_BITS *
                                 (k / (SECOND_ORDER_FRAGMENT_SIZE_BITS / 4))));
       }
@@ -238,13 +238,13 @@ void dequantize_compressed(int m, int n, int bits, int beta1, int beta2,
   }
 }
 
-void spqr_mul_batched(int64_t m, int64_t n, int64_t k, int64_t bits, int64_t beta1, int64_t beta2,
+void spqr_mul_batched(s64 m, s64 n, s64 k, s64 bits, s64 beta1, s64 beta2,
               const torch::Tensor &dense_weights,
               const torch::Tensor &row_offsets,
-              const torch::Tensor &col_val_ptr, int64_t nnz,
-              const torch::Tensor &X, int64_t _feature_flag,
+              const torch::Tensor &col_val_ptr, s64 nnz,
+              const torch::Tensor &X, s64 _feature_flag,
               const torch::Tensor &Y, torch::Tensor &out) {
-  uint32_t feature_flag = static_cast<uint32_t>(_feature_flag);
+  u32 feature_flag = static_cast<u32>(_feature_flag);
   int dev = dense_weights.get_device();
 
   // Choose which algorithm to use
@@ -269,7 +269,7 @@ void spqr_mul_timer_batched(int m, int n, int k,
                     const torch::Tensor &col_val, int nnz,
                     // 16-bit
                     const torch::Tensor &X, torch::Tensor &Y,
-                    torch::Tensor &measurements, uint32_t feature_flag) {
+                    torch::Tensor &measurements, u32 feature_flag) {
   int dev = weights.get_device();
 
   // Choose which algorithm to use
@@ -293,7 +293,7 @@ void spqr_mul_timer(int m, int n,
                     const torch::Tensor &col_val, int nnz,
                     // 16-bit
                     const torch::Tensor &X, torch::Tensor &Y,
-                    torch::Tensor &measurements, uint32_t feature_flag) {
+                    torch::Tensor &measurements, u32 feature_flag) {
   int dev = weights.get_device();
 
   // Choose which algorithm to use
@@ -358,7 +358,7 @@ void tensor_compress_interleaved(
     }
   }
 
-  using Bit_t = uint64_t;
+  using Bit_t = u64;
 
   constexpr int BITS = 3;
   TileArray<Bit_t, BITS> tile_array(static_cast<Bit_t *>(out.data_ptr()));
@@ -387,7 +387,7 @@ void tensor_compress_interleaved(
       zz.y = w_z_z_ptr[tile_id];
 
       SecondOrder second_order{.members = {.ss = ss, .zz = zz}};
-      uint64_t v = second_order.v;
+      u64 v = second_order.v;
 
       int to_add{};
       int k{};
@@ -408,12 +408,12 @@ void tensor_compress_interleaved(
           }
         }
 
-        uint64_t PARTIAL_OFFSET = BITS * (beta2 + 2);
+        u64 PARTIAL_OFFSET = BITS * (beta2 + 2);
 
-        uint64_t FRAG_MASK =
+        u64 FRAG_MASK =
             Bit_t((1ull << SECOND_ORDER_FRAGMENT_SIZE_BITS) - 1ull);
 
-        uint64_t partial =
+        u64 partial =
             (v >> (Bit_t((k / (SECOND_ORDER_FRAGMENT_SIZE_BITS / 4))) *
                    Bit_t(SECOND_ORDER_FRAGMENT_SIZE_BITS))) &
             FRAG_MASK;
@@ -429,14 +429,14 @@ void tensor_compress_interleaved(
   }
 }
 
-void spqr_mul_fused(int64_t m, int64_t n, int64_t bits, int64_t beta1,
-                    int64_t beta2, const torch::Tensor &in_order,
+void spqr_mul_fused(s64 m, s64 n, s64 bits, s64 beta1,
+                    s64 beta2, const torch::Tensor &in_order,
                     const torch::Tensor &dense_weights,
                     const torch::Tensor &row_offsets,
-                    const torch::Tensor &col_val_ptr, int64_t nnz,
-                    const torch::Tensor &X, int64_t _feature_flag,
+                    const torch::Tensor &col_val_ptr, s64 nnz,
+                    const torch::Tensor &X, s64 _feature_flag,
                     const torch::Tensor &Y, torch::Tensor &out) {
-  uint32_t feature_flag = static_cast<uint32_t>(_feature_flag);
+  u32 feature_flag = static_cast<u32>(_feature_flag);
   int dev = dense_weights.get_device();
 
   // Choose which algorithm to use
@@ -475,12 +475,12 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 
 struct QuantizedLinear {
   int m, n;
-  uint64_t *dense_weights;
-  uint32_t *col_vals;
-  uint32_t *row_offsets;
+  u64 *dense_weights;
+  u32 *col_vals;
+  u32 *row_offsets;
 };
 
-torch::Tensor load_tensor_from_bin(const std::string& file_path, const std::vector<int64_t>& shape) {
+torch::Tensor load_tensor_from_bin(const std::string& file_path, const std::vector<s64>& shape) {
   // Open the binary file
   std::ifstream file(file_path, std::ios::binary | std::ios::ate);
   if (!file.is_open()) {

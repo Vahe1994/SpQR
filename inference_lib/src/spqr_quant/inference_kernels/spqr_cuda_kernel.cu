@@ -1,5 +1,3 @@
-#pragma clang diagnostic push
-#pragma ide diagnostic ignored "modernize-use-auto"
 /*
  * Copyright (C) SPQR Kernel.2024 Elvir Crncevic (elvircrn@gmail.com)
  *
@@ -23,18 +21,26 @@
 #include <cuda_pipeline.h>
 #include <cuda_runtime.h>
 
+__device__ void printf_half2(const half2 &_x) {
+  auto x = __half22float2(_x);
+  printf("%f %f\n", x.x, x.y);
+}
+
+
+__device__ void printf_float2(float2 x) {
+  printf("%f %f\n", x.x, x.y);
+}
+
 #define DEVICE_INLINE __forceinline__ __device__
 
 extern "C" __device__ uint32_t __nvvm_get_smem_pointer(void *);
 
-half2 DEVICE_INLINE dequantize2(const half2 &q, const half2 &s,
-                                const half2 &z) {
+half2 DEVICE_INLINE dequantize2(const half2 &q, const half2 &s, const half2 &z) {
   const half2 &res = __hmul2(s, __hsub2(q, z));
   return res;
 }
 
-template <class Bit_t, class Scalar_t>
-DEVICE_INLINE Scalar_t dequantize(Bit_t q, Scalar_t s, Scalar_t z) {
+template<class Bit_t, class Scalar_t> DEVICE_INLINE Scalar_t dequantize(Bit_t q, Scalar_t s, Scalar_t z) {
   if constexpr (std::is_same<Bit_t, half>::value) {
     return __hmul(s, __hsub(q, z));
   } else {
@@ -42,10 +48,9 @@ DEVICE_INLINE Scalar_t dequantize(Bit_t q, Scalar_t s, Scalar_t z) {
   }
 }
 
-#define INT2_TO_HALF2(v)                                                       \
-  make_half2(__int2half_rd((v) & 0b111), __int2half_rd(((v) >> 3) & 0b111))
+#define INT2_TO_HALF2(v) make_half2(__int2half_rd((v) & 0b111), __int2half_rd(((v) >> 3) & 0b111))
 
-template <class Acc_t> constexpr __device__ __host__ bool is_fp32() {
+template<class Acc_t> constexpr __device__ __host__ bool is_fp32() {
   if constexpr (std::is_same_v<Acc_t, float> || std::is_same_v<Acc_t, float2>) {
     return true;
   }
@@ -55,11 +60,9 @@ template <class Acc_t> constexpr __device__ __host__ bool is_fp32() {
 // Lookup-table based 3-input logical operation; explicitly used for
 // dequantization as the compiler does not seem to automatically recognize it in
 // all cases.
-template <int lut> __device__ inline int lop3(int a, int b, int c) {
+template<int lut> __device__ inline int lop3(int a, int b, int c) {
   int res;
-  asm volatile("lop3.b32 %0, %1, %2, %3, %4;\n"
-               : "=r"(res)
-               : "r"(a), "r"(b), "r"(c), "n"(lut));
+  asm volatile("lop3.b32 %0, %1, %2, %3, %4;\n" : "=r"(res) : "r"(a), "r"(b), "r"(c), "n"(lut));
   return res;
 }
 
@@ -68,9 +71,11 @@ template <int lut> __device__ inline int lop3(int a, int b, int c) {
 // corresponding index accesses must be compile-time constants, which is why we
 // extensively use `#pragma unroll` throughout the kernel code to guarantee
 // this.
-template <typename T, int n> struct Vec {
+template<typename T, int n> struct Vec {
   T elems[n];
+
   DEVICE_INLINE T &operator[](int i) { return elems[i]; }
+
   DEVICE_INLINE const T operator[](int i) const { return elems[i]; }
 };
 
@@ -83,8 +88,7 @@ using Frag4 = Vec<half2, 2>;
 // changes:
 // https://github.com/NVIDIA/FasterTransformer/blob/main/src/fastertransformer/cutlass_extensions/include/cutlass_extensions/interleaved_numeric_conversion.h
 __device__ __forceinline__ Frag4 dequant(int q) {
-  q = (q & 0b111) | ((q & 0b111000000) >> 2) | ((q & 0b111000) << 13) |
-      ((q & 0b111000000000) << 11);
+  q = (q & 0b111) | ((q & 0b111000000) >> 2) | ((q & 0b111000) << 13) | ((q & 0b111000000000) << 11);
 
   // q = q0 | (q1 << 8) | (q2 << 16) | (q3 << 24);
   // q = q0 | (q1 << 8) | (q2 << 16) | (q3 << 24);
@@ -111,30 +115,26 @@ __device__ __forceinline__ Frag4 dequant(int q) {
   constexpr int HI = 0x00f000f0;
   constexpr int EX = 0x64006400;
   // Guarantee that the `(a & b) | c` operations are LOP3s.
-  int lo = lop3 < (0xf0 & 0xcc) | 0xaa > (q, LO, EX);
-  int hi = lop3 < (0xf0 & 0xcc) | 0xaa > (q, HI, EX);
+  int lo = lop3<(0xf0 & 0xcc) | 0xaa>(q, LO, EX);
+  int hi = lop3<(0xf0 & 0xcc) | 0xaa>(q, HI, EX);
   // We want signed int4 outputs, hence we fuse the `-8` symmetric zero point
   // directly into `SUB` and `ADD`.
   constexpr int SUB = 0x64006400;
   constexpr int MUL = 0x2c002c00;
   constexpr int ADD = 0xd400d400;
   Frag4 frag_b;
-  frag_b[0] = __hsub2(*reinterpret_cast<half2 *>(&lo),
-                      *reinterpret_cast<const half2 *>(&SUB));
-  frag_b[1] = __hfma2(*reinterpret_cast<half2 *>(&hi),
-                      *reinterpret_cast<const half2 *>(&MUL),
-                      *reinterpret_cast<const half2 *>(&ADD));
+  frag_b[0] = __hsub2(*reinterpret_cast<half2 *>(&lo), *reinterpret_cast<const half2 *>(&SUB));
+  frag_b[1] = __hfma2(
+      *reinterpret_cast<half2 *>(&hi), *reinterpret_cast<const half2 *>(&MUL), *reinterpret_cast<const half2 *>(&ADD));
   return frag_b;
 }
 
 DEVICE_INLINE Vec<half2, 2> transpose_2x2(const Vec<half2, 2> &a) {
-  return Vec<half2, 2>{
-      .elems = {make_half2(a[0].x, a[1].x), make_half2(a[0].y, a[1].y)}};
+  return Vec<half2, 2>{.elems = {make_half2(a[0].x, a[1].x), make_half2(a[0].y, a[1].y)}};
 }
 
 DEVICE_INLINE Vec<half2, 2> transpose_4x4(const Vec<half2, 2> &a) {
-  return Vec<half2, 2>{
-      .elems = {make_half2(a[0].x, a[1].x), make_half2(a[0].y, a[1].y)}};
+  return Vec<half2, 2>{.elems = {make_half2(a[0].x, a[1].x), make_half2(a[0].y, a[1].y)}};
 }
 
 // Efficiently dequantize an int32 value into a full B-fragment of 4 fp16
@@ -146,8 +146,7 @@ __device__ __forceinline__ half2 dequant2(int q) {
 
   int lo = (q & 0b111) | (((q & 0b111000) << 13)) | EX;
   constexpr int SUB = 0x64006400;
-  return __hsub2(*reinterpret_cast<half2 *>(&lo),
-                 *reinterpret_cast<const half2 *>(&SUB));
+  return __hsub2(*reinterpret_cast<half2 *>(&lo), *reinterpret_cast<const half2 *>(&SUB));
 }
 
 DEVICE_INLINE uint64_t recover_second_order_sync(uint64_t val) {
@@ -162,18 +161,14 @@ union RowBits {
   uint64_t mask;
 
   struct {
-    uint64_t s : 3;
-    uint64_t z : 3;
-    uint64_t w : 48;
+    uint64_t s: 3;
+    uint64_t z: 3;
+    uint64_t w: 48;
   };
 
-  __device__ __forceinline__ u16 get_w(u32 i) const {
-    return (w >> (i * 3u)) & ((1u << 3u) - 1u);
-  }
+  __device__ __forceinline__ u16 get_w(u32 i) const { return (w >> (i * 3u)) & ((1u << 3u) - 1u); }
 
-  __device__ __forceinline__ u32 get_w2(u32 i) const {
-    return (mask >> (i * 6u)) & ((1u << 6u) - 1u);
-  }
+  __device__ __forceinline__ u32 get_w2(u32 i) const { return (mask >> (i * 6u)) & ((1u << 6u) - 1u); }
 };
 
 #define CUINLINE __forceinline__
@@ -181,11 +176,9 @@ union RowBits {
 #define UPDIV(X, Y) (((X) + (Y) - 1) / (Y))
 #define MAX(X, Y) ((X) < (Y) ? (Y) : (X))
 
-[[nodiscard]] __device__ __host__ CUINLINE int updiv(int x, int y) {
-  return (x + y - 1) / y;
-}
+[[nodiscard]] __device__ __host__ CUINLINE int updiv(int x, int y) { return (x + y - 1) / y; }
 
-template <class Scalar_t> __host__ __device__ auto vectorize(Scalar_t *ptr) {
+template<class Scalar_t> __host__ __device__ auto vectorize(Scalar_t *ptr) {
   if constexpr (std::is_same<Scalar_t, float>::value) {
     return reinterpret_cast<float2 *>(ptr);
   } else if constexpr (std::is_same<Scalar_t, half>::value) {
@@ -195,9 +188,8 @@ template <class Scalar_t> __host__ __device__ auto vectorize(Scalar_t *ptr) {
   }
 }
 
-template <class Vec_t> __host__ __device__ auto scalarize(void *ptr) {
-  if constexpr (std::is_same<Vec_t, float>::value ||
-                std::is_same<Vec_t, float2>::value) {
+template<class Vec_t> __host__ __device__ auto scalarize(void *ptr) {
+  if constexpr (std::is_same<Vec_t, float>::value || std::is_same<Vec_t, float2>::value) {
     return reinterpret_cast<float *>(ptr);
   } else if constexpr (std::is_same<Vec_t, half2>::value) {
     return reinterpret_cast<half *>(ptr);
@@ -213,9 +205,7 @@ DEVICE_INLINE half add_and_accum(const half2 &a, const half2 &b) {
   return __hadd(r.x, r.y);
 }
 
-template <class T> DEVICE_INLINE u16 get_col(T m) {
-  return static_cast<u16>(m & T((1u << 16u) - 1u));
-}
+template<class T> DEVICE_INLINE u16 get_col(T m) { return static_cast<u16>(m & T((1u << 16u) - 1u)); }
 
 DEVICE_INLINE half get_val(u32 m) {
   u16 _v = m >> 16u;
@@ -223,72 +213,62 @@ DEVICE_INLINE half get_val(u32 m) {
   return v;
 }
 
-#define CALL_FUSED(F, _BLOCK_HEIGHT, _BLOCK_WIDTH, PIPELINE_DEPTH, IS_CSR)     \
-  constexpr int BLOCK_HEIGHT = _BLOCK_HEIGHT;                                  \
-  constexpr int BLOCK_WIDTH = _BLOCK_WIDTH;                                    \
-  size_t smem_size = __max(4096 * sizeof(half2), sizeof(half2) * n / 2);       \
-  F<3, 16, 16, BLOCK_HEIGHT, BLOCK_WIDTH, u64, PIPELINE_DEPTH, IS_CSR>         \
-      <<<dim3(updiv(m, 16 * BLOCK_HEIGHT), 1, 1),                              \
-         dim3(__min(updiv(n, 16), BLOCK_WIDTH) * 16,                           \
-              __min(updiv(m, 16), BLOCK_HEIGHT), 1),                           \
-         smem_size, stream>>>(m, n, order_ptr, raw_data_ptr, X_ptr,            \
-                              row_offsets_ptr, col_vals_ptr, y_ptr);
+#define CALL_FUSED(F, _BLOCK_HEIGHT, _BLOCK_WIDTH, PIPELINE_DEPTH, IS_CSR)                                             \
+  constexpr int BLOCK_HEIGHT = _BLOCK_HEIGHT;                                                                          \
+  constexpr int BLOCK_WIDTH = _BLOCK_WIDTH;                                                                            \
+  size_t smem_size = __max(4096 * sizeof(half2), sizeof(half2) * n / 2);                                               \
+  F<3, 16, 16, BLOCK_HEIGHT, BLOCK_WIDTH, u64, PIPELINE_DEPTH, IS_CSR>                                                 \
+      <<<dim3(updiv(m, 16 * BLOCK_HEIGHT), 1, 1),                                                                      \
+         dim3(__min(updiv(n, 16), BLOCK_WIDTH) * 16, __min(updiv(m, 16), BLOCK_HEIGHT), 1),                            \
+         smem_size,                                                                                                    \
+         stream>>>(m, n, order_ptr, raw_data_ptr, X_ptr, row_offsets_ptr, col_vals_ptr, y_ptr);
 
-#define CALL_MATVEC(F, _BLOCK_HEIGHT, _BLOCK_WIDTH, PIPELINE_DEPTH, IS_CSR)    \
-  constexpr int BLOCK_HEIGHT = _BLOCK_HEIGHT;                                  \
-  constexpr int BLOCK_WIDTH = _BLOCK_WIDTH;                                    \
-  size_t smem_size = __max(4096 * sizeof(half2), sizeof(half2) * n / 2);       \
-  F<3, 16, 16, BLOCK_HEIGHT, BLOCK_WIDTH, u64, PIPELINE_DEPTH, IS_CSR>         \
-      <<<dim3(updiv(m, 16 * BLOCK_HEIGHT), 1, 1),                              \
-         dim3(__min(updiv(n, 16), BLOCK_WIDTH) * 16,                           \
-              __min(updiv(m, 16), BLOCK_HEIGHT), 1),                           \
-         smem_size, stream>>>(m, n, raw_data_ptr, X_ptr, row_offsets_ptr,      \
-                              col_vals_ptr, y_ptr);
+#define CALL_MATVEC(F, _BLOCK_HEIGHT, _BLOCK_WIDTH, PIPELINE_DEPTH, IS_CSR)                                            \
+  constexpr int BLOCK_HEIGHT = _BLOCK_HEIGHT;                                                                          \
+  constexpr int BLOCK_WIDTH = _BLOCK_WIDTH;                                                                            \
+  size_t smem_size = __max(4096 * sizeof(half2), sizeof(half2) * n / 2);                                               \
+  F<3, 16, 16, BLOCK_HEIGHT, BLOCK_WIDTH, u64, PIPELINE_DEPTH, IS_CSR>                                                 \
+      <<<dim3(updiv(m, 16 * BLOCK_HEIGHT), 1, 1),                                                                      \
+         dim3(__min(updiv(n, 16), BLOCK_WIDTH) * 16, __min(updiv(m, 16), BLOCK_HEIGHT), 1),                            \
+         smem_size,                                                                                                    \
+         stream>>>(m, n, raw_data_ptr, X_ptr, row_offsets_ptr, col_vals_ptr, y_ptr);
 
-#define CALL_BATCHED(F, _BLOCK_HEIGHT, _BLOCK_WIDTH, PIPELINE_DEPTH, IS_CSR,   \
-                     K)                                                        \
-  constexpr int BLOCK_HEIGHT = _BLOCK_HEIGHT;                                  \
-  constexpr int BLOCK_WIDTH = _BLOCK_WIDTH;                                    \
-  size_t smem_size = max(4096 * sizeof(half2), sizeof(half2) * (n / 2) * K);   \
-  F<3, 16, 16, BLOCK_HEIGHT, BLOCK_WIDTH, u64, PIPELINE_DEPTH, IS_CSR, K>      \
-      <<<dim3(updiv(m, 16 * BLOCK_HEIGHT), 1, 1),                              \
-         dim3(__min(updiv(n, 16), BLOCK_WIDTH) * 16,                           \
-              __min(updiv(m, 16), BLOCK_HEIGHT), 1),                           \
-         smem_size, stream>>>(m, n, raw_data_ptr, X_ptr, row_offsets_ptr,      \
-                              col_vals_ptr, y_ptr);
+#define CALL_BATCHED(F, _BLOCK_HEIGHT, _BLOCK_WIDTH, PIPELINE_DEPTH, IS_CSR, K)                                        \
+  constexpr int BLOCK_HEIGHT = _BLOCK_HEIGHT;                                                                          \
+  constexpr int BLOCK_WIDTH = _BLOCK_WIDTH;                                                                            \
+  size_t smem_size = max(4096 * sizeof(half2), sizeof(half2) * (n / 2) * K);                                           \
+  F<3, 16, 16, BLOCK_HEIGHT, BLOCK_WIDTH, u64, PIPELINE_DEPTH, IS_CSR, K>                                              \
+      <<<dim3(updiv(m, 16 * BLOCK_HEIGHT), 1, 1),                                                                      \
+         dim3(__min(updiv(n, 16), BLOCK_WIDTH) * 16, __min(updiv(m, 16), BLOCK_HEIGHT), 1),                            \
+         smem_size,                                                                                                    \
+         stream>>>(m, n, raw_data_ptr, X_ptr, row_offsets_ptr, col_vals_ptr, y_ptr);
 
-#define CALL_BATCHED_V2(F, _BLOCK_HEIGHT, _BLOCK_WIDTH, PIPELINE_DEPTH,        \
-                        IS_CSR, K)                                             \
-  constexpr int BLOCK_HEIGHT = _BLOCK_HEIGHT;                                  \
-  constexpr int BLOCK_WIDTH = _BLOCK_WIDTH;                                    \
-  constexpr int page_size_fp32 = 4096;                                         \
-  F<3, 16, 16, BLOCK_HEIGHT, BLOCK_WIDTH, u64, PIPELINE_DEPTH, IS_CSR, K,      \
-    page_size_fp32><<<dim3(updiv(m, 16 * BLOCK_HEIGHT), 1, 1),                 \
-                      dim3(__min(updiv(n, 16), BLOCK_WIDTH) * 16,              \
-                           __min(updiv(m, 16), BLOCK_HEIGHT), 1),              \
-                      page_size_fp32 * sizeof(float), stream>>>(               \
-      m, n, raw_data_ptr, X_ptr, row_offsets_ptr, col_vals_ptr, y_ptr);
+#define CALL_BATCHED_V2(F, _BLOCK_HEIGHT, _BLOCK_WIDTH, PIPELINE_DEPTH, IS_CSR, K, IS_COLUMN_MAJOR)                    \
+  constexpr int BLOCK_HEIGHT = _BLOCK_HEIGHT;                                                                          \
+  constexpr int BLOCK_WIDTH = _BLOCK_WIDTH;                                                                            \
+  constexpr int page_size_fp32 = 4096;                                                                                 \
+  F<3, 16, 16, BLOCK_HEIGHT, BLOCK_WIDTH, u64, PIPELINE_DEPTH, IS_CSR, K, page_size_fp32, IS_COLUMN_MAJOR>             \
+      <<<dim3(updiv(m, 16 * BLOCK_HEIGHT), 1, 1),                                                                      \
+         dim3(__min(updiv(n, 16), BLOCK_WIDTH) * 16, __min(updiv(m, 16), BLOCK_HEIGHT), 1),                            \
+         page_size_fp32 * sizeof(float),                                                                               \
+         stream>>>(m, n, raw_data_ptr, X_ptr, row_offsets_ptr, col_vals_ptr, y_ptr);
 
 static constexpr u32 SHARED_OFFSET = 32;
+static constexpr u32 WARP_SIZE = 32;
 
 // Wait until at most `n` async copy stages are still pending.
-template <int n> DEVICE_INLINE void cp_async_wait() {
-  asm volatile("cp.async.wait_group %0;\n" ::"n"(n));
-}
+template<int n> DEVICE_INLINE void cp_async_wait() { asm volatile("cp.async.wait_group %0;\n"::"n"(n)); }
 
-DEVICE_INLINE void cp_async(half2 *__restrict__ dst,
-                            const half2 *__restrict__ src) {
+DEVICE_INLINE void cp_async(half2 *__restrict__ dst, const half2 *__restrict__ src) {
   u32 s_dst = u32(__cvta_generic_to_shared(dst));
-  asm volatile("cp.async.ca.shared.global [%0], [%1], 4;\n" ::"r"(s_dst),
-               "l"(src));
+  asm volatile("cp.async.ca.shared.global [%0], [%1], 4;\n"::"r"(s_dst), "l"(src));
 }
 
 using Load_t = __int128_t;
-DEVICE_INLINE void cp_async128(Load_t *__restrict__ dst,
-                               const Load_t *__restrict__ src) {
+
+DEVICE_INLINE void cp_async128(Load_t *__restrict__ dst, const Load_t *__restrict__ src) {
   u32 s_dst = u32(__cvta_generic_to_shared(dst));
-  asm volatile("cp.async.cg.shared.global [%0], [%1], 16;\n" ::"r"(s_dst),
-               "l"(src));
+  asm volatile("cp.async.cg.shared.global [%0], [%1], 16;\n"::"r"(s_dst), "l"(src));
 }
 
 DEVICE_INLINE void cp_async_wait_all() { asm volatile("cp.async.wait_all;\n"); }
@@ -298,8 +278,8 @@ __device__ __forceinline__ uint32_t __ld_stream(const uint32_t *ptr) {
   asm volatile("{\n"
                "   ld.global.ca.u32 %0, [%1];\n"
                "}\n"
-               : "=r"(v)
-               : "l"(ptr));
+      : "=r"(v)
+      : "l"(ptr));
   return v;
 }
 
@@ -309,15 +289,25 @@ constexpr bool PIPELINED_LOAD = false;
 // #define INT2_TO_HALF2(v) s_half2_lut[v]
 // #define INT2_TO_HALF2(v) s_half2_lut[(thread_xy + v) & 0x2F]
 
-template <int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH,
-          class W_t /* = uint64_t */, int PIPELINE_DEPTH, bool IS_CSR>
+template<int BITS,
+    int BETA1,
+    int BETA2,
+    int BLOCK_HEIGHT,
+    int BLOCK_WIDTH,
+    class W_t /* = uint64_t */,
+    int PIPELINE_DEPTH,
+    bool IS_CSR>
 __global__ void spqr_quantized_matvec_fused(
     // W and meta
-    unsigned int m, unsigned int n, const uint16_t *__restrict__ in_order,
+    unsigned int m,
+    unsigned int n,
+    const uint16_t *__restrict__ in_order,
     // W 1st order stats
-    const W_t *__restrict__ dense_matrix, const half *__restrict__ x,
+    const W_t *__restrict__ dense_matrix,
+    const half *__restrict__ x,
     // Outliers
-    const int *__restrict__ row_offsets, const u32 *__restrict__ col_vals,
+    const int *__restrict__ row_offsets,
+    const u32 *__restrict__ col_vals,
     // Output
     half *__restrict__ y_fp16) {
   /*
@@ -336,8 +326,7 @@ __global__ void spqr_quantized_matvec_fused(
 
   static constexpr u32 NUM_HALF_WARPS = BLOCK_HEIGHT * BLOCK_WIDTH;
   static constexpr u32 NUM_WARPS = UPDIV(NUM_HALF_WARPS, 2);
-  static constexpr u32 THREAD_COUNT =
-      BLOCK_HEIGHT * BLOCK_WIDTH * HALF_WARP_SIZE;
+  static constexpr u32 THREAD_COUNT = BLOCK_HEIGHT * BLOCK_WIDTH * HALF_WARP_SIZE;
   static constexpr u32 OUTPUT_SIZE = BETA1 * BLOCK_HEIGHT;
   static constexpr u32 ROW_OFFSETS_SIZE = IS_CSR ? OUTPUT_SIZE : 1;
 
@@ -352,8 +341,7 @@ __global__ void spqr_quantized_matvec_fused(
   const u32 thread_xy = threadIdx.x + (threadIdx.y * blockDim.x);
 
   if constexpr (THREAD_COUNT >= 64) {
-    const auto v = make_half2(__int2half_rd(thread_xy & 0b111),
-                              __int2half_rd((thread_xy >> 3) & 0b111));
+    const auto v = make_half2(__int2half_rd(thread_xy & 0b111), __int2half_rd((thread_xy >> 3) & 0b111));
 #pragma unroll
     for (u32 i = thread_xy; i < LUT_SIZE; i += THREAD_COUNT) {
       s_half2_lut_global[i] = v;
@@ -361,8 +349,7 @@ __global__ void spqr_quantized_matvec_fused(
   } else {
 #pragma unroll
     for (u32 i = thread_xy; i < LUT_SIZE; i += THREAD_COUNT) {
-      const auto v = make_half2(__int2half_rd(i & 0b111u),
-                                __int2half_rd((i >> 3u) & 0b111u));
+      const auto v = make_half2(__int2half_rd(i & 0b111u), __int2half_rd((i >> 3u) & 0b111u));
       s_half2_lut_global[i] = v;
     }
   }
@@ -389,8 +376,7 @@ __global__ void spqr_quantized_matvec_fused(
   constexpr u32 FULL_MASK = 0xffffffff;
   constexpr u32 HALF_MASK = FULL_MASK >> 16u;
 
-  constexpr static unsigned long long int NUM_USEFUL_BITS =
-      18ull * static_cast<u64>(BITS);
+  constexpr static unsigned long long int NUM_USEFUL_BITS = 18ull * static_cast<u64>(BITS);
   constexpr static int OFFSET = BETA1 / SECOND_ORDER_FRAGMENT_SIZE_BITS;
 
   float acc{};
@@ -399,9 +385,7 @@ __global__ void spqr_quantized_matvec_fused(
 
   // Here we load the row offsets into smem.
   for (u32 i = thread_xy; i <= ROW_OFFSETS_SIZE; i += THREAD_COUNT) {
-    __pipeline_memcpy_async(s_row_offsets + i,
-                            row_offsets + blockIdx.x * ROW_OFFSETS_SIZE + i,
-                            sizeof(u32));
+    __pipeline_memcpy_async(s_row_offsets + i, row_offsets + blockIdx.x * ROW_OFFSETS_SIZE + i, sizeof(u32));
   }
   __pipeline_commit();
 
@@ -410,9 +394,7 @@ __global__ void spqr_quantized_matvec_fused(
   u32 i = subtile_id, pipeline_id{};
   const W_t *local_raw_data = dense_matrix + raw_data_offset;
 
-  for (u32 x2_id = thread_xy, it = 0;
-       it < UPDIV(n / X_LOAD_BLOCK_SIZE,
-                  BLOCK_HEIGHT * BLOCK_WIDTH * HALF_WARP_SIZE);
+  for (u32 x2_id = thread_xy, it = 0; it < UPDIV(n / X_LOAD_BLOCK_SIZE, BLOCK_HEIGHT * BLOCK_WIDTH * HALF_WARP_SIZE);
        it++) {
     u32 idx = pipeline_id * THREAD_COUNT + thread_xy;
 
@@ -429,13 +411,11 @@ __global__ void spqr_quantized_matvec_fused(
 
     auto v = __ldg(local_raw_data);
     row_bits.mask = v;
-    uint64_t s_order_partial =
-        (row_bits.mask >> NUM_USEFUL_BITS)
+    uint64_t s_order_partial = (row_bits.mask >> NUM_USEFUL_BITS)
         << (SECOND_ORDER_FRAGMENT_SIZE_BITS * (row_pos / OFFSET));
     SecondOrder _s{.v = recover_second_order_sync(s_order_partial)};
     half2 first_order_quantized = INT2_TO_HALF2(row_bits.get_w2(0));
-    half2 first_order_dequantized =
-        dequantize2(first_order_quantized, _s.get_sws2(), _s.get_swz2());
+    half2 first_order_dequantized = dequantize2(first_order_quantized, _s.get_sws2(), _s.get_swz2());
 
     ws2 = __half2half2(first_order_dequantized.x);
     wz2 = __half2half2(first_order_dequantized.y);
@@ -459,17 +439,14 @@ __global__ void spqr_quantized_matvec_fused(
   }
 
   for (; i < num_tiles_per_tile_row;
-       i += NUM_SPQR_TILES_PER_ITERATION,
-       local_raw_data += NUM_SPQR_TILES_PER_ITERATION * BETA1) {
+         i += NUM_SPQR_TILES_PER_ITERATION, local_raw_data += NUM_SPQR_TILES_PER_ITERATION * BETA1) {
     auto v = __ldg(local_raw_data);
     RowBits row_bits{.mask = v};
-    uint64_t s_order_partial =
-        (row_bits.mask >> NUM_USEFUL_BITS)
+    uint64_t s_order_partial = (row_bits.mask >> NUM_USEFUL_BITS)
         << (SECOND_ORDER_FRAGMENT_SIZE_BITS * (row_pos / OFFSET));
     SecondOrder _s{.v = recover_second_order_sync(s_order_partial)};
     half2 first_order_quantized = INT2_TO_HALF2(row_bits.get_w2(0));
-    half2 first_order_dequantized =
-        dequantize2(first_order_quantized, _s.get_sws2(), _s.get_swz2());
+    half2 first_order_dequantized = dequantize2(first_order_quantized, _s.get_sws2(), _s.get_swz2());
 
     half2 ws2 = __half2half2(first_order_dequantized.x);
     half2 wz2 = __half2half2(first_order_dequantized.y);
@@ -514,8 +491,7 @@ __global__ void spqr_quantized_matvec_fused(
         acc += __half2float(v) * __half2float(s_x[c]);
       }
 
-      for (u32 i = s + thread_xy + BLOCK_WIDTH * BETA1; i < e;
-           i += BLOCK_WIDTH * BETA1) {
+      for (u32 i = s + thread_xy + BLOCK_WIDTH * BETA1; i < e; i += BLOCK_WIDTH * BETA1) {
         ColVal colval{._ = col_vals[i]};
 
         if (!colval._)
@@ -532,8 +508,7 @@ __global__ void spqr_quantized_matvec_fused(
   auto other = __shfl_down_sync(HALF_MASK, acc, BETA1);
   acc = add_and_accum(other, acc);
 
-  auto *s_fp32_buff = reinterpret_cast<float *>(
-      s_half2_lut_global + threadIdx.y * MAX(WARP_SIZE - 1, 1) * BETA1);
+  auto *s_fp32_buff = reinterpret_cast<float *>(s_half2_lut_global + threadIdx.y * MAX(WARP_SIZE - 1, 1) * BETA1);
 
   u32 subwarp_id = threadIdx.x / WARP_SIZE;
   if (subwarp_id >= 1 && threadIdx.x % WARP_SIZE < BETA1) {
@@ -553,8 +528,11 @@ __global__ void spqr_quantized_matvec_fused(
   }
 }
 
-DEVICE_INLINE float accumulate(float acc, u64 b, const half2 &ws2,
-                               const half2 &wz2, const half2 *__restrict__ s_x2,
+DEVICE_INLINE float accumulate(float acc,
+                               u64 b,
+                               const half2 &ws2,
+                               const half2 &wz2,
+                               const half2 *__restrict__ s_x2,
                                const half2 *__restrict__ lut) {
 #pragma unroll
   for (u32 i = 0; i < 8; i++) {
@@ -569,10 +547,8 @@ DEVICE_INLINE float accumulate(float acc, u64 b, const half2 &ws2,
   return acc;
 }
 
-template <int K>
-__device__ __forceinline__ Vec<float, K>
-accumulate_batched(Vec<float, K> acc, u64 b, const half2 &ws2, const half2 &wz2,
-                   const half2 *__restrict__ s_x2) {
+template<int K> __device__ __forceinline__ Vec<float, K>
+accumulate_batched(Vec<float, K> acc, u64 b, const half2 &ws2, const half2 &wz2, const half2 *__restrict__ s_x2) {
   b >>= 6u;
 #pragma unroll
   for (u32 i = 0; i < 4; i++) {
@@ -610,42 +586,73 @@ accumulate_batched(Vec<float, K> acc, u64 b, const half2 &ws2, const half2 &wz2,
   return acc;
 }
 
-template <int K>
-__device__ __forceinline__ Vec<float, K>
-accumulate_batched_lut(Vec<float, K> acc, u64 b, const half2 &ws2,
-                       const half2 &wz2, const half2 *__restrict__ s_x2,
-                       const half2 *__restrict__ lut) {
+template<int K, bool IS_COLUMN_MAJOR>
+DEVICE_INLINE Vec<float, K> accumulate_batched_lut(int n,
+                                                   Vec<float, K> acc,
+                                                   u64 b,
+                                                   const half2 &ws2,
+                                                   const half2 &wz2,
+                                                   const half2 *__restrict__ s_x2,
+                                                   const half2 *__restrict__ lut) {
+  static constexpr int BETA1 = 16;
+  if constexpr (IS_COLUMN_MAJOR && K != 1) {
+    auto s_x2_ptr = s_x2;
+
 #pragma unroll
-  for (u32 i = 0; i < 8; i++) {
-    auto w_q = lut[(b >>= 6u) & 0b111111u];
-    half2 w = dequantize2(w_q, ws2, wz2);
-    float2 w_fp32 = __half22float2(w);
-    if constexpr (K == 1) {
-      float2 x_fp32 = __half22float2(*s_x2);
-      acc[0] = fmaf(x_fp32.x, w_fp32.x, acc[0]);
-      acc[0] = fmaf(x_fp32.y, w_fp32.y, acc[0]);
-      s_x2++;
-    } else {
-#pragma loop unroll
-      for (int l = 0; l < K / 2; l++) {
-        Vec<half2, 2> x{.elems = {s_x2[l], s_x2[l + K / 2]}};
-        Vec<half2, 2> x_t = transpose_2x2(x);
-#pragma loop unroll
-        for (int k = 0; k < 2; k++) {
-          float2 x_fp32 = __half22float2(x_t[k]);
-          acc[2 * l + k] = fmaf(x_fp32.x, w_fp32.x, acc[2 * l + k]);
-          acc[2 * l + k] = fmaf(x_fp32.y, w_fp32.y, acc[2 * l + k]);
-        }
+    for (u32 i = 0; i < BETA1 / 2; i++) {
+      const u64 problematic = (b >>= 6u) & 0b111111u;
+      auto w_q = lut[problematic];
+      half2 w = dequantize2(w_q, ws2, wz2);
+      float2 w_fp32 = __half22float2(w);
+      for (int k = 0; k < K; k++) {
+        float2 x_fp32 = __half22float2(*s_x2_ptr);
+        acc[k] = fmaf(x_fp32.x, w_fp32.x, acc[k]);
+        acc[k] = fmaf(x_fp32.y, w_fp32.y, acc[k]);
+        s_x2_ptr++;
       }
-      s_x2 += K;
+    }
+  } else {
+#pragma unroll
+    for (u32 i = 0; i < BETA1 / 2; i++) {
+      auto w_q = lut[(b >>= 6u) & 0b111111u];
+      half2 w = dequantize2(w_q, ws2, wz2);
+      float2 w_fp32 = __half22float2(w);
+      if constexpr (K == 1) {
+        float2 x_fp32 = __half22float2(*s_x2);
+        acc[0] = fmaf(x_fp32.x, w_fp32.x, acc[0]);
+        acc[0] = fmaf(x_fp32.y, w_fp32.y, acc[0]);
+        s_x2++;
+      } else {
+#pragma loop unroll
+        for (int l = 0; l < K / 2; l++) {
+          Vec<half2, 2> x{.elems = {s_x2[l], s_x2[l + K / 2]}};
+          Vec<half2, 2> x_t = transpose_2x2(x);
+#pragma loop unroll
+          for (int k = 0; k < 2; k++) {
+            float2 x_fp32 = __half22float2(x_t[k]);
+            int l2 = 2 * l;
+            acc[l2 + k] = fmaf(x_fp32.x, w_fp32.x, acc[l2 + k]);
+            acc[l2 + k] = fmaf(x_fp32.y, w_fp32.y, acc[l2 + k]);
+          }
+        }
+        s_x2 += K;
+      }
     }
   }
   return acc;
 }
 
-template <class W_t, int X_LOAD_BLOCK_SIZE, int BLOCK_HEIGHT, int BLOCK_WIDTH,
-          int HALF_WARP_SIZE, int THREAD_COUNT, int NUM_USEFUL_BITS, int OFFSET,
-          int BETA1, int BETA2, int NUM_SPQR_TILES_PER_ITERATION>
+template<class W_t,
+    int X_LOAD_BLOCK_SIZE,
+    int BLOCK_HEIGHT,
+    int BLOCK_WIDTH,
+    int HALF_WARP_SIZE,
+    int THREAD_COUNT,
+    int NUM_USEFUL_BITS,
+    int OFFSET,
+    int BETA1,
+    int BETA2,
+    int NUM_SPQR_TILES_PER_ITERATION>
 struct DenseMatrixRunner {
   u32 i;
   const W_t *__restrict local_raw_data;
@@ -662,14 +669,13 @@ struct DenseMatrixRunner {
   u32 pipeline_id{};
   u32 it{};
 
-  template <bool LOAD_X> __device__ __forceinline__ void process_dense() {
+  template<bool LOAD_X> __device__ __forceinline__ void process_dense() {
     const uint64_t SHIFT = SECOND_ORDER_FRAGMENT_SIZE_BITS * (row_pos / OFFSET);
     const u32 BLOCK_COUNT = (n / X_LOAD_BLOCK_SIZE);
 
     u32 limit;
     if constexpr (LOAD_X) {
-      limit = UPDIV(n / X_LOAD_BLOCK_SIZE,
-                    BLOCK_HEIGHT * BLOCK_WIDTH * HALF_WARP_SIZE);
+      limit = UPDIV(n / X_LOAD_BLOCK_SIZE, BLOCK_HEIGHT * BLOCK_WIDTH * HALF_WARP_SIZE);
     } else {
       limit = num_tiles_per_row / NUM_SPQR_TILES_PER_ITERATION;
     }
@@ -678,8 +684,7 @@ struct DenseMatrixRunner {
         u32 idx = pipeline_id * THREAD_COUNT + thread_xy;
         bool p = idx < BLOCK_COUNT;
         if (p) {
-          reinterpret_cast<Load_t *>(s_x2)[idx] =
-              reinterpret_cast<const Load_t *>(x2)[idx];
+          reinterpret_cast<Load_t *>(s_x2)[idx] = reinterpret_cast<const Load_t *>(x2)[idx];
         }
       }
 
@@ -690,8 +695,7 @@ struct DenseMatrixRunner {
 
       half2 first_order_quantized = dequant2(v);
 
-      half2 first_order_dequantized =
-          dequantize2(first_order_quantized, _s.get_sws2(), _s.get_swz2());
+      half2 first_order_dequantized = dequantize2(first_order_quantized, _s.get_sws2(), _s.get_swz2());
 
       half2 ws2 = __half2half2(first_order_dequantized.x);
       half2 wz2 = __half2half2(first_order_dequantized.y);
@@ -710,10 +714,18 @@ struct DenseMatrixRunner {
   }
 };
 
-template <class W_t, int X_LOAD_BLOCK_SIZE, int BLOCK_HEIGHT, int BLOCK_WIDTH,
-          int HALF_WARP_SIZE, int THREAD_COUNT, int NUM_USEFUL_BITS, int OFFSET,
-          int BETA1, int BETA2, int NUM_SPQR_TILES_PER_ITERATION, int K,
-          int page_size_fp32>
+template<class W_t,
+    int BLOCK_HEIGHT,
+    int BLOCK_WIDTH,
+    int THREAD_COUNT,
+    int NUM_USEFUL_BITS,
+    int OFFSET,
+    int BETA1,
+    int BETA2,
+    int NUM_SPQR_TILES_PER_ITERATION,
+    int K,
+    int page_size_fp32,
+    bool IS_COLUMN_MAJOR>
 struct DenseMatrixRunnerBatched {
   const W_t *__restrict local_raw_data;
   u32 thread_xy;
@@ -758,10 +770,8 @@ struct DenseMatrixRunnerBatched {
     // iteration.
     const int total_x_fp32 = n * K / 2;
     static constexpr int total_x_fp16_per_iteration = BETA1 * BLOCK_WIDTH * K;
-    static constexpr int total_x_fp32_load_per_iteration =
-        total_x_fp16_per_iteration / 2;
-    static constexpr int total_x_fp128_per_iteration =
-        total_x_fp32_load_per_iteration / 4;
+    static constexpr int total_x_fp32_load_per_iteration = total_x_fp16_per_iteration / 2;
+    static constexpr int total_x_fp128_per_iteration = total_x_fp32_load_per_iteration / 4;
 
 #if 0
     if (!thread_xy && !blockIdx.x)
@@ -797,60 +807,94 @@ struct DenseMatrixRunnerBatched {
     // Therefore, we will page the loads of X, loading fp32s_per_page
     // per iteration.
 
-    auto s_x2_compute = s_x2 + subtile_id * (BETA2 * K / 2);
+    half2 *s_x2_compute;
+    if constexpr (IS_COLUMN_MAJOR) {
+      s_x2_compute = s_x2 + row_pos * page_size_fp32 + subtile_id * (BETA2 / 2);
+    } else {
+      s_x2_compute = s_x2 + subtile_id * (BETA2 * K / 2);
+    }
 
     int local_x_fp128_loaded_base_id{};
 
     auto s_x128 = reinterpret_cast<Load_t *>(s_x2);
     const auto x128 = reinterpret_cast<const Load_t *>(x2);
 
-    for (int i = thread_xy;
-         local_x_fp128_loaded_base_id + i < page_size_fp32 / 4 &&
-         global_x_fp128_loaded_base_id + i < K * n / 8;
-         i += THREAD_COUNT) {
-      cp_async128(s_x128 + i, x128 + global_x_fp128_loaded_base_id + i);
+    if constexpr (IS_COLUMN_MAJOR && K > 1) {
+      auto warp_id = thread_xy / WARP_SIZE;
+      static constexpr u32 WARP_COUNT = UPDIV(THREAD_COUNT, WARP_SIZE);
+      auto lane_id = thread_xy & 0x1f;
+
+      if constexpr (WARP_COUNT <= K) {
+        u32 height_offset = pipeline_id * page_size_fp32 / K;
+        auto height = min(n / 2 - height_offset, page_size_fp32 / K);
+#pragma loop unroll
+        for (int i = warp_id; i < K; i += WARP_COUNT) {
+          auto x2_ptr = x2 + (i * n / 2) + height_offset + lane_id;
+          auto s_x2_ptr = s_x2 + i * (page_size_fp32 / K) + lane_id;
+
+          for (int j = lane_id; j < height; j += WARP_SIZE) {
+            // s_x2[j * K + i] = x2[(i * n / 2) + (pipeline_id * page_size_fp32 / K) + j];
+            *s_x2_ptr = *x2_ptr;
+            s_x2_ptr += WARP_SIZE;
+            x2_ptr += WARP_SIZE;
+          }
+        }
+      } else {
+      }
+    } else {
+      for (int i = thread_xy;
+           local_x_fp128_loaded_base_id + i < page_size_fp32 / 4 && global_x_fp128_loaded_base_id + i < K * n / 8;
+           i += THREAD_COUNT) {
+        cp_async128(s_x128 + i, x128 + global_x_fp128_loaded_base_id + i);
+      }
     }
     __pipeline_commit();
 
     global_x_fp128_loaded_base_id += page_size_fp32 / 4;
 
-    unsigned int upper_limit_fp16 =
-        min((pipeline_id + 1) * page_size_fp32 * 2, n * K);
+    unsigned int upper_limit_fp16 = min((pipeline_id + 1) * page_size_fp32 * 2, n * K);
 
     {
       uint64_t v{};
       bool p = global_computed_tile + thread_xy * K / 2 < upper_limit_fp16;
       bool global_p = global_computed_tile < upper_limit_fp16;
 
-      if (p) {
-        v = __ldcs(local_raw_data);
-      }
+      // An assumption made here is that we will have at least one valid iteration of compute.
+      v = __ldcs(local_raw_data);
 
       uint64_t s_order_partial = (v >> NUM_USEFUL_BITS) << SHIFT;
 
       SecondOrder _s{.v = recover_second_order_sync(s_order_partial)};
 
       half2 ws2, wz2;
-      if (p) {
-        half2 first_order_quantized = dequant2(v);
+      half2 first_order_quantized = lut[v & 0b111111u];
 
-        half2 first_order_dequantized =
-            dequantize2(first_order_quantized, _s.get_sws2(), _s.get_swz2());
+      half2 first_order_dequantized = dequantize2(first_order_quantized, _s.get_sws2(), _s.get_swz2());
 
-        ws2 = __half2half2(first_order_dequantized.x);
-        wz2 = __half2half2(first_order_dequantized.y);
-      }
+      ws2 = __half2half2(first_order_dequantized.x);
+      wz2 = __half2half2(first_order_dequantized.y);
 
       cp_async_wait_all();
       __syncthreads();
 
-      if (p) {
-        accs = accumulate_batched_lut<K>(accs, v, ws2, wz2, s_x2_compute, lut);
+#if 1
+      if (n == 16 && !thread_xy) {
+        for (int i = 0; i < 16; i++) {
+          printf("x[%d] = %f\n", 2 * i, __half2float(s_x2_compute[i].x));
+          printf("x[%d] = %f\n", 2 * i + 1, __half2float(s_x2_compute[i].y));
+        }
       }
+#endif
+
+      accs = accumulate_batched_lut<K, IS_COLUMN_MAJOR>(n, accs, v, ws2, wz2, s_x2_compute, lut);
 
       local_raw_data += NUM_SPQR_TILES_PER_ITERATION * BETA1;
       global_computed_tile += THREAD_COUNT * K;
-      s_x2_compute += BETA2 * K * BLOCK_WIDTH / 2;
+      if constexpr (IS_COLUMN_MAJOR) {
+        s_x2_compute += BETA2 * K * BLOCK_WIDTH / 2;
+      } else {
+        s_x2_compute += BETA2 * K * BLOCK_WIDTH / 2;
+      }
 
       if (!global_p) {
         return;
@@ -868,19 +912,17 @@ struct DenseMatrixRunnerBatched {
 
       uint64_t s_order_partial = (v >> NUM_USEFUL_BITS) << SHIFT;
 
-      __syncthreads();
       SecondOrder _s{.v = recover_second_order_sync(s_order_partial)};
 
       if (p) {
-        half2 first_order_quantized = dequant2(v);
+        half2 first_order_quantized = lut[v & 0b111111u];
 
-        half2 first_order_dequantized =
-            dequantize2(first_order_quantized, _s.get_sws2(), _s.get_swz2());
+        half2 first_order_dequantized = dequantize2(first_order_quantized, _s.get_sws2(), _s.get_swz2());
 
         half2 ws2 = __half2half2(first_order_dequantized.x);
         half2 wz2 = __half2half2(first_order_dequantized.y);
 
-        accs = accumulate_batched_lut<K>(accs, v, ws2, wz2, s_x2_compute, lut);
+        accs = accumulate_batched_lut<K, IS_COLUMN_MAJOR>(n, accs, v, ws2, wz2, s_x2_compute, lut);
       }
 
       if (!global_p) {
@@ -889,20 +931,33 @@ struct DenseMatrixRunnerBatched {
 
       local_raw_data += NUM_SPQR_TILES_PER_ITERATION * BETA1;
       global_computed_tile += THREAD_COUNT * K;
-      s_x2_compute += BETA2 * K * BLOCK_WIDTH / 2;
+      if constexpr (IS_COLUMN_MAJOR) {
+        s_x2_compute += BETA2 * K * BLOCK_WIDTH / 2;
+      } else {
+        s_x2_compute += BETA2 * K * BLOCK_WIDTH / 2;
+      }
     }
   }
 };
 
-template <int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH,
-          class W_t /* = uint64_t */, int PIPELINE_DEPTH, bool IS_CSR>
+template<int BITS,
+    int BETA1,
+    int BETA2,
+    int BLOCK_HEIGHT,
+    int BLOCK_WIDTH,
+    class W_t /* = uint64_t */,
+    int PIPELINE_DEPTH,
+    bool IS_CSR>
 __global__ void spqr_quantized_matvec(
     // W and meta
-    unsigned int m, unsigned int n,
+    unsigned int m,
+    unsigned int n,
     // W 1st order stats
-    const W_t *__restrict__ dense_matrix, const half *__restrict__ x,
+    const W_t *__restrict__ dense_matrix,
+    const half *__restrict__ x,
     // Outliers
-    const int *__restrict__ row_offsets, const u32 *__restrict__ col_vals,
+    const int *__restrict__ row_offsets,
+    const u32 *__restrict__ col_vals,
     // Output
     half *__restrict__ y_fp16) {
   /*
@@ -916,13 +971,11 @@ __global__ void spqr_quantized_matvec(
    beta1   │  block m-1  │ │ │   │ │
            └─────────────┘ └─┘   └─┘
   */
-  static constexpr u32 WARP_SIZE = 32;
   static constexpr u32 HALF_WARP_SIZE = WARP_SIZE / 2;
 
   static constexpr u32 NUM_HALF_WARPS = BLOCK_HEIGHT * BLOCK_WIDTH;
   static constexpr u32 NUM_WARPS = UPDIV(NUM_HALF_WARPS, 2);
-  static constexpr u32 THREAD_COUNT =
-      BLOCK_HEIGHT * BLOCK_WIDTH * HALF_WARP_SIZE;
+  static constexpr u32 THREAD_COUNT = BLOCK_HEIGHT * BLOCK_WIDTH * HALF_WARP_SIZE;
   static constexpr u32 OUTPUT_SIZE = BETA1 * BLOCK_HEIGHT;
   static constexpr u32 ROW_OFFSETS_SIZE = IS_CSR ? OUTPUT_SIZE : 1;
 
@@ -953,15 +1006,13 @@ __global__ void spqr_quantized_matvec(
   constexpr u32 FULL_MASK = 0xffffffff;
   constexpr u32 HALF_MASK = FULL_MASK >> 16u;
 
-  constexpr static unsigned long long int NUM_USEFUL_BITS =
-      18ull * static_cast<u64>(BITS);
+  constexpr static unsigned long long int NUM_USEFUL_BITS = 18ull * static_cast<u64>(BITS);
   constexpr static int OFFSET = BETA1 / SECOND_ORDER_FRAGMENT_SIZE_BITS;
 
   static constexpr u32 LUT_SIZE = 64;
   __shared__ half2 lut[LUT_SIZE];
   if constexpr (THREAD_COUNT >= 64) {
-    const auto v = make_half2(__int2half_rd(thread_xy & 0b111),
-                              __int2half_rd((thread_xy >> 3) & 0b111));
+    const auto v = make_half2(__int2half_rd(thread_xy & 0b111), __int2half_rd((thread_xy >> 3) & 0b111));
 #pragma unroll
     for (u32 i = thread_xy; i < LUT_SIZE; i += THREAD_COUNT) {
       lut[i] = v;
@@ -969,8 +1020,7 @@ __global__ void spqr_quantized_matvec(
   } else {
 #pragma unroll
     for (u32 i = thread_xy; i < LUT_SIZE; i += THREAD_COUNT) {
-      const auto v = make_half2(__int2half_rd(i & 0b111u),
-                                __int2half_rd((i >> 3u) & 0b111u));
+      const auto v = make_half2(__int2half_rd(i & 0b111u), __int2half_rd((i >> 3u) & 0b111u));
       lut[i] = v;
     }
   }
@@ -979,25 +1029,31 @@ __global__ void spqr_quantized_matvec(
 
   // Here we load the row offsets into smem.
   for (u32 i = thread_xy; i <= ROW_OFFSETS_SIZE; i += THREAD_COUNT) {
-    __pipeline_memcpy_async(s_row_offsets + i,
-                            row_offsets + blockIdx.x * ROW_OFFSETS_SIZE + i,
-                            sizeof(u32));
+    __pipeline_memcpy_async(s_row_offsets + i, row_offsets + blockIdx.x * ROW_OFFSETS_SIZE + i, sizeof(u32));
   }
   __pipeline_commit();
 
-  DenseMatrixRunner<W_t, X_LOAD_BLOCK_SIZE, BLOCK_HEIGHT, BLOCK_WIDTH,
-                    HALF_WARP_SIZE, THREAD_COUNT, NUM_USEFUL_BITS, OFFSET,
-                    BETA1, BETA2, NUM_SPQR_TILES_PER_ITERATION>
+  DenseMatrixRunner<W_t,
+                    X_LOAD_BLOCK_SIZE,
+                    BLOCK_HEIGHT,
+                    BLOCK_WIDTH,
+                    HALF_WARP_SIZE,
+                    THREAD_COUNT,
+                    NUM_USEFUL_BITS,
+                    OFFSET,
+                    BETA1,
+                    BETA2,
+                    NUM_SPQR_TILES_PER_ITERATION>
       dense_matrix_runner{.i = subtile_id,
-                          .local_raw_data = dense_matrix + raw_data_offset,
-                          .thread_xy = thread_xy,
-                          .n = n,
-                          .x2 = x2,
-                          .s_x2 = s_x2,
-                          .row_pos = row_pos,
-                          .num_tiles_per_row = num_tiles_per_tile_row,
-                          .subtile_id = subtile_id,
-                          .lut = lut};
+      .local_raw_data = dense_matrix + raw_data_offset,
+      .thread_xy = thread_xy,
+      .n = n,
+      .x2 = x2,
+      .s_x2 = s_x2,
+      .row_pos = row_pos,
+      .num_tiles_per_row = num_tiles_per_tile_row,
+      .subtile_id = subtile_id,
+      .lut = lut};
 
   dense_matrix_runner.template process_dense<true>();
 
@@ -1031,8 +1087,7 @@ __global__ void spqr_quantized_matvec(
         acc = fmaf(__half2float(v), __half2float(s_x[c]), acc);
       }
 
-      for (u32 i = s + thread_xy + BLOCK_WIDTH * BETA1; i < e;
-           i += BLOCK_WIDTH * BETA1) {
+      for (u32 i = s + thread_xy + BLOCK_WIDTH * BETA1; i < e; i += BLOCK_WIDTH * BETA1) {
         ColVal colval{._ = col_vals[i]};
 
         if (!colval._) {
@@ -1052,8 +1107,7 @@ __global__ void spqr_quantized_matvec(
   acc = add_and_accum(other, acc);
 
   // TODO: Invalid read if x is not large enough
-  auto *s_fp32_buff = reinterpret_cast<float *>(
-      s_x2 + threadIdx.y * MAX(WARP_SIZE - 1, 1) * BETA1);
+  auto *s_fp32_buff = reinterpret_cast<float *>(s_x2 + threadIdx.y * MAX(WARP_SIZE - 1, 1) * BETA1);
 
   u32 subwarp_id = threadIdx.x / WARP_SIZE;
   if (subwarp_id >= 1 && threadIdx.x % WARP_SIZE < BETA1) {
@@ -1073,16 +1127,27 @@ __global__ void spqr_quantized_matvec(
   }
 }
 
-template <int BITS, int BETA1, int BETA2, int BLOCK_HEIGHT, int BLOCK_WIDTH,
-          class W_t /* = uint64_t */, int PIPELINE_DEPTH, bool IS_CSR, int K,
-          int page_size_fp32>
+template<int BITS,
+    int BETA1,
+    int BETA2,
+    int BLOCK_HEIGHT,
+    int BLOCK_WIDTH,
+    class W_t /* = uint64_t */,
+    int PIPELINE_DEPTH,
+    bool IS_CSR,
+    int K,
+    int page_size_fp32,
+    bool IS_COLUMN_MAJOR>
 __global__ void spqr_quantized_matvec_batched_v2(
     // W and meta
-    u32 m, u32 n,
+    u32 m,
+    u32 n,
     // W 1st order stats
-    const W_t *__restrict__ dense_matrix, const half *__restrict__ x,
+    const W_t *__restrict__ dense_matrix,
+    const half *__restrict__ x,
     // Outliers
-    const int *__restrict__ row_offsets, const u32 *__restrict__ col_vals,
+    const int *__restrict__ row_offsets,
+    const u32 *__restrict__ col_vals,
     // Output
     half *__restrict__ y_fp16) {
   /*
@@ -1101,8 +1166,7 @@ __global__ void spqr_quantized_matvec_batched_v2(
 
   static constexpr u32 NUM_HALF_WARPS = BLOCK_HEIGHT * BLOCK_WIDTH;
   static constexpr u32 NUM_WARPS = UPDIV(NUM_HALF_WARPS, 2);
-  static constexpr u32 THREAD_COUNT =
-      BLOCK_HEIGHT * BLOCK_WIDTH * HALF_WARP_SIZE;
+  static constexpr u32 THREAD_COUNT = BLOCK_HEIGHT * BLOCK_WIDTH * HALF_WARP_SIZE;
   static constexpr u32 OUTPUT_SIZE = BETA1 * BLOCK_HEIGHT;
   static constexpr u32 ROW_OFFSETS_SIZE = IS_CSR ? OUTPUT_SIZE : 1;
 
@@ -1134,15 +1198,13 @@ __global__ void spqr_quantized_matvec_batched_v2(
   constexpr u32 FULL_MASK = 0xffffffff;
   constexpr u32 HALF_MASK = FULL_MASK >> 16u;
 
-  constexpr static unsigned long long int NUM_USEFUL_BITS =
-      18ull * static_cast<u64>(BITS);
+  constexpr static unsigned long long int NUM_USEFUL_BITS = 18ull * static_cast<u64>(BITS);
   constexpr static int OFFSET = BETA1 / SECOND_ORDER_FRAGMENT_SIZE_BITS;
 
   static constexpr u32 LUT_SIZE = 64;
   __shared__ half2 lut[LUT_SIZE];
   if constexpr (THREAD_COUNT >= 64) {
-    const auto v = make_half2(__int2half_rd(thread_xy & 0b111),
-                              __int2half_rd((thread_xy >> 3) & 0b111));
+    const auto v = make_half2(__int2half_rd(thread_xy & 0b111), __int2half_rd((thread_xy >> 3) & 0b111));
 #pragma unroll
     for (u32 i = thread_xy; i < LUT_SIZE; i += THREAD_COUNT) {
       lut[i] = v;
@@ -1150,8 +1212,7 @@ __global__ void spqr_quantized_matvec_batched_v2(
   } else {
 #pragma unroll
     for (u32 i = thread_xy; i < LUT_SIZE; i += THREAD_COUNT) {
-      const auto v = make_half2(__int2half_rd(i & 0b111u),
-                                __int2half_rd((i >> 3u) & 0b111u));
+      const auto v = make_half2(__int2half_rd(i & 0b111u), __int2half_rd((i >> 3u) & 0b111u));
       lut[i] = v;
     }
   }
@@ -1161,18 +1222,26 @@ __global__ void spqr_quantized_matvec_batched_v2(
     s_row_offsets[i] = row_offsets[blockIdx.x * ROW_OFFSETS_SIZE + i];
   }
 
-  DenseMatrixRunnerBatched<W_t, X_LOAD_BLOCK_SIZE, BLOCK_HEIGHT, BLOCK_WIDTH,
-                           HALF_WARP_SIZE, THREAD_COUNT, NUM_USEFUL_BITS,
-                           OFFSET, BETA1, BETA2, NUM_SPQR_TILES_PER_ITERATION,
-                           K, page_size_fp32>
+  DenseMatrixRunnerBatched<W_t,
+                           BLOCK_HEIGHT,
+                           BLOCK_WIDTH,
+                           THREAD_COUNT,
+                           NUM_USEFUL_BITS,
+                           OFFSET,
+                           BETA1,
+                           BETA2,
+                           NUM_SPQR_TILES_PER_ITERATION,
+                           K,
+                           page_size_fp32,
+                           IS_COLUMN_MAJOR>
       dense_matrix_runner{.local_raw_data = dense_matrix + raw_data_offset,
-                          .thread_xy = thread_xy,
-                          .n = n,
-                          .x2 = x2,
-                          .s_x2 = s_x2,
-                          .row_pos = row_pos,
-                          .subtile_id = subtile_id,
-                          .lut = lut};
+      .thread_xy = thread_xy,
+      .n = n,
+      .x2 = x2,
+      .s_x2 = s_x2,
+      .row_pos = row_pos,
+      .subtile_id = subtile_id,
+      .lut = lut};
 
   dense_matrix_runner.init();
 
@@ -1193,8 +1262,7 @@ __global__ void spqr_quantized_matvec_batched_v2(
   const int total_x_fp32 = n * K / 2;
   int pipeline_stages = UPDIV(total_x_fp32, page_size_fp32);
 
-  for (; dense_matrix_runner.pipeline_id < pipeline_stages;
-       dense_matrix_runner.pipeline_id++) {
+  for (; dense_matrix_runner.pipeline_id < pipeline_stages; dense_matrix_runner.pipeline_id++) {
     dense_matrix_runner.process_dense();
 
     if constexpr (IS_CSR) {
@@ -1202,8 +1270,7 @@ __global__ void spqr_quantized_matvec_batched_v2(
         ColVal colval{._ = __ldg(col_vals + i)};
         auto c = colval.members.c;
 
-        if (c * K / 2 >=
-            (dense_matrix_runner.pipeline_id + 1) * page_size_fp32) {
+        if (c * K / 2 >= (dense_matrix_runner.pipeline_id + 1) * page_size_fp32) {
           break;
         }
 
@@ -1213,18 +1280,19 @@ __global__ void spqr_quantized_matvec_batched_v2(
         if constexpr (K == 1) {
           half *s_x = reinterpret_cast<half *>(s_x2);
           int idx = c - dense_matrix_runner.pipeline_id * page_size_fp32 * 2;
-          dense_matrix_runner.accs[0] +=
-              __half2float(v) * __half2float(s_x[idx]);
+          dense_matrix_runner.accs[0] += __half2float(v) * __half2float(s_x[idx]);
         } else {
+
 #pragma loop unroll
           for (int j = 0; j < K; j += 2) {
-            int idx = c * K / 2 + j / 2 -
-                      dense_matrix_runner.pipeline_id * page_size_fp32;
+            int idx = c * K / 2 + j / 2 - dense_matrix_runner.pipeline_id * page_size_fp32;
             float2 x2_fp32 = __half22float2(s_x2[idx]);
             dense_matrix_runner.accs[j] += v_fp32 * x2_fp32.x;
             dense_matrix_runner.accs[j + 1] += v_fp32 * x2_fp32.y;
           }
         }
+
+
       }
     } else {
       for (; i < e; i += BLOCK_WIDTH * BETA1) {
@@ -1236,8 +1304,7 @@ __global__ void spqr_quantized_matvec_batched_v2(
 
         auto c = colval.members.c;
 
-        if (c * K / 2 >=
-            (dense_matrix_runner.pipeline_id + 1) * page_size_fp32) {
+        if (c * K / 2 >= (dense_matrix_runner.pipeline_id + 1) * page_size_fp32) {
           break;
         }
 
@@ -1247,13 +1314,11 @@ __global__ void spqr_quantized_matvec_batched_v2(
         if constexpr (K == 1) {
           half *s_x = reinterpret_cast<half *>(s_x2);
           int idx = c - dense_matrix_runner.pipeline_id * page_size_fp32 * 2;
-          dense_matrix_runner.accs[0] +=
-              __half2float(v) * __half2float(s_x[idx]);
+          dense_matrix_runner.accs[0] += __half2float(v) * __half2float(s_x[idx]);
         } else {
 #pragma loop unroll
           for (int j = 0; j < K; j += 2) {
-            int idx = c * K / 2 + j / 2 -
-                      dense_matrix_runner.pipeline_id * page_size_fp32;
+            int idx = c * K / 2 + j / 2 - dense_matrix_runner.pipeline_id * page_size_fp32;
             float2 x2_fp32 = __half22float2(s_x2[idx]);
             dense_matrix_runner.accs[j] += v_fp32 * x2_fp32.x;
             dense_matrix_runner.accs[j + 1] += v_fp32 * x2_fp32.y;
@@ -1268,17 +1333,14 @@ __global__ void spqr_quantized_matvec_batched_v2(
   auto addr = tile_row_id * BETA1 + threadIdx.x;
   const u32 lane_id = threadIdx.x & 0x1f;
   if constexpr (K == 1) {
-    auto other =
-        __shfl_down_sync(HALF_MASK, dense_matrix_runner.accs[0], BETA1);
-    dense_matrix_runner.accs[0] =
-        add_and_accum(other, dense_matrix_runner.accs[0]);
+    auto other = __shfl_down_sync(HALF_MASK, dense_matrix_runner.accs[0], BETA1);
+    dense_matrix_runner.accs[0] = add_and_accum(other, dense_matrix_runner.accs[0]);
 
     auto *s_fp32_buff = reinterpret_cast<float *>(s_x2);
 
     u32 subwarp_id = threadIdx.x / WARP_SIZE;
     if (subwarp_id && lane_id < BETA1) {
-      s_fp32_buff[(subwarp_id - 1) * BETA1 + lane_id] =
-          dense_matrix_runner.accs[0];
+      s_fp32_buff[(subwarp_id - 1) * BETA1 + lane_id] = dense_matrix_runner.accs[0];
     }
 
     __syncthreads();
@@ -1322,54 +1384,60 @@ __global__ void spqr_quantized_matvec_batched_v2(
 #pragma loop unroll
       for (int i = 0; i < K; i += 2) {
         y_fp32[(K * addr + i) / 2] =
-            make_half2(__float2half_rd(dense_matrix_runner.accs[i]),
-                       __float2half_rd(dense_matrix_runner.accs[i + 1]));
+            make_half2(__float2half_rd(dense_matrix_runner.accs[i]), __float2half_rd(dense_matrix_runner.accs[i + 1]));
       }
     }
   }
 }
 
-template <class T> __device__ __host__ const T &__min(const T &a, const T &b) {
-  return (b < a) ? b : a;
-}
+template<class T> __device__ __host__ const T &__min(const T &a, const T &b) { return (b < a) ? b : a; }
 
-template <class T> __device__ __host__ const T &__max(const T &a, const T &b) {
-  return (b < a) ? a : b;
-}
+template<class T> __device__ __host__ const T &__max(const T &a, const T &b) { return (b < a) ? a : b; }
+
 union Features {
   uint32_t _;
 
   struct {
-    uint32_t is_fp32 : 1;
-    uint32_t dense_only : 1;
-    uint32_t naive_sparse : 1;
-    uint32_t torch : 1;
-    uint32_t is_async : 1;
-    uint32_t shared_sparse : 1;
-    uint32_t single_sparse : 1;
-    uint32_t cusparse : 1;
-    uint32_t fused_sparse : 1;
-    uint32_t shared_sparse_baseline : 1;
-    uint32_t shared_mixture : 1;
-    uint32_t rest : 21;
+    uint32_t is_fp32: 1;
+    uint32_t dense_only: 1;
+    uint32_t naive_sparse: 1;
+    uint32_t torch: 1;
+    uint32_t is_async: 1;
+    uint32_t is_column_major: 1;
+    uint32_t single_sparse: 1;
+    uint32_t cusparse: 1;
+    uint32_t fused_sparse: 1;
+    uint32_t shared_sparse_baseline: 1;
+    uint32_t shared_mixture: 1;
+    uint32_t rest: 21;
   } flags;
 };
 
 int spqr_matvec(
     // W and meta
-    int bits, int m, int n,
+    int bits,
+    int m,
+    int n,
     // Quantization
-    int beta1, int beta2, const void *raw_in_order, const void *raw_dense_data,
+    int beta1,
+    int beta2,
+    const void *raw_in_order,
+    const void *raw_dense_data,
     // 32-bit
-    int row_offsets_len, void *row_offsets,
+    int row_offsets_len,
+    void *row_offsets,
     // 16-bit
-    void *col_vals, int nnz,
+    void *col_vals,
+    int nnz,
 
     // 16-bit
     // Input
     void *X,
     // Output
-    void *y, cudaStream_t stream, void *measurements, uint32_t feature_flag) {
+    void *y,
+    cudaStream_t stream,
+    void *measurements,
+    uint32_t feature_flag) {
   Timer *timer{};
   if (measurements) {
     timer = new Timer(stream);
@@ -1382,12 +1450,12 @@ int spqr_matvec(
 
   Features features{._ = feature_flag};
 
-  const auto *raw_data_ptr = (const u64 *)raw_dense_data;
-  const half *X_ptr = (const half *)X;
-  const int *row_offsets_ptr = (const int *)row_offsets;
-  half *y_ptr = (half *)y;
-  const auto *col_vals_ptr = (const u32 *)col_vals;
-  const auto *order_ptr = (const uint16_t *)raw_in_order;
+  const auto *raw_data_ptr = (const u64 *) raw_dense_data;
+  const half *X_ptr = (const half *) X;
+  const int *row_offsets_ptr = (const int *) row_offsets;
+  half *y_ptr = (half *) y;
+  const auto *col_vals_ptr = (const u32 *) col_vals;
+  const auto *order_ptr = (const uint16_t *) raw_in_order;
 
   int ret = 0;
 
@@ -1467,59 +1535,75 @@ int spqr_matvec(
 
 #define CALL_MATVEC_V2
 
-#define CALL_BATCHED_K(K)                                                      \
-  if (is_csr) {                                                                \
-    if (n % (TILE_COUNT * 16) == 0) {                                          \
-      if ((K) == 1 && n <= (1 << 14)) {                                        \
-        CALL_MATVEC(spqr_quantized_matvec, 1, 16, 1, true);                    \
-      } else {                                                                 \
-        CALL_BATCHED_V2(spqr_quantized_matvec_batched_v2, 1, TILE_COUNT, 1,    \
-                        true, K);                                              \
-      }                                                                        \
-    } else {                                                                   \
-      CALL_BATCHED_V2(spqr_quantized_matvec_batched_v2, 1, 1, 1, true, K);     \
-    }                                                                          \
-  } else {                                                                     \
-    if (n % (TILE_COUNT * 16) == 0) {                                          \
-      if ((K) == 1 && n <= (1 << 14)) {                                        \
-        CALL_MATVEC(spqr_quantized_matvec, 1, 16, 1, false);                   \
-      } else {                                                                 \
-        CALL_BATCHED_V2(spqr_quantized_matvec_batched_v2, 1, TILE_COUNT, 1,    \
-                        false, K);                                             \
-      }                                                                        \
-    } else {                                                                   \
-      CALL_BATCHED_V2(spqr_quantized_matvec_batched_v2, 1, 1, 1, false, K);    \
-    }                                                                          \
+#define CALL_BATCHED_K(K)                                                                                              \
+  if (is_csr) {                                                                                                        \
+    if (n % (TILE_COUNT * 16) == 0) {                                                                                  \
+      if ((K) == 1 && n < (1 << 14)) {                                                                                \
+        CALL_MATVEC(spqr_quantized_matvec, 1, 16, 1, true);                                                            \
+      } else {                                                                                                         \
+        if (features.flags.is_column_major) {                                                                          \
+          CALL_BATCHED_V2(spqr_quantized_matvec_batched_v2, 1, TILE_COUNT, 1, true, K, true);                          \
+        } else {                                                                                                       \
+          CALL_BATCHED_V2(spqr_quantized_matvec_batched_v2, 1, TILE_COUNT, 1, true, K, false);                         \
+        }                                                                                                              \
+      }                                                                                                                \
+    } else {                                                                                                           \
+      if (features.flags.is_column_major) {                                                                            \
+        CALL_BATCHED_V2(spqr_quantized_matvec_batched_v2, 1, 1, 1, true, K, true);                                     \
+      } else {                                                                                                         \
+        CALL_BATCHED_V2(spqr_quantized_matvec_batched_v2, 1, 1, 1, true, K, false);                                    \
+      }                                                                                                                \
+    }                                                                                                                  \
+  } else {                                                                                                             \
+    if (n % (TILE_COUNT * 16) == 0) {                                                                                  \
+      if ((K) == 1 && n < (1 << 14)) {                                                                                \
+        CALL_MATVEC(spqr_quantized_matvec, 1, 16, 1, false);                                                           \
+      } else {                                                                                                         \
+        if (features.flags.is_column_major) {                                                                          \
+          CALL_BATCHED_V2(spqr_quantized_matvec_batched_v2, 1, TILE_COUNT, 1, false, K, true);                         \
+        } else {                                                                                                       \
+          CALL_BATCHED_V2(spqr_quantized_matvec_batched_v2, 1, TILE_COUNT, 1, false, K, false);                        \
+        }                                                                                                              \
+      }                                                                                                                \
+    } else {                                                                                                           \
+      if (features.flags.is_column_major) {                                                                            \
+        CALL_BATCHED_V2(spqr_quantized_matvec_batched_v2, 1, 1, 1, false, K, true);                                    \
+      } else {                                                                                                         \
+        CALL_BATCHED_V2(spqr_quantized_matvec_batched_v2, 1, 1, 1, false, K, false);                                   \
+      }                                                                                                                \
+    }                                                                                                                  \
   }
 
-#define F                                                                      \
-  const auto *raw_data_ptr = (const u64 *)raw_dense_data;                      \
-  const half *X_ptr = (const half *)X;                                         \
-  const int *row_offsets_ptr = (const int *)row_offsets;                       \
-  half *y_ptr = (half *)y;                                                     \
-  const auto *col_vals_ptr = (const u32 *)col_vals;                            \
-  const auto *order_ptr = (const uint16_t *)raw_in_order;                      \
-  int ret = 0;                                                                 \
-  bool is_csr = m + 1 == row_offsets_len;                                      \
-  bool needs_fusion = order_ptr == nullptr;                                    \
-  static constexpr int TILE_COUNT = 16;                                        \
-  if (k == 1) {                                                                \
-    CALL_BATCHED_K(1)                                                          \
-  } else if (k == 2) {                                                         \
-    CALL_BATCHED_K(2)                                                          \
-  } else if (k == 4) {                                                         \
-    CALL_BATCHED_K(4)                                                          \
-  } else if (k == 8) {                                                         \
-    CALL_BATCHED_K(8)                                                          \
-  } else if (k == 16) {                                                        \
-    CALL_BATCHED_K(16)                                                         \
-  } else if (k == 32) {                                                        \
-    CALL_BATCHED_K(32)                                                         \
-  } else if (k == 64) {                                                        \
-    CALL_BATCHED_K(64)                                                         \
-  } else if (k == 128) {                                                       \
-    CALL_BATCHED_K(128)                                                        \
-  }
+#define F                                                                                                              \
+  const auto *raw_data_ptr = (const u64 *) raw_dense_data;                                                             \
+  const half *X_ptr = (const half *) X;                                                                                \
+  const int *row_offsets_ptr = (const int *) row_offsets;                                                              \
+  half *y_ptr = (half *) y;                                                                                            \
+  const auto *col_vals_ptr = (const u32 *) col_vals;                                                                   \
+  const auto *order_ptr = (const uint16_t *) raw_in_order;                                                             \
+  int ret = 0;                                                                                                         \
+  bool is_csr = m + 1 == row_offsets_len;                                                                              \
+  bool needs_fusion = order_ptr == nullptr;                                                                            \
+  if (k == 1) {                                                                                                        \
+    CALL_BATCHED_K(1)                                                                                                  \
+  } else if (k == 2) {                                                                                                 \
+    CALL_BATCHED_K(2)                                                                                                  \
+  } else if (k == 4) {                                                                                                 \
+    CALL_BATCHED_K(4)                                                                                                  \
+  }                                                                                                                    \
+//  else if (k == 8) {                                                                                                 \
+//    CALL_BATCHED_K(8)                                                                                                  \
+//  }                                                                                                                    \
+//  else if (k == 16) {                                                                                                \
+//    CALL_BATCHED_K(16)                                                                                                 \
+//  }                                                                                                                    \
+//  else if (k == 32) {                                                                                                \
+//    CALL_BATCHED_K(32)                                                                                                 \
+//  } else if (k == 64) {                                                                                                \
+//    CALL_BATCHED_K(64)                                                                                                 \
+//  } else if (k == 128) {                                                                                               \
+//    CALL_BATCHED_K(128)                                                                                                \
+//  }
 
 int spqr_matvec_batched(
     // W and meta
@@ -1534,8 +1618,9 @@ int spqr_matvec_batched(
     void *X,
     // Output
     void *y, cudaStream_t stream, void *measurements, uint32_t feature_flag) {
-  constexpr int NUM_RUNS = 3000;
-  constexpr int WARMUPS = 1000;
+  constexpr int NUM_RUNS = 500;
+  constexpr int WARMUPS = 100;
+  static constexpr int TILE_COUNT = 16;                                                                                \
 
   Features features{._ = feature_flag};
   Timer *timer{};
@@ -1561,5 +1646,3 @@ int spqr_matvec_batched(
   }
   return 0;
 }
-
-#pragma clang diagnostic pop

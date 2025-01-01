@@ -338,6 +338,7 @@ DENSE_ONLY = 0b1 << 1  #
 
 TORCH = 0b1 << 3
 IS_ASYNC = 0b1 << 4
+IS_COLUMN_MAJOR = 0b1 << 5
 SPARSE_FUSED_ALGORITHM = FULL | (0b1 << 8)
 
 
@@ -345,11 +346,15 @@ class FeatureFlags(IntEnum):
     SPARSE_FUSED_FP32 = SPARSE_FUSED_ALGORITHM | FP32
     SPARSE_FUSED_FP32_ASYNC = SPARSE_FUSED_ALGORITHM | FP32 | IS_ASYNC
     TORCH_FP16 = TORCH | FP16
+    SPARSE_FUSED_FP32_COLUMN_MAJOR = SPARSE_FUSED_ALGORITHM | FP32 | IS_COLUMN_MAJOR
+    SPARSE_FUSED_FP32_ASYNC_COLUMN_MAJOR = SPARSE_FUSED_ALGORITHM | FP32 | IS_ASYNC | IS_COLUMN_MAJOR
 
     def pretty(self):
         if self.value == FeatureFlags.TORCH_FP16:
             return "Torch FP16"
         elif self.value == FeatureFlags.SPARSE_FUSED_FP32:
             return "Fused"
+        elif self.value == FeatureFlags.SPARSE_FUSED_FP32_COLUMN_MAJOR:
+            return "Fused Column Major"
         else:
             raise "Prettify not found for value {self.value}"

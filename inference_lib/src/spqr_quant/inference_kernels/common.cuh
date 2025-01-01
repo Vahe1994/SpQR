@@ -15,18 +15,17 @@
 #define __forceinline__
 #endif
 
-#include <cstdint>
 #include <cstdio>
-#include <type_traits>
 
 using u64 = unsigned long long;
 using s32 = int;
+using s64 = long long int;
 using u32 = unsigned int;
 using u16 = unsigned short;
 
-static constexpr uint64_t SECOND_ORDER_FRAGMENT_SIZE_BITS = 8ull;
+static constexpr u64 SECOND_ORDER_FRAGMENT_SIZE_BITS = 8ull;
 
-template <class T> __host__ __device__ constexpr int get_bits() {
+template<class T> __host__ __device__ constexpr int get_bits() {
   if constexpr (std::is_same_v<T, int> || std::is_same_v<T, unsigned int>) {
     return 32;
   } else {
@@ -34,7 +33,7 @@ template <class T> __host__ __device__ constexpr int get_bits() {
   }
 }
 
-template <class Bit_t, unsigned BITS> struct TileArray {
+template<class Bit_t, unsigned BITS> struct TileArray {
 private:
   Bit_t *buffer{};
 
@@ -62,70 +61,21 @@ public:
   }
 };
 
-template <class Bit_t, uint64_t BITS> struct BitArray {
-  const Bit_t *w;
-
-  __host__ __device__ Bit_t operator[](int w_id) {
-    // TODO: NOTE: PERF: Make this decode faster!
-    int addr = (w_id / 18);
-    return (w[addr] >> ((w_id % 18ull) * BITS)) & ((1ull << BITS) - 1ull);
-  }
-};
-
-template <class Bit_t> struct _BitArray {
+template<class Bit_t> struct _BitArray {
   Bit_t *w{};
   const int bits;
   Bit_t *out;
-  int local_id{};
-  int addr_per_block;
 
-  _BitArray(Bit_t *w, int bits) : w(w), bits(bits), out(nullptr), local_id{} {
-    constexpr unsigned BYTE = 8u;
-    constexpr unsigned BITS_PER_ADDR = sizeof(Bit_t) * BYTE;
-    addr_per_block = BITS_PER_ADDR / bits;
-  }
+  _BitArray(Bit_t *w, int bits) : w(w), bits(bits), out(nullptr) {}
 
   __host__ __device__ Bit_t operator[](int w_id) {
-    // TODO: NOTE: PERF: Make this decode faster!
     int addr = (w_id / 18);
     return (w[addr] >> ((w_id % 18ull) * bits)) & ((1ull << bits) - 1ull);
-  }
-
-  [[maybe_unused]] int sanity{};
-
-  __device__ __host__ void push_back(Bit_t x) {
-    if (out == nullptr) {
-      out = w;
-    }
-    (*out) |= (x << (local_id * bits));
-    if (local_id == addr_per_block - 1) {
-      *(++out) = 0;
-      local_id = 0;
-      sanity++;
-    } else {
-      local_id++;
-    }
-  }
-
-  __device__ __host__ void pad(int times) {
-    // Move to the next block if necessary
-    for (int i = 0; i < times; i++) {
-      *(++out) = 0;
-      sanity++;
-    }
-    local_id = 0;
-  }
-
-  __device__ __host__ void pad_maybe() {
-    // Move to the next block if necessary
-    if (local_id != 0) {
-      pad(1);
-    }
   }
 };
 
 union ColVal {
-  uint32_t _;
+  u32 _;
 
   struct {
     unsigned short c;
@@ -134,7 +84,7 @@ union ColVal {
 };
 
 union SecondOrder {
-  uint64_t v;
+  u64 v;
 
   struct SO {
     half2 ss;
