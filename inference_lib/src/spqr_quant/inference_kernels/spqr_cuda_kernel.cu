@@ -812,11 +812,11 @@ struct DenseMatrixRunnerBatched {
     const auto x128 = reinterpret_cast<const Load_t *>(x2);
 
     if constexpr (IS_COLUMN_MAJOR && K > 1) {
-      auto warp_id = thread_xy / WARP_SIZE;
       static constexpr u32 WARP_COUNT = UPDIV(THREAD_COUNT, WARP_SIZE);
-      auto lane_id = thread_xy & 0x1f;
 
       if constexpr (WARP_COUNT <= K) {
+        auto warp_id = thread_xy / WARP_SIZE;
+        auto lane_id = thread_xy & 0x1f;
         u32 height_offset = pipeline_id * page_size_fp32 / K;
         auto height = min(n / 2 - height_offset, page_size_fp32 / K);
         for (int i = warp_id; i < K; i += WARP_COUNT) {
@@ -826,14 +826,15 @@ struct DenseMatrixRunnerBatched {
           }
         }
       } else {
-        if (warp_id < K) {
-          u32 height_offset = pipeline_id * page_size_fp32 / K;
-          auto height = min(n / 2 - height_offset, page_size_fp32 / K);
-          for (int i = warp_id; i < K; i += K) {
-            auto s_x2_ptr = s_x2 + i * (page_size_fp32 / K) + lane_id;
-            for (int j = lane_id; j < height; j += WARP_SIZE) {
-              s_x2[j * K + i] = x2[(i * n / 2) + height_offset + j];
-            }
+        static constexpr u32 WARPS_PER_COLUMN = WARP_COUNT / K;
+        auto lane_id = thread_xy % (WARPS_PER_COLUMN * WARP_SIZE);
+        u32 height_offset = pipeline_id * page_size_fp32 / K;
+        auto height = min(n / 2 - height_offset, page_size_fp32 / K);
+        auto warp_id = thread_xy / (WARP_SIZE * WARPS_PER_COLUMN);
+        for (int i = warp_id; i < K; i += K) {
+          auto subwarp_id = warp_id % WARPS_PER_COLUMN;
+          for (int j = lane_id; j < height; j += WARPS_PER_COLUMN * WARP_SIZE) {
+            s_x2[j * K + i] = x2[(i * n / 2) + height_offset + j];
           }
         }
       }
@@ -1569,13 +1570,11 @@ int spqr_matvec(
     CALL_BATCHED_K(2)                                                                                                  \
   } else if (k == 4) {                                                                                                 \
     CALL_BATCHED_K(4)                                                                                                  \
+  } else if (k == 8) {                                                                                                 \
+    CALL_BATCHED_K(8)                                                                                                  \
+  } else if (k == 16) {                                                                                                \
+    CALL_BATCHED_K(16)                                                                                                 \
   }                                                                                                                    \
-//  else if (k == 8) {                                                                                                 \
-//    CALL_BATCHED_K(8)                                                                                                  \
-//  }                                                                                                                    \
-//  else if (k == 16) {                                                                                                \
-//    CALL_BATCHED_K(16)                                                                                                 \
-//  }                                                                                                                    \
 //  else if (k == 32) {                                                                                                \
 //    CALL_BATCHED_K(32)                                                                                                 \
 //  } else if (k == 64) {                                                                                                \
