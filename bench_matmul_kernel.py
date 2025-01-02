@@ -127,8 +127,8 @@ def bench_random():
     print('m,n,k,Density,Sparse Storage,Speed-Up (X)')
 
     for flag in [
-        FeatureFlags.SPARSE_FUSED_FP32,
-        # FeatureFlags.SPARSE_FUSED_FP32_COLUMN_MAJOR,
+        # FeatureFlags.SPARSE_FUSED_FP32,
+        FeatureFlags.SPARSE_FUSED_FP32_COLUMN_MAJOR,
     ]:
         for sparse_storage in [SparseStorageConfiguration.CSR,
                                SparseStorageConfiguration.PTCSR]:

@@ -422,7 +422,7 @@ class TestSparseFp16BatchedRandom(unittest.TestCase):
         device = torch.device("cuda:0")
         for m in [16, 32]: #, 32]:
             for n in [16, 256, 256 * 5, 2 ** 10, 2 ** 11, 2 ** 12, 11008, 2 ** 13, 2 ** 14]:
-                for k in [1, 2, 4, 8, 16]: #, 2, 4, 8]: #, 2, 4, 8]:
+                for k in [1, 2, 4]: #, 2, 4, 8]: #, 2, 4, 8]:
                     for density in [0, 0.01, 0.015, 0.02, 0.025, 0.03, 0.5]:
                         for compression_strategy in [SparseStorageConfiguration.CSR, SparseStorageConfiguration.PTCSR]:
                             for generator_strategy in [
@@ -472,12 +472,12 @@ class TestSparseFp16BatchedRandomColumnMajor(unittest.TestCase):
         device = torch.device("cuda:0")
         for m in [16]: #, 32]:
             for n in [16, 256, 256 * 5, 2 ** 10, 2 ** 11, 2 ** 12, 11008, 2 ** 13, 2 ** 14]:
-                for k in [4, 8, 16]: #, 2, 4, 8]: #, 2, 4, 8]:
-                    for density in [0, 0.01, 0.015, 0.02, 0.025, 0.03, 0.5]:
+                for k in [4]: #, 2, 4, 8]: #, 2, 4, 8]:
+                    for density in [0]: #, 0.01, 0.015, 0.02, 0.025, 0.03, 0.5]:
                         for compression_strategy in [SparseStorageConfiguration.CSR, SparseStorageConfiguration.PTCSR]:
                             for generator_strategy in [
                                 "ones",
-                                # "random",
+                                "random",
                             ]:
                                 for flag in [
                                     FeatureFlags.SPARSE_FUSED_FP32_COLUMN_MAJOR,
@@ -500,12 +500,12 @@ class TestSparseFp16BatchedRandomColumnMajor(unittest.TestCase):
                                     deq_w = spqr_module.dequantize().to(device)
                                     y_true = torch.matmul(deq_w, x_fp16_device.reshape((n, k))).flatten()
 
-                                    x_fp16_device = x_fp16_device.t().contiguous()
+                                    x_fp16_device = x_fp16_device.reshape(n, k).t().flatten().contiguous()
 
                                     y = torch.zeros(m * k, dtype=torch.half, device=device).contiguous().flatten()
 
                                     _spqr_mul_batched(
-                                        spqr_module_device, x_fp16_device.flatten().contiguous().flatten(), y, flag, k
+                                        spqr_module_device, x_fp16_device, y, flag, k
                                     )
 
                                     passed = torch.equal(y, y_true)

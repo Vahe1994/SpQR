@@ -21,6 +21,10 @@
 #include <cuda_pipeline.h>
 #include <cuda_runtime.h>
 
+static constexpr u32 SHARED_OFFSET = 32;
+static constexpr u32 WARP_SIZE = 32;
+static constexpr u32 FULL_MASK = 0xFFFFFFFFu;
+
 __device__ void printf_half2(const half2 &_x) {
   auto x = __half22float2(_x);
   printf("%f %f\n", x.x, x.y);
@@ -150,7 +154,6 @@ __device__ __forceinline__ half2 dequant2(int q) {
 }
 
 DEVICE_INLINE uint64_t recover_second_order_sync(uint64_t val) {
-  static constexpr unsigned int FULL_MASK = 0xFFFFFFFFu;
   val |= __shfl_xor_sync(FULL_MASK, val, 2);
   val |= __shfl_xor_sync(FULL_MASK, val, 4);
   val |= __shfl_xor_sync(FULL_MASK, val, 8);
@@ -252,9 +255,6 @@ DEVICE_INLINE half get_val(u32 m) {
          dim3(__min(updiv(n, 16), BLOCK_WIDTH) * 16, __min(updiv(m, 16), BLOCK_HEIGHT), 1),                            \
          page_size_fp32 * sizeof(float),                                                                               \
          stream>>>(m, n, raw_data_ptr, X_ptr, row_offsets_ptr, col_vals_ptr, y_ptr);
-
-static constexpr u32 SHARED_OFFSET = 32;
-static constexpr u32 WARP_SIZE = 32;
 
 // Wait until at most `n` async copy stages are still pending.
 template<int n> DEVICE_INLINE void cp_async_wait() { asm volatile("cp.async.wait_group %0;\n"::"n"(n)); }
@@ -596,19 +596,17 @@ DEVICE_INLINE Vec<float, K> accumulate_batched_lut(int n,
                                                    const half2 *__restrict__ lut) {
   static constexpr int BETA1 = 16;
   if constexpr (IS_COLUMN_MAJOR && K != 1) {
-    auto s_x2_ptr = s_x2;
-
 #pragma unroll
     for (u32 i = 0; i < BETA1 / 2; i++) {
       const u64 problematic = (b >>= 6u) & 0b111111u;
       auto w_q = lut[problematic];
       half2 w = dequantize2(w_q, ws2, wz2);
       float2 w_fp32 = __half22float2(w);
+#pragma unroll
       for (int k = 0; k < K; k++) {
-        float2 x_fp32 = __half22float2(*s_x2_ptr);
+        float2 x_fp32 = __half22float2(*(s_x2++));
         acc[k] = fmaf(x_fp32.x, w_fp32.x, acc[k]);
         acc[k] = fmaf(x_fp32.y, w_fp32.y, acc[k]);
-        s_x2_ptr++;
       }
     }
   } else {
@@ -706,7 +704,6 @@ struct DenseMatrixRunner {
       }
 
       acc = accumulate(acc, v, ws2, wz2, s_x2_, lut);
-
       i += NUM_SPQR_TILES_PER_ITERATION;
       local_raw_data += NUM_SPQR_TILES_PER_ITERATION * BETA1;
       pipeline_id++;
@@ -807,12 +804,7 @@ struct DenseMatrixRunnerBatched {
     // Therefore, we will page the loads of X, loading fp32s_per_page
     // per iteration.
 
-    half2 *s_x2_compute;
-    if constexpr (IS_COLUMN_MAJOR) {
-      s_x2_compute = s_x2 + row_pos * page_size_fp32 + subtile_id * (BETA2 / 2);
-    } else {
-      s_x2_compute = s_x2 + subtile_id * (BETA2 * K / 2);
-    }
+    half2 *s_x2_compute = s_x2 + subtile_id * (BETA2 * K / 2);
 
     int local_x_fp128_loaded_base_id{};
 
@@ -827,19 +819,23 @@ struct DenseMatrixRunnerBatched {
       if constexpr (WARP_COUNT <= K) {
         u32 height_offset = pipeline_id * page_size_fp32 / K;
         auto height = min(n / 2 - height_offset, page_size_fp32 / K);
-#pragma loop unroll
         for (int i = warp_id; i < K; i += WARP_COUNT) {
-          auto x2_ptr = x2 + (i * n / 2) + height_offset + lane_id;
           auto s_x2_ptr = s_x2 + i * (page_size_fp32 / K) + lane_id;
-
           for (int j = lane_id; j < height; j += WARP_SIZE) {
-            // s_x2[j * K + i] = x2[(i * n / 2) + (pipeline_id * page_size_fp32 / K) + j];
-            *s_x2_ptr = *x2_ptr;
-            s_x2_ptr += WARP_SIZE;
-            x2_ptr += WARP_SIZE;
+            s_x2[j * K + i] = x2[(i * n / 2) + height_offset + j];
           }
         }
       } else {
+        if (warp_id < K) {
+          u32 height_offset = pipeline_id * page_size_fp32 / K;
+          auto height = min(n / 2 - height_offset, page_size_fp32 / K);
+          for (int i = warp_id; i < K; i += K) {
+            auto s_x2_ptr = s_x2 + i * (page_size_fp32 / K) + lane_id;
+            for (int j = lane_id; j < height; j += WARP_SIZE) {
+              s_x2[j * K + i] = x2[(i * n / 2) + height_offset + j];
+            }
+          }
+        }
       }
     } else {
       for (int i = thread_xy;
@@ -877,24 +873,11 @@ struct DenseMatrixRunnerBatched {
       cp_async_wait_all();
       __syncthreads();
 
-#if 1
-      if (n == 16 && !thread_xy) {
-        for (int i = 0; i < 16; i++) {
-          printf("x[%d] = %f\n", 2 * i, __half2float(s_x2_compute[i].x));
-          printf("x[%d] = %f\n", 2 * i + 1, __half2float(s_x2_compute[i].y));
-        }
-      }
-#endif
-
       accs = accumulate_batched_lut<K, IS_COLUMN_MAJOR>(n, accs, v, ws2, wz2, s_x2_compute, lut);
-
       local_raw_data += NUM_SPQR_TILES_PER_ITERATION * BETA1;
       global_computed_tile += THREAD_COUNT * K;
-      if constexpr (IS_COLUMN_MAJOR) {
-        s_x2_compute += BETA2 * K * BLOCK_WIDTH / 2;
-      } else {
-        s_x2_compute += BETA2 * K * BLOCK_WIDTH / 2;
-      }
+
+      s_x2_compute += BETA2 * K * BLOCK_WIDTH / 2;
 
       if (!global_p) {
         return;
@@ -931,11 +914,7 @@ struct DenseMatrixRunnerBatched {
 
       local_raw_data += NUM_SPQR_TILES_PER_ITERATION * BETA1;
       global_computed_tile += THREAD_COUNT * K;
-      if constexpr (IS_COLUMN_MAJOR) {
-        s_x2_compute += BETA2 * K * BLOCK_WIDTH / 2;
-      } else {
-        s_x2_compute += BETA2 * K * BLOCK_WIDTH / 2;
-      }
+      s_x2_compute += BETA2 * K * BLOCK_WIDTH / 2;
     }
   }
 };
