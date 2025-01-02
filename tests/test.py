@@ -472,7 +472,7 @@ class TestSparseFp16BatchedRandomColumnMajor(unittest.TestCase):
         device = torch.device("cuda:0")
         for m in [16]: #, 32]:
             for n in [16, 256, 256 * 5, 2 ** 10, 2 ** 11, 2 ** 12, 11008, 2 ** 13, 2 ** 14]:
-                for k in [4]: #, 2, 4, 8]: #, 2, 4, 8]:
+                for k in [1, 2, 4, 8, 16]: #, 2, 4, 8]: #, 2, 4, 8]:
                     for density in [0]: #, 0.01, 0.015, 0.02, 0.025, 0.03, 0.5]:
                         for compression_strategy in [SparseStorageConfiguration.CSR, SparseStorageConfiguration.PTCSR]:
                             for generator_strategy in [

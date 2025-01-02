@@ -814,7 +814,7 @@ struct DenseMatrixRunnerBatched {
     if constexpr (IS_COLUMN_MAJOR && K > 1) {
       static constexpr u32 WARP_COUNT = UPDIV(THREAD_COUNT, WARP_SIZE);
 
-      if constexpr (WARP_COUNT <= K) {
+      if constexpr (WARP_COUNT == 1) {
         auto warp_id = thread_xy / WARP_SIZE;
         auto lane_id = thread_xy & 0x1f;
         u32 height_offset = pipeline_id * page_size_fp32 / K;
@@ -826,15 +826,22 @@ struct DenseMatrixRunnerBatched {
           }
         }
       } else {
-        static constexpr u32 WARPS_PER_COLUMN = WARP_COUNT / K;
+        static constexpr u32 LOAD_SIZE = 1; // K < 8 ? 1 : 4;
+        static constexpr u32 page_size = (page_size_fp32 / K) / LOAD_SIZE;
+        static constexpr u32 WARPS_PER_COLUMN = UPDIV(WARP_COUNT, K);
         auto lane_id = thread_xy % (WARPS_PER_COLUMN * WARP_SIZE);
-        u32 height_offset = pipeline_id * page_size_fp32 / K;
-        auto height = min(n / 2 - height_offset, page_size_fp32 / K);
+        u32 height_offset = pipeline_id * page_size;
+        auto height = min((n / 2) / LOAD_SIZE - height_offset, page_size);
         auto warp_id = thread_xy / (WARP_SIZE * WARPS_PER_COLUMN);
-        for (int i = warp_id; i < K; i += K) {
+#pragma unroll
+        for (int i = warp_id; i < K; i += WARP_COUNT / WARPS_PER_COLUMN) {
           auto subwarp_id = warp_id % WARPS_PER_COLUMN;
           for (int j = lane_id; j < height; j += WARPS_PER_COLUMN * WARP_SIZE) {
-            s_x2[j * K + i] = x2[(i * n / 2) + height_offset + j];
+            if constexpr (LOAD_SIZE == 1) {
+              cp_async(s_x2 + j * K + i, x2 + (i * n / 2) + height_offset + j);
+            } else {
+              cp_async128(s_x128 + j * K + i, x128 + (i * n / 2) + height_offset + j);
+            }
           }
         }
       }
@@ -845,6 +852,7 @@ struct DenseMatrixRunnerBatched {
         cp_async128(s_x128 + i, x128 + global_x_fp128_loaded_base_id + i);
       }
     }
+
     __pipeline_commit();
 
     global_x_fp128_loaded_base_id += page_size_fp32 / 4;
@@ -918,6 +926,7 @@ struct DenseMatrixRunnerBatched {
       s_x2_compute += BETA2 * K * BLOCK_WIDTH / 2;
     }
   }
+
 };
 
 template<int BITS,
