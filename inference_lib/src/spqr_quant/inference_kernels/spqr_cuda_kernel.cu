@@ -855,76 +855,120 @@ struct DenseMatrixRunnerBatched {
 
     __pipeline_commit();
 
-    global_x_fp128_loaded_base_id += page_size_fp32 / 4;
+    if constexpr (IS_COLUMN_MAJOR) {
+      unsigned int upper_limit_fp16 = min((pipeline_id + 1) * page_size_fp32 * 2, n * K);
 
-    unsigned int upper_limit_fp16 = min((pipeline_id + 1) * page_size_fp32 * 2, n * K);
+      for (;;) {
+        uint64_t v{};
+        bool p = global_computed_tile + thread_xy * K / 2 < upper_limit_fp16;
+        bool global_p = global_computed_tile < upper_limit_fp16;
 
-    {
-      uint64_t v{};
-      bool p = global_computed_tile + thread_xy * K / 2 < upper_limit_fp16;
-      bool global_p = global_computed_tile < upper_limit_fp16;
+        if (p) {
+          v = __ldcs(local_raw_data);
+        }
 
-      // An assumption made here is that we will have at least one valid iteration of compute.
-      v = __ldcs(local_raw_data);
+        uint64_t s_order_partial = (v >> NUM_USEFUL_BITS) << SHIFT;
 
-      uint64_t s_order_partial = (v >> NUM_USEFUL_BITS) << SHIFT;
+        SecondOrder _s{.v = recover_second_order_sync(s_order_partial)};
 
-      SecondOrder _s{.v = recover_second_order_sync(s_order_partial)};
+        if (p) {
+          half2 first_order_quantized = lut[v & 0b111111u];
 
-      half2 ws2, wz2;
-      half2 first_order_quantized = lut[v & 0b111111u];
+          half2 first_order_dequantized = dequantize2(first_order_quantized, _s.get_sws2(), _s.get_swz2());
 
-      half2 first_order_dequantized = dequantize2(first_order_quantized, _s.get_sws2(), _s.get_swz2());
+          half2 ws2 = __half2half2(first_order_dequantized.x);
+          half2 wz2 = __half2half2(first_order_dequantized.y);
 
-      ws2 = __half2half2(first_order_dequantized.x);
-      wz2 = __half2half2(first_order_dequantized.y);
+        }
 
-      cp_async_wait_all();
-      __syncthreads();
+        cp_async_wait_all();
+        __syncthreads();
+        if (p) {
 
-      accs = accumulate_batched_lut<K, IS_COLUMN_MAJOR>(n, accs, v, ws2, wz2, s_x2_compute, lut);
-      local_raw_data += NUM_SPQR_TILES_PER_ITERATION * BETA1;
-      global_computed_tile += THREAD_COUNT * K;
+          accs = accumulate_batched_lut<K, IS_COLUMN_MAJOR>(n, accs, v, ws2, wz2, s_x2_compute, lut);
+        }
 
-      s_x2_compute += BETA2 * K * BLOCK_WIDTH / 2;
+        if (!global_p) {
+          break;
+        }
 
-      if (!global_p) {
-        return;
+        local_raw_data += NUM_SPQR_TILES_PER_ITERATION * BETA1;
+        global_computed_tile += THREAD_COUNT * K;
+        s_x2_compute += BETA2 * K * BLOCK_WIDTH / 2;
       }
-    }
+    } else {
+      global_x_fp128_loaded_base_id += page_size_fp32 / 4;
 
-    for (;;) {
-      uint64_t v{};
-      bool p = global_computed_tile + thread_xy * K / 2 < upper_limit_fp16;
-      bool global_p = global_computed_tile < upper_limit_fp16;
+      unsigned int upper_limit_fp16 = min((pipeline_id + 1) * page_size_fp32 * 2, n * K);
 
-      if (p) {
+      {
+        uint64_t v{};
+        bool p = global_computed_tile + thread_xy * K / 2 < upper_limit_fp16;
+        bool global_p = global_computed_tile < upper_limit_fp16;
+
+        // An assumption made here is that we will have at least one valid iteration of compute.
         v = __ldcs(local_raw_data);
-      }
 
-      uint64_t s_order_partial = (v >> NUM_USEFUL_BITS) << SHIFT;
+        uint64_t s_order_partial = (v >> NUM_USEFUL_BITS) << SHIFT;
 
-      SecondOrder _s{.v = recover_second_order_sync(s_order_partial)};
+        SecondOrder _s{.v = recover_second_order_sync(s_order_partial)};
 
-      if (p) {
+        half2 ws2, wz2;
         half2 first_order_quantized = lut[v & 0b111111u];
 
         half2 first_order_dequantized = dequantize2(first_order_quantized, _s.get_sws2(), _s.get_swz2());
 
-        half2 ws2 = __half2half2(first_order_dequantized.x);
-        half2 wz2 = __half2half2(first_order_dequantized.y);
+        ws2 = __half2half2(first_order_dequantized.x);
+        wz2 = __half2half2(first_order_dequantized.y);
+
+        cp_async_wait_all();
+        __syncthreads();
 
         accs = accumulate_batched_lut<K, IS_COLUMN_MAJOR>(n, accs, v, ws2, wz2, s_x2_compute, lut);
+        local_raw_data += NUM_SPQR_TILES_PER_ITERATION * BETA1;
+        global_computed_tile += THREAD_COUNT * K;
+
+        s_x2_compute += BETA2 * K * BLOCK_WIDTH / 2;
+
+        if (!global_p) {
+          return;
+        }
       }
 
-      if (!global_p) {
-        break;
-      }
+      for (;;) {
+        uint64_t v{};
+        bool p = global_computed_tile + thread_xy * K / 2 < upper_limit_fp16;
+        bool global_p = global_computed_tile < upper_limit_fp16;
 
-      local_raw_data += NUM_SPQR_TILES_PER_ITERATION * BETA1;
-      global_computed_tile += THREAD_COUNT * K;
-      s_x2_compute += BETA2 * K * BLOCK_WIDTH / 2;
+        if (p) {
+          v = __ldcs(local_raw_data);
+        }
+
+        uint64_t s_order_partial = (v >> NUM_USEFUL_BITS) << SHIFT;
+
+        SecondOrder _s{.v = recover_second_order_sync(s_order_partial)};
+
+        if (p) {
+          half2 first_order_quantized = lut[v & 0b111111u];
+
+          half2 first_order_dequantized = dequantize2(first_order_quantized, _s.get_sws2(), _s.get_swz2());
+
+          half2 ws2 = __half2half2(first_order_dequantized.x);
+          half2 wz2 = __half2half2(first_order_dequantized.y);
+
+          accs = accumulate_batched_lut<K, IS_COLUMN_MAJOR>(n, accs, v, ws2, wz2, s_x2_compute, lut);
+        }
+
+        if (!global_p) {
+          break;
+        }
+
+        local_raw_data += NUM_SPQR_TILES_PER_ITERATION * BETA1;
+        global_computed_tile += THREAD_COUNT * K;
+        s_x2_compute += BETA2 * K * BLOCK_WIDTH / 2;
+      }
     }
+
   }
 
 };
