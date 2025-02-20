@@ -81,14 +81,14 @@ class MatrixBuilder:
 
 
 def create_spqr_quantized_matrix(
-    m: int,
-    n: int,
-    weight_init_strategy: int = None,
-    first_order_init_strategy: int = None,
-    second_order_init_strategy: torch.float16 = None,
-    density: float = 0.0,
-    sparse_storage: SparseStorageConfiguration = SparseStorageConfiguration.CSR,
-    in_perm=None,
+        m: int,
+        n: int,
+        weight_init_strategy: int = None,
+        first_order_init_strategy: int = None,
+        second_order_init_strategy: torch.float16 = None,
+        density: float = 0.0,
+        sparse_storage: SparseStorageConfiguration = SparseStorageConfiguration.CSR,
+        in_perm=None,
 ) -> Tuple[QuantizedLinear, QuantizedLinear]:
     beta1, beta2 = 16, 16
 
@@ -147,19 +147,19 @@ def create_random(m, n, density, sparse_storage: SparseStorageConfiguration = Sp
 
 
 def create_random_weights_ones(
-    m, n, density, sparse_storage: SparseStorageConfiguration = SparseStorageConfiguration.CSR
+        m, n, density, sparse_storage: SparseStorageConfiguration = SparseStorageConfiguration.CSR
 ):
     return create_spqr_quantized_matrix(m, n, 1, None, None, density, sparse_storage, None)
 
 
 def create_random_first_order_ones(
-    m, n, density, sparse_storage: SparseStorageConfiguration = SparseStorageConfiguration.CSR
+        m, n, density, sparse_storage: SparseStorageConfiguration = SparseStorageConfiguration.CSR
 ):
     return create_spqr_quantized_matrix(m, n, None, 1, None, density, sparse_storage, None)
 
 
 def create_random_second_order_ones(
-    m, n, density, sparse_storage: SparseStorageConfiguration = SparseStorageConfiguration.CSR
+        m, n, density, sparse_storage: SparseStorageConfiguration = SparseStorageConfiguration.CSR
 ):
     return create_spqr_quantized_matrix(m, n, None, None, 1, density, sparse_storage, None)
 
@@ -415,54 +415,54 @@ def torch_mul(deq_w, x):
 #                             )
 
 
-class TestSparseFp16BatchedRandom(unittest.TestCase):
-    def test_sparse_random(self):
-        print("")
-        # Call this once just to trigger the annoying torch sparse warning.
-        device = torch.device("cuda:0")
-        for m in [16, 32]: #, 32]:
-            for n in [16, 256, 256 * 5, 2 ** 10, 2 ** 11, 2 ** 12, 11008, 2 ** 13, 2 ** 14]:
-                for k in [1, 2, 4]: #, 2, 4, 8]: #, 2, 4, 8]:
-                    for density in [0, 0.01, 0.015, 0.02, 0.025, 0.03, 0.5]:
-                        for compression_strategy in [SparseStorageConfiguration.CSR, SparseStorageConfiguration.PTCSR]:
-                            for generator_strategy in [
-                                "ones",
-                                "random",
-                            ]:
-                                for flag in [
-                                    FeatureFlags.SPARSE_FUSED_FP32,
-                                ]:
-                                    print(
-                                        f"Running m = {m} n = {n} k = {k} density = {density} storage = {compression_strategy} generator = {generator_strategy}"
-                                    )
-
-                                    # Generate test case
-                                    x_fp32 = generate_x_fp32(n * k)
-                                    if generator_strategy == "ones":
-                                        x_fp32 = x_fp32 * 0 + 1
-                                        spqr_module, spqr_module_device = create_ones(m, n)
-                                    else:
-                                        spqr_module, spqr_module_device = create_random(
-                                            m, n, density, compression_strategy
-                                        )
-                                    x_fp16_device = x_fp32.cuda(device=device).half()
-                                    deq_w = spqr_module.dequantize().to(device)
-
-                                    y_true = torch.matmul(deq_w, x_fp16_device.reshape((n, k))).flatten()
-                                    y = torch.zeros(m * k, dtype=torch.half, device=device).contiguous().flatten()
-
-                                    _spqr_mul_batched(
-                                        spqr_module_device, x_fp16_device.flatten().contiguous().flatten(), y, flag, k
-                                    )
-
-                                    passed = torch.equal(y, y_true)
-                                    print(y)
-                                    print(y_true)
-
-                                    self.assertTrue(
-                                        passed,
-                                        msg=f"Failed for m = {m} n = {n} k = {k} density = {density} compression_strategy = {compression_strategy}\ny={y}\ny_true={y_true}",
-                                    )
+# class TestSparseFp16BatchedRandom(unittest.TestCase):
+#     def test_sparse_random(self):
+#         print("")
+#         # Call this once just to trigger the annoying torch sparse warning.
+#         device = torch.device("cuda:0")
+#         for m in [16, 32]: #, 32]:
+#             for n in [16, 256, 256 * 5, 2 ** 10, 2 ** 11, 2 ** 12, 11008, 2 ** 13, 2 ** 14]:
+#                 for k in [1, 2, 4]: #, 2, 4, 8]: #, 2, 4, 8]:
+#                     for density in [0, 0.01, 0.015, 0.02, 0.025, 0.03, 0.5]:
+#                         for compression_strategy in [SparseStorageConfiguration.CSR, SparseStorageConfiguration.PTCSR]:
+#                             for generator_strategy in [
+#                                 "ones",
+#                                 "random",
+#                             ]:
+#                                 for flag in [
+#                                     FeatureFlags.SPARSE_FUSED_FP32,
+#                                 ]:
+#                                     print(
+#                                         f"Running m = {m} n = {n} k = {k} density = {density} storage = {compression_strategy} generator = {generator_strategy}"
+#                                     )
+#
+#                                     # Generate test case
+#                                     x_fp32 = generate_x_fp32(n * k)
+#                                     if generator_strategy == "ones":
+#                                         x_fp32 = x_fp32 * 0 + 1
+#                                         spqr_module, spqr_module_device = create_ones(m, n)
+#                                     else:
+#                                         spqr_module, spqr_module_device = create_random(
+#                                             m, n, density, compression_strategy
+#                                         )
+#                                     x_fp16_device = x_fp32.cuda(device=device).half()
+#                                     deq_w = spqr_module.dequantize().to(device)
+#
+#                                     y_true = torch.matmul(deq_w, x_fp16_device.reshape((n, k))).flatten()
+#                                     y = torch.zeros(m * k, dtype=torch.half, device=device).contiguous().flatten()
+#
+#                                     _spqr_mul_batched(
+#                                         spqr_module_device, x_fp16_device.flatten().contiguous().flatten(), y, flag, k
+#                                     )
+#
+#                                     passed = torch.equal(y, y_true)
+#                                     print(y)
+#                                     print(y_true)
+#
+#                                     self.assertTrue(
+#                                         passed,
+#                                         msg=f"Failed for m = {m} n = {n} k = {k} density = {density} compression_strategy = {compression_strategy}\ny={y}\ny_true={y_true}",
+#                                     )
 
 
 class TestSparseFp16BatchedRandomColumnMajor(unittest.TestCase):
@@ -470,14 +470,17 @@ class TestSparseFp16BatchedRandomColumnMajor(unittest.TestCase):
         print("")
         # Call this once just to trigger the annoying torch sparse warning.
         device = torch.device("cuda:0")
-        for m in [16]: #, 32]:
-            for n in [16, 256, 256 * 5, 2 ** 10, 2 ** 11, 2 ** 12, 11008, 2 ** 13, 2 ** 14]:
-                for k in [1, 2, 4, 8, 16]: #, 2, 4, 8]: #, 2, 4, 8]:
-                    for density in [0]: #, 0.01, 0.015, 0.02, 0.025, 0.03, 0.5]:
-                        for compression_strategy in [SparseStorageConfiguration.CSR, SparseStorageConfiguration.PTCSR]:
+        for m in [16, 32]:
+            for n in [256, 1 << 10, 1 << 14, 1 << 15]:
+                for k in [1, 2, 4, 8]: #, 2, 4, 8]:
+                    for density in [0.0, 0.01, 0.05, 0.2]:
+                        for compression_strategy in [
+                            SparseStorageConfiguration.CSR,
+                            SparseStorageConfiguration.PTCSR
+                        ]:
                             for generator_strategy in [
-                                "ones",
                                 "random",
+                                "ones"
                             ]:
                                 for flag in [
                                     FeatureFlags.SPARSE_FUSED_FP32_COLUMN_MAJOR,

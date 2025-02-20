@@ -17,12 +17,15 @@
 
 #ifndef MARLIN_CUDA_KERNEL_CUH
 #define MARLIN_CUDA_KERNEL_CUH
+#include "common.cuh"
 
 
 #include <cuda.h>
 #include <cuda_fp16.h>
 #include <cuda_runtime.h>
 #include <iostream>
+
+
 
 
 constexpr int ceildiv(int a, int b) {
@@ -195,13 +198,19 @@ template <
     const int group_blocks = -1 // number of consecutive 16x16 blocks with a separate quantization scale
 >
 __global__ void SpQR(
-    const int4* __restrict__ A, // fp16 input matrix of shape mxk
-    const int4* __restrict__ B, // 4bit quantized weight matrix of shape kxn
-    int4* __restrict__ C, // fp16 output buffer of shape mxn
-    const int4* __restrict__ s, // fp16 quantization scales of shape (k/groupsize)xn
-    int  prob_m, // batch dimension m
-    int  prob_n, // output dimension n
-    int  prob_k, // reduction dimension k
+    // W and meta
+    unsigned int prob_m,
+    unsigned int prob_n,
+    unsigned int prob_k,
+    const uint16_t *__restrict__ in_order,
+    // W 1st order stats
+    const u64 *__restrict__ dense_matrix,
+    const half *__restrict__ x,
+    // Outliers
+    const int *__restrict__ row_offsets,
+    const u32 *__restrict__ col_vals,
+    // Output
+    half *__restrict__ y_fp16
     int* locks // extra global storage for barrier synchronization
 ) {
   // Each threadblock processes one "stripe" of the B matrix with (roughly) the same size, which might involve multiple
