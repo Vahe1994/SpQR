@@ -302,7 +302,7 @@ class QuantizedLinear(torch.nn.Module):
         @return: A tensor resulting from a multiplication between the SpQR tensor and input tensor x.
         """
         k = x.shape[1]
-        y = torch.empty((k * self.m), dtype=torch.float16, device=self.dense_weights.device).contiguous()
+        y = torch.empty((1, self.m, k), dtype=torch.float16, device=self.dense_weights.device).contiguous()
         x_contiguous = x.transpose(1, 2).contiguous()
         call_spqr_mul_batched(
             self.m,
@@ -320,7 +320,7 @@ class QuantizedLinear(torch.nn.Module):
             y,
             y
         )
-        return y.view((1, self.m, k)).transpose(1, 2)
+        return y
 
 
 def updiv(x, y):

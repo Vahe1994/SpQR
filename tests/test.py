@@ -501,7 +501,7 @@ class TestSparseFp16BatchedRandomColumnMajor(unittest.TestCase):
                                     x_fp16_device = x_fp32.cuda(device=device).half()
 
                                     deq_w = spqr_module.dequantize().to(device)
-                                    y_true = torch.matmul(deq_w, x_fp16_device.reshape((n, k))).flatten()
+                                    y_true = torch.matmul(deq_w, x_fp16_device.reshape((n, k))).t().flatten()
 
                                     x_fp16_device = x_fp16_device.reshape(n, k).t().flatten().contiguous()
 

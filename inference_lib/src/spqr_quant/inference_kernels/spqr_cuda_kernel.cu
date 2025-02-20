@@ -741,9 +741,7 @@ struct DenseMatrixRunnerBatched {
     pipeline_id = 0;
   }
 
-  DEVICE_INLINE void next() {
-    global_x_fp128_loaded_base_id += page_size_fp32 / 4;
-  }
+  DEVICE_INLINE void next() { global_x_fp128_loaded_base_id += page_size_fp32 / 4; }
 
   DEVICE_INLINE void process_dense() {
     const uint64_t SHIFT = SECOND_ORDER_FRAGMENT_SIZE_BITS * (row_pos / OFFSET);
@@ -1241,7 +1239,7 @@ __global__ void spqr_quantized_matvec_batched_v2(
           dense_matrix_runner.accs[0] += __half2float(v) * __half2float(s_x[idx]);
         } else {
           auto local_c16 = c - dense_matrix_runner.pipeline_id * 2 * page_size_fp32 / K;
-          auto s_x = reinterpret_cast<half*>(s_x2);
+          auto s_x = reinterpret_cast<half *>(s_x2);
           auto s_x_ptr = s_x + (local_c16 / 2) * (K * 2) + (local_c16 & 1);
 #pragma loop unroll
           for (int j = 0; j < K; j++) {
@@ -1274,7 +1272,7 @@ __global__ void spqr_quantized_matvec_batched_v2(
           dense_matrix_runner.accs[0] += __half2float(v) * __half2float(s_x[idx]);
         } else {
           auto local_c16 = c - dense_matrix_runner.pipeline_id * 2 * page_size_fp32 / K;
-          auto s_x = reinterpret_cast<half*>(s_x2);
+          auto s_x = reinterpret_cast<half *>(s_x2);
           auto s_x_ptr = s_x + (local_c16 / 2) * (K * 2) + (local_c16 & 1);
 #pragma loop unroll
           for (int j = 0; j < K; j++) {
@@ -1337,14 +1335,14 @@ __global__ void spqr_quantized_matvec_batched_v2(
 
   if (threadIdx.x < BETA1) {
     auto addr = tile_row_id * BETA1 + threadIdx.x;
-
     if constexpr (K == 1) {
       y_fp16[addr] = __float2half(dense_matrix_runner.accs[0]);
     } else {
+      auto y_fp16_ptr = y_fp16 + addr;
 #pragma loop unroll
-      for (int i = 0; i < K; i += 2) {
-        y_fp32[(K * addr + i) / 2] =
-            make_half2(__float2half_rd(dense_matrix_runner.accs[i]), __float2half_rd(dense_matrix_runner.accs[i + 1]));
+      for (int i = 0; i < K; i++) {
+        *y_fp16_ptr = __float2half(dense_matrix_runner.accs[i]);
+        y_fp16_ptr += m;
       }
     }
   }
@@ -1501,26 +1499,26 @@ int spqr_matvec(
       if ((K) == 1 && n <= (1 << 12)) {                                                                                \
         CALL_MATVEC(spqr_quantized_matvec, 1, 16, 1, true);                                                            \
       } else {                                                                                                         \
-        CALL_BATCHED_V2(spqr_quantized_matvec_batched_v2, 1, TILE_COUNT, 1, true, K);                          \
+        CALL_BATCHED_V2(spqr_quantized_matvec_batched_v2, 1, TILE_COUNT, 1, true, K);                                  \
       }                                                                                                                \
     } else {                                                                                                           \
-      CALL_BATCHED_V2(spqr_quantized_matvec_batched_v2, 1, 1, 1, true, K);                                     \
+      CALL_BATCHED_V2(spqr_quantized_matvec_batched_v2, 1, 1, 1, true, K);                                             \
     }                                                                                                                  \
   } else {                                                                                                             \
     if (n % (TILE_COUNT * 16) == 0) {                                                                                  \
       if ((K) == 1 && n <= (1 << 12)) {                                                                                \
         CALL_MATVEC(spqr_quantized_matvec, 1, 16, 1, false);                                                           \
       } else {                                                                                                         \
-        CALL_BATCHED_V2(spqr_quantized_matvec_batched_v2, 1, TILE_COUNT, 1, false, K);                         \
+        CALL_BATCHED_V2(spqr_quantized_matvec_batched_v2, 1, TILE_COUNT, 1, false, K);                                 \
       }                                                                                                                \
     } else {                                                                                                           \
-      CALL_BATCHED_V2(spqr_quantized_matvec_batched_v2, 1, 1, 1, false, K);                                    \
+      CALL_BATCHED_V2(spqr_quantized_matvec_batched_v2, 1, 1, 1, false, K);                                            \
     }                                                                                                                  \
   }
 
-#define F                                                                                                              \
+#define _F(_k, col_start)                                                                                               \
   const auto *raw_data_ptr = (const u64 *) raw_dense_data;                                                             \
-  const half *X_ptr = (const half *) X;                                                                                \
+  const half *X_ptr = (const half *) X + ((col_start) * n);                                                             \
   const int *row_offsets_ptr = (const int *) row_offsets;                                                              \
   half *y_ptr = (half *) y;                                                                                            \
   const auto *col_vals_ptr = (const u32 *) col_vals;                                                                   \
@@ -1528,24 +1526,18 @@ int spqr_matvec(
   int ret = 0;                                                                                                         \
   bool is_csr = m + 1 == row_offsets_len;                                                                              \
   bool needs_fusion = order_ptr == nullptr;                                                                            \
-  if (k == 1) {                                                                                                        \
+  if (_k == 1) {                                                                                                       \
     CALL_BATCHED_K(1)                                                                                                  \
-  } else if (k == 2) {                                                                                                 \
+  } else if (_k == 2) {                                                                                                \
     CALL_BATCHED_K(2)                                                                                                  \
-  } else if (k == 4) {                                                                                                 \
+  } else if (_k == 4) {                                                                                                \
     CALL_BATCHED_K(4)                                                                                                  \
-  } else if (k == 8) {                                                                                                 \
+  } else if (_k == 8) {                                                                                                \
     CALL_BATCHED_K(8)                                                                                                  \
-  } else if (k == 16) {                                                                                                \
-    CALL_BATCHED_K(16)                                                                                                 \
-  }                                                                                                                    \
-//  else if (k == 32) {                                                                                                \
-//    CALL_BATCHED_K(32)                                                                                                 \
-//  } else if (k == 64) {                                                                                                \
-//    CALL_BATCHED_K(64)                                                                                                 \
-//  } else if (k == 128) {                                                                                               \
-//    CALL_BATCHED_K(128)                                                                                                \
-//  }
+  }
+
+#define F \
+  _F(k, 0)
 
 int spqr_matvec_batched(
     // W and meta
