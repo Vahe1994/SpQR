@@ -25,18 +25,26 @@ from spqr_quant.inference_kernels.kernel_selector import (
 from spqr_quant.inference import SparseStorageConfiguration
 from tests.test import create_random, generate_x_fp32
 
-# $ ,cutlass.sh --operation=Gemm --m=16384 --n=16384 --k=1,2,4,8,16 --A=f16:column --B=f16:row --C=f16:column --accum=f32 --profiling-iterations=500 --stages=3 --warmup-iterations=200 --output=multibatch16k --verbose=false && mlr --csv sort -f m,n,k then cut -f m,n,k,Runtime multibatch16k.gemm.csv
-cutlass_str = """m,n,k,Runtime
-16384,16384,1,2.32776
-16384,16384,2,2.33508
-16384,16384,4,2.37545
-16384,16384,8,2.60773
-16384,16384,16,2.77253
-16384,16384,32,2.82022
-16384,16384,64,2.91817
+# # $ ,cutlass.sh --operation=Gemm --m=16384 --n=16384 --k=1,2,4,8,16 --A=f16:column --B=f16:row --C=f16:column --accum=f32 --profiling-iterations=500 --stages=3 --warmup-iterations=200 --output=multibatch16k --verbose=false && mlr --csv sort -f m,n,k then cut -f m,n,k,Runtime multibatch16k.gemm.csv
+# cutlass_str = """m,n,k,Runtime
+# 16384,16384,1,2.32776
+# 16384,16384,2,2.33508
+# 16384,16384,4,2.37545
+# 16384,16384,8,2.60773
+# 16384,16384,16,2.77253
+# 16384,16384,32,2.82022
+# 16384,16384,64,2.91817
+# """
+
+cutlass_str_rtx_4060 = """m,n,k,Runtime
+16384,16384,1,2.20726
+16384,16384,2,2.28375
+16384,16384,4,2.23371
+16384,16384,8,2.22336
+16384,16384,16,2.26168
 """
 
-cutlass_data = io.StringIO(cutlass_str)
+cutlass_data = io.StringIO(cutlass_str_rtx_4060)
 cutlass_runs = pd.read_csv(cutlass_data)
 
 
@@ -129,7 +137,7 @@ def bench_random():
     for sparse_storage in [SparseStorageConfiguration.CSR,
                            SparseStorageConfiguration.PTCSR]:
         for d in [0., 0.01, 0.02, 0.03]:
-            for k in [16]:
+            for k in [1, 2, 4, 8]:
                 for flag in [
                     FeatureFlags.SPARSE_FUSED_FP32,
                     FeatureFlags.SPARSE_FUSED_FP32_COLUMN_MAJOR

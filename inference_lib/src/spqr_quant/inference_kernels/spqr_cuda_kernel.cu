@@ -836,6 +836,7 @@ struct DenseMatrixRunnerBatched {
         for (int i = warp_id; i < K; i += WARP_COUNT / WARPS_PER_COLUMN) {
           auto subwarp_id = warp_id % WARPS_PER_COLUMN;
           for (int j = lane_id; j < height; j += WARPS_PER_COLUMN * WARP_SIZE) {
+            // TODO: Are these loads coallesced?
             if constexpr (LOAD_SIZE == 1) {
               cp_async(s_x2 + j * K + i, x2 + (i * n / 2) + height_offset + j);
             } else {
@@ -1497,7 +1498,7 @@ int spqr_matvec(
 #define CALL_BATCHED_K(K)                                                                                              \
   if (is_csr) {                                                                                                        \
     if (n % (TILE_COUNT * 16) == 0) {                                                                                  \
-      if ((K) == 1 && n <= (1 << 14)) {                                                                                \
+      if ((K) == 1 && n <= (1 << 12)) {                                                                                \
         CALL_MATVEC(spqr_quantized_matvec, 1, 16, 1, true);                                                            \
       } else {                                                                                                         \
         CALL_BATCHED_V2(spqr_quantized_matvec_batched_v2, 1, TILE_COUNT, 1, true, K);                          \
@@ -1507,7 +1508,7 @@ int spqr_matvec(
     }                                                                                                                  \
   } else {                                                                                                             \
     if (n % (TILE_COUNT * 16) == 0) {                                                                                  \
-      if ((K) == 1 && n <= (1 << 14)) {                                                                                \
+      if ((K) == 1 && n <= (1 << 12)) {                                                                                \
         CALL_MATVEC(spqr_quantized_matvec, 1, 16, 1, false);                                                           \
       } else {                                                                                                         \
         CALL_BATCHED_V2(spqr_quantized_matvec_batched_v2, 1, TILE_COUNT, 1, false, K);                         \
@@ -1538,7 +1539,7 @@ int spqr_matvec(
   } else if (k == 16) {                                                                                                \
     CALL_BATCHED_K(16)                                                                                                 \
   }                                                                                                                    \
-  //  else if (k == 32) {                                                                                                \
+//  else if (k == 32) {                                                                                                \
 //    CALL_BATCHED_K(32)                                                                                                 \
 //  } else if (k == 64) {                                                                                                \
 //    CALL_BATCHED_K(64)                                                                                                 \
