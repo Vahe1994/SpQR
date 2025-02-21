@@ -21,6 +21,8 @@
 #include <cuda_pipeline.h>
 #include <cuda_runtime.h>
 
+#include "wmma_extension/include/wmma_extension/wmma_mma.hpp"
+
 static constexpr u32 SHARED_OFFSET = 32;
 static constexpr u32 WARP_SIZE = 32;
 static constexpr u32 FULL_MASK = 0xFFFFFFFFu;

@@ -21,8 +21,6 @@ from tests.test import create_random, generate_x_fp32
 # torch.set_float32_matmul_precision("highest")
 
 
-
-
 # # $ ,cutlass.sh --operation=Gemm --m=16384 --n=16384 --k=1,2,4,8,16 --A=f16:column --B=f16:row --C=f16:column --accum=f32 --profiling-iterations=500 --stages=3 --warmup-iterations=200 --output=multibatch16k --verbose=false && mlr --csv sort -f m,n,k then cut -f m,n,k,Runtime multibatch16k.gemm.csv
 # cutlass_str = """m,n,k,Runtime
 # 16384,16384,1,2.32776
@@ -64,7 +62,7 @@ def spqr_mul_timer(spqr_device: QuantizedLinear, x, feature_flag: FeatureFlags, 
         x,
         y,
         result,
-        feature_flag
+        feature_flag,
     )
 
     return y, result
@@ -110,57 +108,48 @@ def torch_mul_timer_runs(deq_w, x, num_runs, k):
 
 
 def bench_random():
-    m = 2 ** 14
-    n = 2 ** 14
-    device = 'cuda'
+    m = 2**14
+    n = 2**14
+    device = "cuda"
 
     for sparse_storage in [SparseStorageConfiguration.CSR]:
-        for d in [0.]:
+        for d in [0.0]:
             for k in [1, 1, 1]:
                 seed = 1337
                 np.random.seed(seed)
                 torch.random.manual_seed(seed)
 
                 x_fp32 = generate_x_fp32(n * k)
-                spqr_module, spqr_module_device = create_random(
-                    m, n, d, sparse_storage
-                )
+                spqr_module, spqr_module_device = create_random(m, n, d, sparse_storage)
                 x_fp16_device = x_fp32.cuda(device=device).half()
 
                 flag = FeatureFlags.SPARSE_FUSED_FP32
                 y_csr, spqr_runs = spqr_mul_timer(spqr_module_device, x_fp16_device, flag, k)
 
-    print('m,n,k,Density,Sparse Storage,Speed-Up (X)')
+    print("m,n,k,Density,Sparse Storage,Speed-Up (X)")
 
-    for sparse_storage in [SparseStorageConfiguration.CSR,
-                           SparseStorageConfiguration.PTCSR]:
-        for d in [0., 0.01, 0.02, 0.03]:
+    for sparse_storage in [SparseStorageConfiguration.CSR, SparseStorageConfiguration.PTCSR]:
+        for d in [0.0, 0.01, 0.02, 0.03]:
             for k in [1, 2, 4, 8]:
-                for flag in [
-                    FeatureFlags.SPARSE_FUSED_FP32,
-                    FeatureFlags.SPARSE_FUSED_FP32_COLUMN_MAJOR
-                ]:
+                for flag in [FeatureFlags.SPARSE_FUSED_FP32, FeatureFlags.SPARSE_FUSED_FP32_COLUMN_MAJOR]:
                     seed = 1337
                     np.random.seed(seed)
                     torch.random.manual_seed(seed)
 
                     x_fp32 = generate_x_fp32(n * k)
-                    spqr_module, spqr_module_device = create_random(
-                        m, n, d, sparse_storage
-                    )
+                    spqr_module, spqr_module_device = create_random(m, n, d, sparse_storage)
                     x_fp16_device = x_fp32.cuda(device=device).half()
 
                     y_csr, spqr_runs = spqr_mul_timer(spqr_module_device, x_fp16_device, flag, k)
 
                     cutlass_run = cutlass_runs[
-                        (cutlass_runs["m"] == m) &
-                        (cutlass_runs["n"] == n) &
-                        (cutlass_runs["k"] == k)]["Runtime"].item()
-                    print(f'{m},{n},{k},{d},{sparse_storage},{cutlass_run / spqr_runs.min():.3f}')
+                        (cutlass_runs["m"] == m) & (cutlass_runs["n"] == n) & (cutlass_runs["k"] == k)
+                    ]["Runtime"].item()
+                    print(f"{m},{n},{k},{d},{sparse_storage},{cutlass_run / spqr_runs.min():.3f}")
 
 
-if __name__ == '__main__':
-    print('Running matmul bench')
+if __name__ == "__main__":
+    print("Running matmul bench")
     bench_random()
 #
 # if False:

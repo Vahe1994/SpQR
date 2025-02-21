@@ -81,14 +81,14 @@ class MatrixBuilder:
 
 
 def create_spqr_quantized_matrix(
-        m: int,
-        n: int,
-        weight_init_strategy: int = None,
-        first_order_init_strategy: int = None,
-        second_order_init_strategy: torch.float16 = None,
-        density: float = 0.0,
-        sparse_storage: SparseStorageConfiguration = SparseStorageConfiguration.CSR,
-        in_perm=None,
+    m: int,
+    n: int,
+    weight_init_strategy: int = None,
+    first_order_init_strategy: int = None,
+    second_order_init_strategy: torch.float16 = None,
+    density: float = 0.0,
+    sparse_storage: SparseStorageConfiguration = SparseStorageConfiguration.CSR,
+    in_perm=None,
 ) -> Tuple[QuantizedLinear, QuantizedLinear]:
     beta1, beta2 = 16, 16
 
@@ -147,19 +147,19 @@ def create_random(m, n, density, sparse_storage: SparseStorageConfiguration = Sp
 
 
 def create_random_weights_ones(
-        m, n, density, sparse_storage: SparseStorageConfiguration = SparseStorageConfiguration.CSR
+    m, n, density, sparse_storage: SparseStorageConfiguration = SparseStorageConfiguration.CSR
 ):
     return create_spqr_quantized_matrix(m, n, 1, None, None, density, sparse_storage, None)
 
 
 def create_random_first_order_ones(
-        m, n, density, sparse_storage: SparseStorageConfiguration = SparseStorageConfiguration.CSR
+    m, n, density, sparse_storage: SparseStorageConfiguration = SparseStorageConfiguration.CSR
 ):
     return create_spqr_quantized_matrix(m, n, None, 1, None, density, sparse_storage, None)
 
 
 def create_random_second_order_ones(
-        m, n, density, sparse_storage: SparseStorageConfiguration = SparseStorageConfiguration.CSR
+    m, n, density, sparse_storage: SparseStorageConfiguration = SparseStorageConfiguration.CSR
 ):
     return create_spqr_quantized_matrix(m, n, None, None, 1, density, sparse_storage, None)
 
@@ -184,13 +184,8 @@ class TestSparseFp16BatchedRandomColumnMajor(unittest.TestCase):
             for k in [256, 512, 1024, 1 << 15]:
                 for n in [1, 2, 4, 8, 16, 32, 64, 128, 256, 1024]:  # , 2, 4, 8]:
                     for density in [0.0, 0.1, 0.2]:
-                        for compression_strategy in [
-                            SparseStorageConfiguration.CSR,
-                            SparseStorageConfiguration.PTCSR
-                        ]:
-                            for generator_strategy in [
-                                "random"
-                            ]:
+                        for compression_strategy in [SparseStorageConfiguration.CSR, SparseStorageConfiguration.PTCSR]:
+                            for generator_strategy in ["random"]:
                                 for flag in [
                                     FeatureFlags.SPARSE_FUSED_FP32_COLUMN_MAJOR,
                                 ]:
@@ -210,8 +205,9 @@ class TestSparseFp16BatchedRandomColumnMajor(unittest.TestCase):
                                     x_fp16_device = x_fp32.cuda(device=device).half().reshape((1, n, k)).contiguous()
 
                                     deq_w = spqr_module.dequantize().to(device)
-                                    linear = torch.nn.Linear(deq_w.shape[1], deq_w.shape[0], bias=False, device='cuda',
-                                                             dtype=torch.half)
+                                    linear = torch.nn.Linear(
+                                        deq_w.shape[1], deq_w.shape[0], bias=False, device="cuda", dtype=torch.half
+                                    )
                                     with torch.no_grad():
                                         linear.weight = torch.nn.Parameter(deq_w, requires_grad=False)
 

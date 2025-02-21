@@ -85,10 +85,11 @@ def spqr_mul_timer(spqr_device: QuantizedLinear, x, feature_flag: FeatureFlags, 
         x,
         y,
         result,
-        feature_flag
+        feature_flag,
     )
 
     return y, result.item()
+
 
 if __name__ == "__main__":
     torch_runs = {}
@@ -100,10 +101,10 @@ if __name__ == "__main__":
         type=str,
         required=True,
         help="Path to folder containing the tensors of the form"
-             "model_path/"
-             "   0/"
-             "       tensor0"
-             "       tensor1",
+        "model_path/"
+        "   0/"
+        "       tensor0"
+        "       tensor1",
     )
 
     parser.add_argument(
@@ -111,10 +112,10 @@ if __name__ == "__main__":
         type=str,
         required=False,
         help="Path to folder containing the tensors of the form"
-             "model_path/"
-             "   0/"
-             "       tensor0"
-             "       tensor1",
+        "model_path/"
+        "   0/"
+        "       tensor0"
+        "       tensor1",
     )
 
     parser.add_argument(
@@ -146,9 +147,8 @@ if __name__ == "__main__":
                 # x = torch.zeros(n, dtype=torch.float16, device=device)
                 # y, dense_runs = torch_mul_timer_runs(d, x, NUM_RUNS)
                 cutlass_run = cutlass_runs[
-                    (cutlass_runs["m"] == m) &
-                    (cutlass_runs["n"] == n) &
-                    (cutlass_runs["k"] == 1)]["Runtime"].item()
+                    (cutlass_runs["m"] == m) & (cutlass_runs["n"] == n) & (cutlass_runs["k"] == 1)
+                ]["Runtime"].item()
                 torch_runs[(m, n)] = cutlass_run
                 # torch.cuda.empty_cache()
                 # time.sleep(2)
@@ -179,10 +179,10 @@ if __name__ == "__main__":
         benchmark_results_ms = []
         benchmark_speed_up = []
 
-
         def generate_x_fp32(n, upper_bound=3):
             x_fp32 = ((torch.rand(n) - 0.5) * 4 * upper_bound).int()
             return x_fp32.float()
+
         x_fp32 = generate_x_fp32(n)
         x_fp16_device = x_fp32.cuda(device=device).half()
 
@@ -218,8 +218,6 @@ if __name__ == "__main__":
 
                 spqr_module.to(device=device)
                 spqr_module_device = spqr_module
-
-
 
                 # deq_w_device = deq_w.to(device).half().flatten()
 
