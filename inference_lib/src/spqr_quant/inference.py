@@ -21,6 +21,7 @@ from torch import Tensor as T, nn
 from .inference_kernels.cuda_kernel import (
     call_dequantize_compressed,
     call_spqr_mul,
+    call_spqr_mul_batched,
     call_spqr_mul_fused,
     call_tensor_compress_interleaved,
 )
@@ -287,6 +288,7 @@ class QuantizedLinear(torch.nn.Module):
         return 1 - self.density
 
     def should_reorder(self) -> bool:
+        return False
         """
         @return: Input reordering is an optional argument. Check if we should reorder before matvec.
         """
@@ -300,55 +302,29 @@ class QuantizedLinear(torch.nn.Module):
         @param x: Input tensor.
         @return: A tensor resulting from a multiplication between the SpQR tensor and input tensor x.
         """
-        inner_dim = x.shape[1]
+        m = self.m
+        k = self.n
+        n = x.shape[-2]
 
-        if inner_dim == 1:
-            y = torch.empty(self.m, dtype=torch.float16, device=self.dense_weights.device)
-        else:
-            y = torch.empty((1, inner_dim, self.m), dtype=torch.float16, device=self.dense_weights.device)
-
-        for i in range(inner_dim):
-            if inner_dim != 1:
-                _x = x[..., i, :].flatten()
-                _y = y[0, i]
-            else:
-                _x = x.view(-1)
-                _y = y
-            if self.should_reorder():
-                call_spqr_mul_fused(
-                    self.m,
-                    self.n,
-                    self.bits,
-                    self.beta1,
-                    self.beta2,
-                    self.in_perm,
-                    self.dense_weights,
-                    self.row_offsets,
-                    self.col_vals,
-                    self.nnz,
-                    _x,
-                    int(FeatureFlags.SPARSE_FUSED_FP32),
-                    _y,
-                    _y,
-                )
-            else:
-                call_spqr_mul(
-                    self.m,
-                    self.n,
-                    self.bits,
-                    self.beta1,
-                    self.beta2,
-                    self.dense_weights,
-                    self.row_offsets,
-                    self.col_vals,
-                    self.nnz,
-                    _x,
-                    int(FeatureFlags.SPARSE_FUSED_FP32),
-                    _y,
-                    _y,
-                )
-
-        return y.reshape((1, inner_dim, self.m))
+        y = torch.empty((1, n, m), dtype=torch.float16, device=self.dense_weights.device).contiguous()
+        x_contiguous = x.contiguous()
+        call_spqr_mul_batched(
+            m,
+            k,
+            n,
+            self.bits,
+            self.beta1,
+            self.beta2,
+            self.dense_weights,
+            self.row_offsets,
+            self.col_vals,
+            self.nnz,
+            x_contiguous,
+            int(FeatureFlags.SPARSE_FUSED_FP32),
+            y,
+            y,
+        )
+        return y
 
 
 def updiv(x, y):
@@ -366,6 +342,7 @@ DENSE_ONLY = 0b1 << 1  #
 
 TORCH = 0b1 << 3
 IS_ASYNC = 0b1 << 4
+IS_COLUMN_MAJOR = 0b1 << 5
 SPARSE_FUSED_ALGORITHM = FULL | (0b1 << 8)
 
 
@@ -373,11 +350,15 @@ class FeatureFlags(IntEnum):
     SPARSE_FUSED_FP32 = SPARSE_FUSED_ALGORITHM | FP32
     SPARSE_FUSED_FP32_ASYNC = SPARSE_FUSED_ALGORITHM | FP32 | IS_ASYNC
     TORCH_FP16 = TORCH | FP16
+    SPARSE_FUSED_FP32_COLUMN_MAJOR = SPARSE_FUSED_ALGORITHM | FP32 | IS_COLUMN_MAJOR
+    SPARSE_FUSED_FP32_ASYNC_COLUMN_MAJOR = SPARSE_FUSED_ALGORITHM | FP32 | IS_ASYNC | IS_COLUMN_MAJOR
 
     def pretty(self):
         if self.value == FeatureFlags.TORCH_FP16:
             return "Torch FP16"
         elif self.value == FeatureFlags.SPARSE_FUSED_FP32:
-            return "Sparse Fused FP32"
+            return "Fused"
+        elif self.value == FeatureFlags.SPARSE_FUSED_FP32_COLUMN_MAJOR:
+            return "Fused Column Major"
         else:
             raise "Prettify not found for value {self.value}"

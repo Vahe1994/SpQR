@@ -4,6 +4,7 @@ import random
 import numpy as np
 import torch
 from datasets import load_dataset
+from tqdm import trange
 from transformers import AutoTokenizer, LlamaTokenizer
 
 
@@ -97,6 +98,11 @@ def get_c4(nsamples, seqlen, tokenizer, eval_mode=False):
         return valenc
 
 
+def get_red_pajama(nsamples, seqlen, tokenizer, eval_mode=False):
+    traindata = torch.load("./data/red_pajama_n=1024.pth")[:nsamples]
+    return traindata
+
+
 def get_ptb_new(nsamples, seqlen, tokenizer, eval_mode=False):
     if not eval_mode:
         traindata = load_dataset("ptb_text_only", "penn_treebank", split="train")
@@ -173,9 +179,7 @@ def get_loaders(name, nsamples=128, seed=0, seqlen=2048, eval_mode=False, model_
     set_seed(seed)
 
     # for pre-tokenized datasets
-    if name.lower() == "pajama":
-        data = torch.load("./data/red_pajama_n=1024.pth")[:nsamples]
-    elif name.lower() == "refinedweb":
+    if name.lower() == "refinedweb":
         data = torch.load("./data/refined_web_n=128.pth")[:nsamples]
     elif name.lower() == "none":
         print("Not loading any dataset. (OK if you use no compression or methods like RTN.)")
@@ -186,7 +190,7 @@ def get_loaders(name, nsamples=128, seed=0, seqlen=2048, eval_mode=False, model_
         except FileNotFoundError:
             raise FileNotFoundError(
                 f"Failed to load custom data from {name}.",
-                "Check data path or use one of [c4, wikitext2, ptb, pajama, refinedweb, none]",
+                "Check data path or use one of [c4, wikitext2, ptb, red_pajama, refinedweb, none]",
             )
     else:
         # for datasets requiring tokenization
@@ -215,10 +219,12 @@ def get_loaders(name, nsamples=128, seed=0, seqlen=2048, eval_mode=False, model_
             data = get_c4(nsamples, seqlen, tokenizer, eval_mode=eval_mode)
         elif name.lower() == "c4_new":
             data = get_c4_new(nsamples, seqlen, tokenizer, eval_mode=eval_mode)
+        elif name.lower() == "red_pajama":
+            data = get_red_pajama(nsamples, seqlen, tokenizer, eval_mode)
         else:
             raise ValueError(
                 f"Failed to load data from {name}.",
-                "Check dataset name or path or use one of [c4, wikitext2, ptb, pajama, refinedweb, none]",
+                "Check dataset name or path or use one of [c4, wikitext2, ptb, red_pajama, refinedweb, none]",
             )
 
     if hasattr(data, "input_ids"):

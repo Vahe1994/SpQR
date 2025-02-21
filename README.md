@@ -85,7 +85,7 @@ The command above runs near-lossless compression as described in the article. Ad
 
 Note the launch arguments:
 - `<PATH_TO_MODEL_DIR>` - path to model folder, which contains `config.json `
-- `one of [c4, ptb, wikitext2, pajama, refinedweb, none]` -- name of dataset to use for compression, or path to an alternative preprocessed and tokenized dataset.
+- `one of [c4, ptb, wikitext2, red_pajama, refinedweb, none]` -- name of dataset to use for compression, or path to an alternative preprocessed and tokenized dataset.
 - `--wbits 3` -- number of bits for quantized weights representation
 - `--groupsize 16` -- size of first-order groups for compression
 - `--qq_groupsize 16` -- size of second-order (quantized) groups for compression
@@ -137,7 +137,7 @@ Performance and runtime notes:
 
 This repository also contains an efficient CUDA kernel implementation of the 
 SpQR matvec. The file `inference_demo.py` h orcontains a demo of this functionality 
-by running end-to-end model inference. Below is an example of how to launch it.
+by running end-to-end_and_measure model inference. Below is an example of how to launch global_x_fp128_loaded_base_id.
 
 ```bash
 usage: inference_demo.py [-h] [--pretrained_model_path PRETRAINED_MODEL_PATH] [--compressed_model_path COMPRESSED_MODEL_PATH] --execution_mode {0,1}
