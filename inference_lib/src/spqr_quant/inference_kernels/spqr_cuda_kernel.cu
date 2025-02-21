@@ -234,22 +234,12 @@ DEVICE_INLINE half get_val(u32 m) {
          smem_size,                                                                                                    \
          stream>>>(m, n, raw_data_ptr, X_ptr, row_offsets_ptr, col_vals_ptr, y_ptr);
 
-#define CALL_BATCHED(F, _BLOCK_HEIGHT, _BLOCK_WIDTH, PIPELINE_DEPTH, IS_CSR, K)                                        \
-  constexpr int BLOCK_HEIGHT = _BLOCK_HEIGHT;                                                                          \
-  constexpr int BLOCK_WIDTH = _BLOCK_WIDTH;                                                                            \
-  size_t smem_size = max(4096 * sizeof(half2), sizeof(half2) * (n / 2) * K);                                           \
-  F<3, 16, 16, BLOCK_HEIGHT, BLOCK_WIDTH, u64, PIPELINE_DEPTH, IS_CSR, K>                                              \
-      <<<dim3(updiv(m, 16 * BLOCK_HEIGHT), 1, 1),                                                                      \
-         dim3(__min(updiv(n, 16), BLOCK_WIDTH) * 16, __min(updiv(m, 16), BLOCK_HEIGHT), 1),                            \
-         smem_size,                                                                                                    \
-         stream>>>(m, n, raw_data_ptr, X_ptr, row_offsets_ptr, col_vals_ptr, y_ptr);
-
 #define CALL_BATCHED_V2(F, _BLOCK_HEIGHT, _BLOCK_WIDTH, PIPELINE_DEPTH, IS_CSR, K)                                     \
   constexpr int BLOCK_HEIGHT = _BLOCK_HEIGHT;                                                                          \
   constexpr int BLOCK_WIDTH = _BLOCK_WIDTH;                                                                            \
   constexpr int page_size_fp32 = 4096;                                                                                 \
   F<3, 16, 16, BLOCK_HEIGHT, BLOCK_WIDTH, u64, PIPELINE_DEPTH, IS_CSR, K, page_size_fp32>                              \
-      <<<dim3(updiv(m, 16 * BLOCK_HEIGHT), 1, 1),                                                                      \
+      <<<dim3(updiv(m, 16 * BLOCK_HEIGHT), (__k / K), 1),                                                              \
          dim3(__min(updiv(n, 16), BLOCK_WIDTH) * 16, __min(updiv(m, 16), BLOCK_HEIGHT), 1),                            \
          page_size_fp32 * sizeof(float),                                                                               \
          stream>>>(m, n, raw_data_ptr, X_ptr, row_offsets_ptr, col_vals_ptr, y_ptr);
@@ -1099,12 +1089,12 @@ __global__ void spqr_quantized_matvec_batched_v2(
     u32 n,
     // W 1st order stats
     const W_t *__restrict__ dense_matrix,
-    const half *__restrict__ x,
+    const half *__restrict__ _x,
     // Outliers
     const int *__restrict__ row_offsets,
     const u32 *__restrict__ col_vals,
     // Output
-    half *__restrict__ y_fp16) {
+    half *__restrict__ _y_fp16) {
   /*
            ┌─────────────┐ ┌─┐   ┌─┐
    beta1   │   block 0   │ │ │   │ │
@@ -1119,13 +1109,13 @@ __global__ void spqr_quantized_matvec_batched_v2(
   static constexpr u32 WARP_SIZE = 32;
   static constexpr u32 HALF_WARP_SIZE = WARP_SIZE / 2;
 
-  static constexpr u32 NUM_HALF_WARPS = BLOCK_HEIGHT * BLOCK_WIDTH;
-  static constexpr u32 NUM_WARPS = UPDIV(NUM_HALF_WARPS, 2);
   static constexpr u32 THREAD_COUNT = BLOCK_HEIGHT * BLOCK_WIDTH * HALF_WARP_SIZE;
   static constexpr u32 OUTPUT_SIZE = BETA1 * BLOCK_HEIGHT;
   static constexpr u32 ROW_OFFSETS_SIZE = IS_CSR ? OUTPUT_SIZE : 1;
 
-  half2 *y_fp32 = reinterpret_cast<half2 *>(y_fp16);
+  auto x = _x + blockIdx.y * n * K;
+  auto y_fp16 = _y_fp16 + blockIdx.y * m * K;
+
   extern __shared__ half2 s_x2[];
   __shared__ u32 s_row_offsets[ROW_OFFSETS_SIZE + 1];
 
@@ -1330,6 +1320,9 @@ __global__ void spqr_quantized_matvec_batched_v2(
         }
       }
       dense_matrix_runner.accs[i] = acc;
+
+      // Very important, otherwise causes race condition during shared writes.
+      __syncthreads();
     }
   }
 
@@ -1493,7 +1486,10 @@ int spqr_matvec(
 
 #define CALL_MATVEC_V2
 
-#define CALL_BATCHED_K(K)                                                                                              \
+#define CALL_BATCHED_K(K, col_start, col_end)                                                                          \
+  int __k = (col_end) - (col_start);                                                                                   \
+  const half *X_ptr = ((const half *) X) + ((col_start) * n);                                                          \
+  half *y_ptr = ((half *) y) + m * (col_start);                                                                        \
   if (is_csr) {                                                                                                        \
     if (n % (TILE_COUNT * 16) == 0) {                                                                                  \
       if ((K) == 1 && n <= (1 << 12)) {                                                                                \
@@ -1516,45 +1512,64 @@ int spqr_matvec(
     }                                                                                                                  \
   }
 
-#define _F(_k, col_start)                                                                                               \
-  const auto *raw_data_ptr = (const u64 *) raw_dense_data;                                                             \
-  const half *X_ptr = (const half *) X + ((col_start) * n);                                                             \
-  const int *row_offsets_ptr = (const int *) row_offsets;                                                              \
-  half *y_ptr = (half *) y;                                                                                            \
-  const auto *col_vals_ptr = (const u32 *) col_vals;                                                                   \
-  const auto *order_ptr = (const uint16_t *) raw_in_order;                                                             \
-  int ret = 0;                                                                                                         \
-  bool is_csr = m + 1 == row_offsets_len;                                                                              \
-  bool needs_fusion = order_ptr == nullptr;                                                                            \
-  if (_k == 1) {                                                                                                       \
-    CALL_BATCHED_K(1)                                                                                                  \
-  } else if (_k == 2) {                                                                                                \
-    CALL_BATCHED_K(2)                                                                                                  \
-  } else if (_k == 4) {                                                                                                \
-    CALL_BATCHED_K(4)                                                                                                  \
-  } else if (_k == 8) {                                                                                                \
-    CALL_BATCHED_K(8)                                                                                                  \
+#define F                                                                                                              \
+  int offset{};                                                                                                        \
+  auto _k = k;                                                                                                         \
+  if (_k >= 16) {                                                                                                      \
+    CALL_BATCHED_K(16, 0, (_k / 16) * 16);                                                                             \
+    offset += (_k / 16) * 16;                                                                                          \
+  }                                                                                                                    \
+  if (_k & 0b1000) {                                                                                                   \
+    CALL_BATCHED_K(8, offset, offset + 8);                                                                             \
+    offset += 8;                                                                                                       \
+  }                                                                                                                    \
+  if (_k & 0b100) {                                                                                                    \
+    CALL_BATCHED_K(4, offset, offset + 4);                                                                             \
+    offset += 4;                                                                                                       \
+  }                                                                                                                    \
+  if (_k & 0b10) {                                                                                                     \
+    CALL_BATCHED_K(2, offset, offset + 2);                                                                             \
+    offset += 2;                                                                                                       \
+  }                                                                                                                    \
+  if (_k & 1) {                                                                                                        \
+    CALL_BATCHED_K(1, offset, offset + 1);                                                                             \
   }
-
-#define F \
-  _F(k, 0)
 
 int spqr_matvec_batched(
     // W and meta
-    int bits, int m, int n, int k,
+    int bits,
+    int m,
+    int n,
+    int k,
     // Quantization
-    int beta1, int beta2, const void *raw_in_order, const void *raw_dense_data,
+    int beta1,
+    int beta2,
+    const void *raw_in_order,
+    const void *raw_dense_data,
     // 32-bit
-    int row_offsets_len, void *row_offsets,
+    int row_offsets_len,
+    void *row_offsets,
     // 16-bit
-    void *col_vals, int nnz,
+    void *col_vals,
+    int nnz,
     // Input
     void *X,
     // Output
-    void *y, cudaStream_t stream, void *measurements, uint32_t feature_flag) {
+    void *y,
+    cudaStream_t stream,
+    void *measurements,
+    uint32_t feature_flag) {
   constexpr int NUM_RUNS = 500;
   constexpr int WARMUPS = 100;
-  static constexpr int TILE_COUNT = 16;                                                                                \
+  static constexpr int TILE_COUNT = 16;
+
+  const auto *raw_data_ptr = (const u64 *) raw_dense_data;
+  const int *row_offsets_ptr = (const int *) row_offsets;
+  const auto *col_vals_ptr = (const u32 *) col_vals;
+  const auto *order_ptr = (const uint16_t *) raw_in_order;
+  int ret = 0;
+  bool is_csr = m + 1 == row_offsets_len;
+  bool needs_fusion = order_ptr == nullptr;
 
   Features features{._ = feature_flag};
   Timer *timer{};

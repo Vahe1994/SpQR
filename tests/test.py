@@ -470,17 +470,16 @@ class TestSparseFp16BatchedRandomColumnMajor(unittest.TestCase):
         print("")
         # Call this once just to trigger the annoying torch sparse warning.
         device = torch.device("cuda:0")
-        for m in [16, 32]:
-            for n in [256, 1 << 10, 1 << 14, 1 << 15]:
-                for k in [1, 2, 4, 8]: #, 2, 4, 8]:
-                    for density in [0.0, 0.01, 0.05, 0.2]:
+        for m in [32]:
+            for k in [256, 512, 1024, 1 << 15]:
+                for n in [1, 2, 4, 8, 16, 32, 64, 128, 256, 1024]:  # , 2, 4, 8]:
+                    for density in [0.0, 0.1, 0.2]:
                         for compression_strategy in [
                             SparseStorageConfiguration.CSR,
                             SparseStorageConfiguration.PTCSR
                         ]:
                             for generator_strategy in [
-                                "random",
-                                "ones"
+                                "random"
                             ]:
                                 for flag in [
                                     FeatureFlags.SPARSE_FUSED_FP32_COLUMN_MAJOR,
@@ -490,30 +489,29 @@ class TestSparseFp16BatchedRandomColumnMajor(unittest.TestCase):
                                     )
 
                                     # Generate test case
-                                    x_fp32 = generate_x_fp32(n * k)
+                                    x_fp32 = generate_x_fp32(k * n)
                                     if generator_strategy == "ones":
                                         x_fp32 = x_fp32 * 0 + 1
-                                        spqr_module, spqr_module_device = create_ones(m, n)
+                                        spqr_module, spqr_module_device = create_ones(m, k)
                                     else:
                                         spqr_module, spqr_module_device = create_random(
-                                            m, n, density, compression_strategy
+                                            m, k, density, compression_strategy
                                         )
-                                    x_fp16_device = x_fp32.cuda(device=device).half()
+                                    x_fp16_device = x_fp32.cuda(device=device).half().reshape((1, n, k)).contiguous()
 
                                     deq_w = spqr_module.dequantize().to(device)
-                                    y_true = torch.matmul(deq_w, x_fp16_device.reshape((n, k))).t().flatten()
+                                    linear = torch.nn.Linear(deq_w.shape[1], deq_w.shape[0], bias=False, device='cuda', dtype=torch.half)
+                                    with torch.no_grad():
+                                        linear.weight = torch.nn.Parameter(deq_w, requires_grad=False)
 
-                                    x_fp16_device = x_fp16_device.reshape(n, k).t().flatten().contiguous()
-
-                                    y = torch.zeros(m * k, dtype=torch.half, device=device).contiguous().flatten()
-
-                                    _spqr_mul_batched(
-                                        spqr_module_device, x_fp16_device, y, flag, k
-                                    )
+                                    y = spqr_module_device.forward(x_fp16_device)
+                                    y_true = linear.forward(x_fp16_device)
 
                                     passed = torch.equal(y, y_true)
-                                    print(y)
-                                    print(y_true)
+
+                                    if not passed:
+                                        print(y)
+                                        print(y_true)
 
                                     self.assertTrue(
                                         passed,

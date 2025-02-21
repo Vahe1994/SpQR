@@ -301,13 +301,16 @@ class QuantizedLinear(torch.nn.Module):
         @param x: Input tensor.
         @return: A tensor resulting from a multiplication between the SpQR tensor and input tensor x.
         """
-        k = x.shape[1]
-        y = torch.empty((1, self.m, k), dtype=torch.float16, device=self.dense_weights.device).contiguous()
-        x_contiguous = x.transpose(1, 2).contiguous()
+        m = self.m
+        k = self.n
+        n = x.shape[-2]
+
+        y = torch.empty((1, n, m), dtype=torch.float16, device=self.dense_weights.device).contiguous()
+        x_contiguous = x.contiguous()
         call_spqr_mul_batched(
-            self.m,
-            self.n,
+            m,
             k,
+            n,
             self.bits,
             self.beta1,
             self.beta2,
