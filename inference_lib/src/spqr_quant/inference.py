@@ -21,8 +21,9 @@ from torch import Tensor as T, nn
 from .inference_kernels.cuda_kernel import (
     call_dequantize_compressed,
     call_spqr_mul,
+    call_spqr_mul_batched,
     call_spqr_mul_fused,
-    call_tensor_compress_interleaved, call_spqr_mul_batched,
+    call_tensor_compress_interleaved,
 )
 from .sparse_util import init_ptcsr, merge_col_val
 
@@ -120,15 +121,15 @@ class QuantizedLinear(torch.nn.Module):
 
     @staticmethod
     def create_placehodler(
-            rows,
-            cols,
-            bits,
-            beta1,
-            beta2,
-            dense_weights_shape: int,
-            row_offsets_shape: int,
-            col_vals_shape: int,
-            in_perm_shape: int,
+        rows,
+        cols,
+        bits,
+        beta1,
+        beta2,
+        dense_weights_shape: int,
+        row_offsets_shape: int,
+        col_vals_shape: int,
+        in_perm_shape: int,
     ):
         dense_weights = nn.Parameter(torch.empty(dense_weights_shape, dtype=torch.int64), requires_grad=False)
         row_offsets = nn.Parameter(torch.empty(row_offsets_shape, dtype=torch.int32), requires_grad=False)
@@ -321,7 +322,7 @@ class QuantizedLinear(torch.nn.Module):
             x_contiguous,
             int(FeatureFlags.SPARSE_FUSED_FP32),
             y,
-            y
+            y,
         )
         return y
 

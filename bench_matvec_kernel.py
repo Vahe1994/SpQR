@@ -1,17 +1,15 @@
 import argparse
+import io
 import os
 import time
 
 import numpy as np
+import pandas as pd
 import torch
 from scipy.stats import gmean
 from spqr_quant import QuantizedLinear
 from spqr_quant.inference import FeatureFlags
-from spqr_quant.inference_kernels.kernel_selector import (
-    get_spqr_mul_timer_batched,
-)
-import io
-import pandas as pd
+from spqr_quant.inference_kernels.kernel_selector import get_spqr_mul_timer_batched
 
 # def spqr_mul_timer(spqr_device: QuantizedLinear, x, feature_flag: FeatureFlags, num_runs):
 #     runs = torch.empty(num_runs).cpu().float()

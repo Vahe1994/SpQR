@@ -7,6 +7,12 @@ import io
 import numpy as np
 import pandas as pd
 import torch
+from scipy.stats import gmean
+from spqr_quant import QuantizedLinear
+from spqr_quant.inference import FeatureFlags, SparseStorageConfiguration
+from spqr_quant.inference_kernels.kernel_selector import get_spqr_mul_timer_batched
+
+from tests.test import create_random, generate_x_fp32
 
 # torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = False
 # torch.backends.cuda.matmul.allow_tf32 = False
@@ -15,15 +21,7 @@ import torch
 # torch.set_float32_matmul_precision("highest")
 
 
-from scipy.stats import gmean
-from spqr_quant import QuantizedLinear
-from spqr_quant.inference import FeatureFlags
-from spqr_quant.inference_kernels.kernel_selector import (
-    get_spqr_mul_timer_batched,
-)
 
-from spqr_quant.inference import SparseStorageConfiguration
-from tests.test import create_random, generate_x_fp32
 
 # # $ ,cutlass.sh --operation=Gemm --m=16384 --n=16384 --k=1,2,4,8,16 --A=f16:column --B=f16:row --C=f16:column --accum=f32 --profiling-iterations=500 --stages=3 --warmup-iterations=200 --output=multibatch16k --verbose=false && mlr --csv sort -f m,n,k then cut -f m,n,k,Runtime multibatch16k.gemm.csv
 # cutlass_str = """m,n,k,Runtime
