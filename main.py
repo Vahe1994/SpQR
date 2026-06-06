@@ -69,6 +69,163 @@ def get_average_number_of_bits(
     return round(wbits_avg, 2)
 
 
+OUTLIER_MODULE_SENSITIVITY_PRESET = {
+    # LLaMA/Mistral-style names. Values > 1 lower the local outlier threshold.
+    "down_proj": 1.45,
+    "o_proj": 1.25,
+    "q_proj": 1.10,
+    "k_proj": 1.10,
+    "v_proj": 1.00,
+    "up_proj": 0.85,
+    "gate_proj": 0.85,
+    # OPT/Falcon-style names.
+    "fc2": 1.45,
+    "dense_4h_to_h": 1.45,
+    "dense": 1.25,
+    "fc1": 0.85,
+    "dense_h_to_4h": 0.85,
+    "query_key_value": 1.10,
+}
+
+
+def validate_outlier_sensitivity_multiplier(multiplier, label):
+    if multiplier <= 0:
+        raise ValueError(f"Outlier sensitivity multiplier must be > 0 for {label!r}")
+
+
+def parse_outlier_module_sensitivity(spec):
+    """Parse comma-separated module suffix multipliers, e.g. down_proj=1.4,o_proj=1.2."""
+    if not spec:
+        return {}
+
+    sensitivity = {}
+    for item in spec.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        if "=" not in item:
+            raise ValueError(f"Invalid --outlier_module_sensitivity entry: {item!r}")
+        module_suffix, multiplier = item.split("=", 1)
+        module_suffix = module_suffix.strip()
+        if not module_suffix:
+            raise ValueError(f"Invalid empty module suffix in --outlier_module_sensitivity entry: {item!r}")
+
+        multiplier = float(multiplier)
+        validate_outlier_sensitivity_multiplier(multiplier, module_suffix)
+        sensitivity[module_suffix] = multiplier
+    return sensitivity
+
+
+def build_outlier_module_sensitivity(args):
+    sensitivity = {}
+    if getattr(args, "outlier_module_preset", False):
+        sensitivity.update(OUTLIER_MODULE_SENSITIVITY_PRESET)
+    sensitivity.update(parse_outlier_module_sensitivity(getattr(args, "outlier_module_sensitivity", None)))
+    return sensitivity
+
+
+def get_outlier_module_sensitivity(sublayer_name, module_sensitivity):
+    matches = [
+        (module_suffix, multiplier)
+        for module_suffix, multiplier in module_sensitivity.items()
+        if sublayer_name == module_suffix or sublayer_name.endswith(f".{module_suffix}")
+    ]
+    if not matches:
+        return 1.0
+
+    _, multiplier = max(matches, key=lambda match: len(match[0]))
+    return multiplier
+
+
+def get_outlier_layer_preset_ranges(num_layers):
+    """Return conservative early/middle/late layer multipliers."""
+    early_count = num_layers // 4
+    late_start = (3 * num_layers) // 4
+
+    ranges = []
+    if early_count > 0:
+        ranges.append((0, early_count - 1, 0.95))
+    if late_start > early_count:
+        ranges.append((early_count, late_start - 1, 1.0))
+    if late_start < num_layers:
+        ranges.append((late_start, num_layers - 1, 1.10))
+    return ranges
+
+
+def get_named_layer_range(name, num_layers):
+    early_count = num_layers // 4
+    late_start = (3 * num_layers) // 4
+
+    if name == "early":
+        return 0, max(early_count - 1, 0)
+    if name in {"mid", "middle"}:
+        return early_count, max(late_start - 1, early_count)
+    if name == "late":
+        return late_start, num_layers - 1
+
+    raise ValueError(f"Unknown layer range alias: {name!r}")
+
+
+def parse_layer_range(range_spec, num_layers):
+    range_spec = range_spec.strip()
+    if range_spec in {"early", "mid", "middle", "late"}:
+        return get_named_layer_range(range_spec, num_layers)
+
+    if "-" in range_spec:
+        start, end = range_spec.split("-", 1)
+        start, end = int(start.strip()), int(end.strip())
+    else:
+        start = end = int(range_spec)
+
+    if start < 0 or end < start or end >= num_layers:
+        raise ValueError(
+            f"Invalid layer range {range_spec!r} for a model with layers 0..{num_layers - 1}"
+        )
+    return start, end
+
+
+def parse_outlier_layer_sensitivity(spec, num_layers):
+    """Parse comma-separated layer range multipliers, e.g. 0-7=0.95,24-31=1.15."""
+    if not spec:
+        return []
+
+    ranges = []
+    for item in spec.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        if "=" not in item:
+            raise ValueError(f"Invalid --outlier_layer_sensitivity entry: {item!r}")
+
+        range_spec, multiplier = item.split("=", 1)
+        start, end = parse_layer_range(range_spec, num_layers)
+        multiplier = float(multiplier)
+        validate_outlier_sensitivity_multiplier(multiplier, range_spec)
+        ranges.append((start, end, multiplier))
+    return ranges
+
+
+def build_outlier_layer_sensitivity(args, num_layers):
+    ranges = []
+    if getattr(args, "outlier_layer_preset", False):
+        ranges.extend(get_outlier_layer_preset_ranges(num_layers))
+    ranges.extend(parse_outlier_layer_sensitivity(getattr(args, "outlier_layer_sensitivity", None), num_layers))
+    return ranges
+
+
+def get_outlier_layer_sensitivity(layer_index, layer_sensitivity):
+    for start, end, multiplier in reversed(layer_sensitivity):
+        if start <= layer_index <= end:
+            return multiplier
+    return 1.0
+
+
+def get_module_outlier_threshold(base_threshold, sensitivity_multiplier):
+    if base_threshold == float("inf"):
+        return base_threshold
+    return base_threshold / sensitivity_multiplier
+
+
 def quantize_model(model, args, device):
     """main entry point to functions for model quantization"""
     tick = time.time()
@@ -184,9 +341,19 @@ def quantize_spqr(model, dataloader, args, device):
 
     quantizers = {}
 
-    normal_outlier_count_global, w_count_global = 0, 0
+    outlier_module_sensitivity = build_outlier_module_sensitivity(args)
 
     layers = get_layers(model)
+    outlier_layer_sensitivity = build_outlier_layer_sensitivity(args, len(layers))
+
+    normal_outlier_count_global, w_count_global = 0, 0
+    if outlier_module_sensitivity:
+        print(f"Using outlier module sensitivity multipliers: {outlier_module_sensitivity}")
+    if outlier_layer_sensitivity:
+        print(f"Using outlier layer sensitivity multipliers: {outlier_layer_sensitivity}")
+    if (outlier_module_sensitivity or outlier_layer_sensitivity) and args.outlier_threshold == float("inf"):
+        print("WARNING: outlier sensitivity has no effect while --outlier_threshold is infinity.")
+
     for i in range(len(layers)):
         print(f"\n---------------- Layer {i} of {len(layers)} ----------------")
         normal_outlier_count, w_count = 0, 0
@@ -236,7 +403,21 @@ def quantize_spqr(model, dataloader, args, device):
             torch.cuda.empty_cache()
 
             for sublayer_name in subset:
+                module_outlier_sensitivity = get_outlier_module_sensitivity(sublayer_name, outlier_module_sensitivity)
+                layer_outlier_sensitivity = get_outlier_layer_sensitivity(i, outlier_layer_sensitivity)
+                outlier_sensitivity = module_outlier_sensitivity * layer_outlier_sensitivity
+                effective_outlier_threshold = get_module_outlier_threshold(
+                    args.outlier_threshold,
+                    outlier_sensitivity,
+                )
                 print(f"Quantizing module {sublayer_name} of layer {i}")
+                if outlier_sensitivity != 1:
+                    print(
+                        f"  module sensitivity={module_outlier_sensitivity:g}; "
+                        f"layer sensitivity={layer_outlier_sensitivity:g}; "
+                        f"total sensitivity={outlier_sensitivity:g}; "
+                        f"effective threshold={effective_outlier_threshold:g}"
+                    )
                 quantized = spqr_handlers[sublayer_name].quantize(
                     percdamp=args.percdamp,
                     bits=args.wbits,
@@ -248,10 +429,12 @@ def quantize_spqr(model, dataloader, args, device):
                     qq_scale_bits=args.qq_scale_bits,
                     qq_zero_bits=args.qq_zero_bits,
                     qq_zero_sym=args.qq_zero_sym,
-                    outlier_relative_threshold=args.outlier_threshold,
+                    outlier_relative_threshold=effective_outlier_threshold,
                     permutation_order=args.permutation_order,
                     simplified_outliers=args.simplified_outliers,
                     save_quantization=save,
+                    adaptive_outlier_threshold=args.adaptive_outlier_threshold,
+                    outlier_adaptation_factor=args.outlier_adaptation_factor,
                 )
 
                 if save:
@@ -268,6 +451,10 @@ def quantize_spqr(model, dataloader, args, device):
                 # OUTLIER STATS per module:
                 normal_outliers_count = quantized.unstructured_outlier_mask.to(torch.int32).sum()
                 stats_payload[f"n_{sublayer_name}_ol_share"] = (normal_outliers_count / quantized.weight.numel()).item()
+                stats_payload[f"n_{sublayer_name}_module_outlier_sensitivity"] = module_outlier_sensitivity
+                stats_payload[f"n_{sublayer_name}_layer_outlier_sensitivity"] = layer_outlier_sensitivity
+                stats_payload[f"n_{sublayer_name}_outlier_sensitivity"] = outlier_sensitivity
+                stats_payload[f"n_{sublayer_name}_outlier_threshold"] = effective_outlier_threshold
                 normal_outlier_count += normal_outliers_count.item()
                 w_count += quantized.weight.numel()
 
@@ -517,12 +704,57 @@ if __name__ == "__main__":
         "--outlier_threshold",
         type=float,
         default=float("inf"),
-        help="relative threshold for     outliers; higher threshold = more outliers.",
+        help="relative threshold for outliers; lower threshold = more outliers.",
+    )
+    parser.add_argument(
+        "--outlier_module_preset",
+        action="store_true",
+        help=(
+            "Use a module-wise outlier sensitivity preset. Multipliers > 1 lower the effective outlier "
+            "threshold for sensitive modules; multipliers < 1 raise it for less sensitive modules."
+        ),
+    )
+    parser.add_argument(
+        "--outlier_module_sensitivity",
+        type=str,
+        default=None,
+        help=(
+            "Comma-separated module suffix multipliers, e.g. "
+            "'down_proj=1.45,o_proj=1.25,up_proj=0.85'. Overrides preset values."
+        ),
+    )
+    parser.add_argument(
+        "--outlier_layer_preset",
+        action="store_true",
+        help=(
+            "Use a conservative depth-wise sensitivity preset: first 25%% layers=0.95, "
+            "middle 50%%=1.0, last 25%%=1.10."
+        ),
+    )
+    parser.add_argument(
+        "--outlier_layer_sensitivity",
+        type=str,
+        default=None,
+        help=(
+            "Comma-separated layer range multipliers, e.g. '0-7=0.95,8-23=1.0,24-31=1.15'. "
+            "Aliases early/mid/middle/late are also supported."
+        ),
     )
     parser.add_argument(
         "--simplified_outliers",
         action="store_true",
         help="do not perform leave-one-out evaluation when detecting outliers; works faster, but generally worse in perplexity",
+    )
+    parser.add_argument(
+        "--adaptive_outlier_threshold",
+        action="store_true",
+        help="Use adaptive outlier threshold per layer",
+    )
+    parser.add_argument(
+        "--outlier_adaptation_factor",
+        type=float,
+        default=1.0,
+        help="Adaptation factor for adaptive outlier threshold",
     )
     parser.add_argument("--wandb", action="store_true", help="Whether to use wandb or store locally.")
     parser.add_argument(
@@ -541,6 +773,12 @@ if __name__ == "__main__":
         default="auto",
         choices=["auto", "float16", "float32"],
         help="dtype to load the model.",
+    )
+    parser.add_argument(
+        "--device",
+        type=str,
+        default=None,
+        help="Device to use (e.g. cuda, cpu, cuda:0, etc.)",
     )
 
     args = parser.parse_args()
@@ -571,7 +809,10 @@ if __name__ == "__main__":
         )
         wandb.run.log_code(".")
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    if args.device:
+        device = args.device
+    else:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
 
     print("============  Loading model... ============")
     model = get_model(args.model_path, args.load, args.dtype).train(False)
