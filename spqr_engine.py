@@ -10,6 +10,79 @@ from quant_groups import Quantizer, dequantize, quantize
 from weight_permutation import get_permutation_order
 
 
+def quantile(tensor, q, dim=None, keepdim=False):
+    """
+    Computes the quantile of the input tensor along the specified dimension.
+
+    Parameters:
+    tensor (torch.Tensor): The input tensor.
+    q (float): The quantile to compute, should be a float between 0 and 1.
+    dim (int): The dimension to reduce. If None, the tensor is flattened.
+    keepdim (bool): Whether to keep the reduced dimension in the output.
+    Returns:
+    torch.Tensor: The quantile value(s) along the specified dimension.
+    """
+    assert 0 <= q <= 1, "\n\nquantile value should be a float between 0 and 1.\n\n"
+
+    if dim is None:
+        tensor = tensor.flatten()
+        dim = 0
+
+    sorted_tensor, _ = torch.sort(tensor, dim=dim)
+    num_elements = sorted_tensor.size(dim)
+    index = q * (num_elements - 1)
+    lower_index = int(index)
+    upper_index = min(lower_index + 1, num_elements - 1)
+    lower_value = sorted_tensor.select(dim, lower_index)
+    upper_value = sorted_tensor.select(dim, upper_index)
+    # linear interpolation
+    weight = index - lower_index
+    quantile_value = (1 - weight) * lower_value + weight * upper_value
+
+    return quantile_value.unsqueeze(dim) if keepdim else quantile_value
+
+
+def get_adaptive_outlier_threshold(
+    weight: torch.Tensor,
+    H_inv_cho_diag: torch.Tensor,
+    base_threshold: float,
+    adaptation_factor: float = 1.0,
+    *args,
+    **kwargs,
+) -> float:
+    """
+    Вычисляет адаптивный порог для слоя на основе статистики весов.
+
+    Использует процентили вместо z-score для работы с распределениями
+    с тяжёлыми хвостами (типичными для LLM весов).
+
+    Args:
+        weight: Матрица весов [out_features, in_features]
+        H_inv_cho_diag: Диагональ обратной матрицы Гессиана
+        base_threshold: Базовый порог из конфигурации
+        adaptation_factor: Коэффициент адаптации (1.0 = без адаптации)
+    Returns:
+        Адаптивный порог для текущего слоя
+    """
+    # 1. Оцениваем "сложность" слоя через коэффициент вариации
+    cv = weight.std().item() / (weight.abs().mean().item() + 1e-8)
+
+    # 2. Оцениваем "тяжесть хвостов" (Kurtosis-like metric)
+    # Отношение экстремального значения (99.9%) к "телу" распределения (90%)
+    weight_abs = weight.abs()
+    tail_heaviness = quantile(weight_abs, 0.999).item() / (quantile(weight_abs, 0.9).item() + 1e-8)
+
+    # 3. Инвертируем логику: если слой сложный (высокий CV или тяжелые хвосты),
+    # мы УМЕНЬШАЕМ порог (делим на множитель), чтобы захватить БОЛЬШЕ аутлайеров.
+    # Коэффициенты 0.2 и 0.1 подобраны для мягкой адаптации.
+    adaptive_multiplier = 1.0 + adaptation_factor * (cv * 0.2 + tail_heaviness * 0.1)
+
+    # Базовый масштаб выбросов (база от SpQR)
+    outlier_scale = (weight.var(dim=0) / H_inv_cho_diag.square()).mean().item()
+
+    # ДЕЛИМ на multiplier, чтобы снизить порог для сложных слоев
+    return (base_threshold * outlier_scale) / adaptive_multiplier
+
 class SPQRUtil:
     """Learns GPTQ for a single linear layer"""
 
@@ -47,6 +120,8 @@ class SPQRUtil:
         permutation_order: Union[str, torch.Tensor] = "identity",
         keep_H: bool = True,
         simplified_outliers: bool = False,
+        adaptive_outlier_threshold: bool = False,
+        outlier_adaptation_factor: float = 1.0,
         verbose=True,
         perchannel: bool = True,
         sym: bool = False,
@@ -116,7 +191,9 @@ class SPQRUtil:
 
         quantizer = Quantizer()
         quantizer.configure(bits, perchannel=perchannel, sym=sym, **kwargs)
-        assert H_inv_cho.shape[0] == H_inv_cho.shape[1] == weight.shape[1], "weight must be [out_features, in_features]"
+        assert H_inv_cho.shape[0] == H_inv_cho.shape[1] == weight.shape[1], (
+            "weight must be [out_features, in_features]"
+        )
         out_dim, in_dim = weight.shape  # [out_features, in_features]
 
         if groupsize is None:
@@ -126,8 +203,17 @@ class SPQRUtil:
         outlier_column_indices = torch.empty(0, dtype=torch.int64, device=weight.device)
         del H_inv
 
-        outlier_scale = (weight.var(dim=0) / torch.diag(H_inv_cho).square()).mean().item()
-        unstructured_outlier_threshold = outlier_relative_threshold * outlier_scale
+        if adaptive_outlier_threshold:
+            unstructured_outlier_threshold = get_adaptive_outlier_threshold(
+                weight,
+                H_inv_cho_diag,
+                outlier_relative_threshold,
+                adaptation_factor=outlier_adaptation_factor,
+            )
+        else:
+            # Сохраняем существующую логику для обратной совместимости
+            outlier_scale = (weight.var(dim=0) / torch.diag(H_inv_cho).square()).mean().item()
+            unstructured_outlier_threshold = outlier_relative_threshold * outlier_scale
         in_group_index = -1  # index of current group of input features, for group quantizer purposes
 
         quantization_errors = torch.zeros_like(weight)
@@ -152,7 +238,10 @@ class SPQRUtil:
                         assert perchannel, "refitting quantizer is only implemented for perchannel=True"
                         group_diag_hessian_inv_cho = H_inv_cho_diag[column_index : column_index + groupsize]
                         loo_quantization_error_sq = get_leave_one_out_error(
-                            group_weight, group_diag_hessian_inv_cho, bits=bits, sym=sym
+                            group_weight,
+                            group_diag_hessian_inv_cho,
+                            bits=bits,
+                            sym=sym,
                         )
                         # ^-- dequantized(quantized(group_weight)) using a quantizer trained on all weights except the reconstructed one
 
@@ -295,13 +384,20 @@ class QuantizationResult(NamedTuple):
     save_quant_dict: dict
 
 
-def get_leave_one_out_error(group_weight: torch.Tensor, group_diag_hessian_inv_cho: torch.Tensor, *, bits, sym):
+def get_leave_one_out_error(
+    group_weight: torch.Tensor,
+    group_diag_hessian_inv_cho: torch.Tensor,
+    *,
+    bits,
+    sym,
+):
     """EXPERIMENTAL! BEWARE - for each weight, fit quantizer without this_one_weight and return this one weight's reconstruction"""
 
     assert group_weight.ndim == 2
     loo_indices = torch.arange(group_weight.shape[1], device=group_weight.device)
     loo_indices = loo_indices[1:] - (loo_indices[:, None] >= loo_indices[1:]).to(loo_indices.dtype)
     groupwise_loo_data = group_weight[:, loo_indices]  # [num_groups, num_loo = groupsize, groupsize - 1]
+    loo_group_diag_hessian_inv_cho = group_diag_hessian_inv_cho[loo_indices]  # [num_loo = groupsize, groupsize - 1]
     fast_quantizer = Quantizer(shape=groupwise_loo_data.flatten(0, 1).shape)
     fast_quantizer.configure(bits, perchannel=True, sym=sym)
     fast_quantizer.find_params(groupwise_loo_data.flatten(0, 1), weight=True)
@@ -311,10 +407,9 @@ def get_leave_one_out_error(group_weight: torch.Tensor, group_diag_hessian_inv_c
     loo_groupwise_reconstructed_weights = fast_quantizer.quantize_dequantize(
         groupwise_loo_data.flatten(0, 1)
     ).reshape_as(groupwise_loo_data)
-    loo_group_diag_hessian_inv_cho = group_diag_hessian_inv_cho[loo_indices]  # [num_loo = groupsize, groupsize - 1]
     assert group_diag_hessian_inv_cho.ndim == 1
 
-    # total quantization error consists of hessian-weighted mse on all remaining weights except for the one that's left out
+    # total quantization error consists of Hessian-weighted squared error on all remaining weights except the left-out one
     # -- this is because the left-out weights will not be quantized, and therefore, has zero quantization error
     loo_errors_sq = (
         ((loo_groupwise_reconstructed_weights - groupwise_loo_data) / loo_group_diag_hessian_inv_cho).square().sum(-1)
@@ -330,6 +425,6 @@ def get_leave_one_out_error(group_weight: torch.Tensor, group_diag_hessian_inv_c
         ((baseline_reconstructed_weights - group_weight) / group_diag_hessian_inv_cho).square().sum(dim=1, keepdim=True)
     )
 
-    # outlier's usefulness = how much does mse decrease from treating this weight as an outlier
+    # outlier's usefulness = how much error decreases from treating this weight as an outlier
     reduction_in_squared_error = baseline_errors_sq - loo_errors_sq
     return reduction_in_squared_error
